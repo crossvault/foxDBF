@@ -92,7 +92,19 @@ public sealed partial class VfpInterpreter
     /// a tag un-derivable and deletes the <c>.cdx</c>, and the INSERT fast path cannot map a long column name.
     /// Writes stay positional.</summary>
     private DbfWriter OpenWriter(string path)
-        => DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared }, VfpSession.NamesOf(ReadColumnsFor(path)));
+        => DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared }, ReadNamesFor(path));
+
+    /// <summary>The column-name view of <see cref="OpenWriter"/> for <paramref name="path"/>. The EXCLUSIVE
+    /// rewriters (INDEX / REINDEX / PACK / ZAP) close the areas on the file first, so they capture it before.</summary>
+    private Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? ReadNamesFor(string path)
+        => VfpSession.NamesOf(ReadColumnsFor(path));
+
+    /// <summary>An Exclusive writer on <paramref name="path"/> under <paramref name="names"/> (from
+    /// <see cref="ReadNamesFor"/>, taken while the areas were still open): a tag built, rebuilt or kept by the
+    /// rewrite derives its KEY / FOR from the names the session reads the table under — a DBC member's long
+    /// names, which VFP9 writes into the tag KEY text.</summary>
+    private static DbfWriter OpenExclusiveWriter(string path, Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? names)
+        => DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive }, names);
 
     /// <summary>The columns <paramref name="path"/> is read under: those of a work area open on the file, else
     /// those of the open database's member stored there; empty (physical names) for a free table.</summary>

@@ -13,7 +13,9 @@ namespace CrossVault.FoxDbf.Tests;
 /// longer than the 10-char physical names, with a structural .cdx whose tag KEY names a long field
 /// (<c>CUSTOMER_NAME</c>, as VFP9 stores it). The cached writer must present the long names: otherwise the
 /// tag is un-derivable and the write deletes the .cdx, and a long INSERT column is unknown and the row is lost.
-/// Pinned against VFP9 by the internal MicroVfpDbcLongNamesVfp9OracleTests.
+/// The EXCLUSIVE rewriters (INDEX ON / REINDEX / DELETE TAG / INDEX ON … TO) must present them too, or the tag
+/// they build or rebuild cannot evaluate its KEY. Pinned against VFP9 by the internal
+/// MicroVfpDbcLongNamesVfp9OracleTests and MicroVfpDbcLongNamesExclusiveVfp9OracleTests.
 /// </summary>
 public sealed class MicroVfpDbcLongNameWriteTests : IDisposable
 {
@@ -57,6 +59,17 @@ public sealed class MicroVfpDbcLongNameWriteTests : IDisposable
         s.OpenDatabase(_dbc);
         var vfp = new VfpInterpreter(s);
         vfp.Execute("USE customer_accounts IN 0 SHARED\nSELECT customer_accounts");
+        return (s, vfp);
+    }
+
+    /// <summary>The table opened EXCLUSIVE, as INDEX ON / REINDEX / DELETE TAG need it in VFP9.</summary>
+    private (VfpSession Session, VfpInterpreter Vfp) OpenExclusive()
+    {
+        var s = new VfpSession(new EvaluationContext { Deleted = false });
+        s.OpenDirectory(_dir.Path);
+        s.OpenDatabase(_dbc);
+        var vfp = new VfpInterpreter(s);
+        vfp.Execute("SET EXCLUSIVE ON\nUSE customer_accounts IN 0 EXCLUSIVE\nSELECT customer_accounts");
         return (s, vfp);
     }
 
@@ -110,5 +123,72 @@ public sealed class MicroVfpDbcLongNameWriteTests : IDisposable
             vfp.Execute("INSERT INTO customer_accounts (account_number, customer_n) VALUES (9, 'Short')");
             Assert.Equal("3", Eval(vfp, "RECCOUNT('customer_accounts')"));
         }
+    }
+
+    // ---- EXCLUSIVE rewrites (INDEX ON / REINDEX / DELETE TAG): pinned by MicroVfpDbcLongNamesExclusiveVfp9OracleTests ----
+
+    [Fact]
+    public void IndexOn_LongField_BuildsASeekableTag_AndKeepsTheOthersMaintained()
+    {
+        var (s, vfp) = OpenExclusive();
+        using (s)
+        {
+            vfp.Execute("INDEX ON customer_name TAG probe");
+            Assert.Equal("CUSTOMER_NAME", Eval(vfp, "KEY()").ToUpperInvariant());
+            Assert.Equal(".T.", Eval(vfp, "SEEK('Gamma', 'customer_accounts', 'probe')"));
+            Assert.Equal("3", Eval(vfp, "RECNO()"));
+
+            vfp.Execute("GO 1\nREPLACE customer_name WITH 'Xavier'");
+            Assert.Equal(".T.", Eval(vfp, "SEEK('Xavier', 'customer_accounts', 'custname')"));
+            Assert.Equal(".T.", Eval(vfp, "SEEK('Xavier', 'customer_accounts', 'probe')"));
+            Assert.Equal("1", Eval(vfp, "RECNO()"));
+            Assert.Equal(".T.", Eval(vfp, "SEEK(2, 'customer_accounts', 'acct')"));
+        }
+        Assert.True(File.Exists(Cdx));
+    }
+
+    [Fact]
+    public void IndexOn_ForClauseOnALongField_FiltersByIt()
+    {
+        var (s, vfp) = OpenExclusive();
+        using (s)
+        {
+            vfp.Execute("INDEX ON UPPER(customer_name) TAG pfor FOR balance_amount > 15");
+            Assert.Equal(".T.", Eval(vfp, "SEEK('BETA', 'customer_accounts', 'pfor')"));
+            Assert.Equal("2", Eval(vfp, "RECNO()"));
+            Assert.Equal(".F.", Eval(vfp, "SEEK('ALPHA', 'customer_accounts', 'pfor')"));
+        }
+    }
+
+    [Fact]
+    public void Reindex_And_DeleteTag_KeepTheLongNameTags()
+    {
+        var (s, vfp) = OpenExclusive();
+        using (s)
+        {
+            vfp.Execute("REINDEX");
+            Assert.Equal(".T.", Eval(vfp, "SEEK('Gamma', 'customer_accounts', 'custname')"));
+            Assert.Equal("3", Eval(vfp, "RECNO()"));
+            Assert.Equal(".T.", Eval(vfp, "SEEK(2, 'customer_accounts', 'acct')"));
+
+            vfp.Execute("DELETE TAG acct");
+            Assert.Equal("1", Eval(vfp, "TAGCOUNT()"));
+            Assert.Equal(".T.", Eval(vfp, "SEEK('Beta', 'customer_accounts', 'custname')"));
+            Assert.Equal("2", Eval(vfp, "RECNO()"));
+        }
+        Assert.True(File.Exists(Cdx));
+    }
+
+    [Fact]
+    public void IndexOnTo_LongField_BuildsASeekableIdx()
+    {
+        var (s, vfp) = OpenExclusive();
+        using (s)
+        {
+            vfp.Execute("INDEX ON customer_name TO longidx");
+            Assert.Equal(".T.", Eval(vfp, "SEEK('Gamma')"));
+            Assert.Equal("3", Eval(vfp, "RECNO()"));
+        }
+        Assert.True(File.Exists(_dir.File("longidx.idx")));
     }
 }

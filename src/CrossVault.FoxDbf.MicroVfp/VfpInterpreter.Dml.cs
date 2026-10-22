@@ -819,6 +819,7 @@ public sealed partial class VfpInterpreter
         // is untouched.
         if (!wa.Exclusive && !Session.DefaultExclusive)
             throw new MicroVfpRuntimeException("File must be opened exclusively.", 110);
+        var names = ReadNamesFor(path);                 // before the COW redirect: the copy matches no area.
         // COPY-ON-WRITE seam (ADO.NET transaction): PACK physically truncates/compacts the .dbf/.fpt/.cdx —
         // an irreversible destructive op. Redirect it onto the table's private working copy so a stored-proc
         // PACK inside a FoxDbfTransaction hits the copy (Rollback discards it, restoring the deleted rows)
@@ -834,7 +835,7 @@ public sealed partial class VfpInterpreter
             // Exclusive open (FileShare.None): we have already released every read handle above, and the
             // Core Pack guard requires LockMode.Exclusive. A FOREIGN process holding the table SHARED makes
             // this open throw a sharing IOException — PACK fails cleanly, the file untouched.
-            using var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive });
+            using var writer = OpenExclusiveWriter(path, names);
             writer.Pack();                              // physical delete-compaction (+ memo relocation).
         }
         finally

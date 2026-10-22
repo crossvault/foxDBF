@@ -233,6 +233,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   fields), an `INSERT` naming the long fields no longer loses the row silently, and `APPEND FROM` matches the
   source fields by their full names as VFP9 does (a free table's truncated `customer_n` no longer fills
   `customer_name`).
+- microVFP `INDEX ON` (also `TO` an `.idx` and with `FOR`), `REINDEX`, `DELETE TAG`, `COPY TAG` and
+  `COPY INDEXES` on a DBC table use its long field names. `INDEX ON customer_name TAG x` built a tag that no
+  `SEEK` found, and the existing tags whose KEY names the long fields (`CUSTOMER_NAME`, as VFP9 stores it)
+  were no longer seekable after it or after `REINDEX`. `PACK`, `ZAP` and `PACK DATABASE` open the table under
+  the same names.
 
 ## [0.10.0] - 2026-10-22
 

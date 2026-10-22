@@ -157,6 +157,7 @@ public sealed partial class VfpInterpreter
         var wa = Session.AreaAt(area);
         string? path = wa?.Table.SourcePath;
         if (wa is null || path is null) return;
+        var names = ReadNamesFor(path);                 // before the COW redirect: the copy matches no area.
         path = BeginTxWrite(path);
         string full = Path.GetFullPath(path);
         SnapshotForTxn(path);
@@ -166,7 +167,7 @@ public sealed partial class VfpInterpreter
         {
             // Exclusive open: every read handle for this path was released above, and the Core Pack/Zap
             // guard requires LockMode.Exclusive. A foreign SHARED holder makes this open throw cleanly.
-            using var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive });
+            using var writer = OpenExclusiveWriter(path, names);
             op(writer);
         }
         finally { Session.ReopenAreas(reopen); }
@@ -408,10 +409,11 @@ public sealed partial class VfpInterpreter
             if (path is null || !File.Exists(path)) continue;
             string full = Path.GetFullPath(path);
             InvalidateCachedWriter(full);
+            var names = ReadNamesFor(path);
             var reopen = Session.CloseAreasForPath(full);
             // Exclusive open (read handles released above; Core Pack requires it). A member another
             // process holds SHARED throws a sharing IOException → skipped (best-effort), others proceed.
-            try { using var w = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive }); w.Pack(); }
+            try { using var w = OpenExclusiveWriter(path, names); w.Pack(); }
             catch { /* a member that cannot be packed (locked/absent) is skipped, others proceed. */ }
             finally { Session.ReopenAreas(reopen); }
         }

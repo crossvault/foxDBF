@@ -555,10 +555,11 @@ public sealed partial class VfpInterpreter
         // 5.13: force-close even a lock-pinned writer (else the EXCLUSIVE open throws) and re-take the lock
         // after the rebuild, so an explicit RLOCK/FLOCK survives a REINDEX/INDEX.
         ForceCloseCachedWriter(full);
+        var names = ReadNamesFor(path);
         var reopen = Session.CloseAreasForPath(full);
         try
         {
-            using var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive });
+            using var writer = OpenExclusiveWriter(path, names);
             action(writer);
         }
         finally
