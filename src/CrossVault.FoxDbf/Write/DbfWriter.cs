@@ -291,6 +291,20 @@ public sealed partial class DbfWriter : IDisposable
     }
 
     /// <summary>
+    /// <see cref="AppendRecord(IReadOnlyDictionary{string, object?})"/> with a positional BLANK mask
+    /// (one entry per public column): a null value (or missing key) whose entry is set is written as the
+    /// VFP blank of its type with the NULL bit clear, not <c>.NULL.</c> — the SQL <c>INSERT</c> rule for
+    /// an omitted column under <c>SET NULL OFF</c>.
+    /// </summary>
+    internal int AppendRecord(IReadOnlyDictionary<string, object?> values, bool[] blankWhenNull)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(blankWhenNull);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return AppendCore(DictionaryToPositional(values), blankWhenNull);
+    }
+
+    /// <summary>
     /// Rewrite the FULL row at <paramref name="index"/> from <paramref name="values"/>
     /// (one per public column, physical order). Other records are left byte-identical.
     /// </summary>
@@ -526,7 +540,7 @@ public sealed partial class DbfWriter : IDisposable
 
     // ---- append / update cores -------------------------------------------------
 
-    private int AppendCore(object?[] positional)
+    private int AppendCore(object?[] positional, bool[]? blankWhenNull = null)
     {
         // §D3: hold the APPEND lock across the FRESH count re-read + row write + header bump so a
         // concurrent VFP appender cannot interleave on the same slot. Released in WithLock's
@@ -569,7 +583,7 @@ public sealed partial class DbfWriter : IDisposable
                 pendingAutoInc.Add((descOffset + 19, next + step));
             }
 
-            byte[] record = RecordEncoder.Encode(_schema, positional, deleted: false);
+            byte[] record = RecordEncoder.Encode(_schema, positional, deleted: false, blankWhenNull);
             PatchMemoPointers(record, positional);
 
             // Write the row (overwriting any pre-existing EOF byte), the fresh EOF, and pin the

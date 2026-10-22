@@ -69,7 +69,7 @@ public sealed partial class DbfWriter
     }
 
     /// <summary>
-    /// One-lock / one-flush batch append. Mirrors <see cref="AppendCore(object?[])"/> exactly so the
+    /// One-lock / one-flush batch append. Mirrors <see cref="AppendCore(object?[], bool[])"/> exactly so the
     /// on-disk result is byte-identical to N per-row appends, but re-reads the count ONCE, writes
     /// every row WITHOUT a per-row flush, then writes the single <c>0x1A</c> EOF + <c>SetLength</c>,
     /// stamps the header and flushes ONCE for the whole batch.

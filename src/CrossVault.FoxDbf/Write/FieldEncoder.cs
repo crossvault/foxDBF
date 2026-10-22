@@ -129,6 +129,19 @@ public static class FieldEncoder
         return false;
     }
 
+    /// <summary>
+    /// Write the empty Varchar/Varbinary form VFP9 stores for a blank or <c>.NULL.</c> <c>V</c>/<c>Q</c>
+    /// field: <c>0x20</c> padding with a 0 effective length in the last byte (the caller sets the varlen
+    /// bit). VFP pads a blank Varbinary with spaces too, not zero bytes.
+    /// </summary>
+    internal static void EncodeEmptyVarlen(Span<byte> dest)
+    {
+        if (dest.Length == 0)
+            return;
+        dest[..^1].Fill((byte)' ');
+        dest[^1] = 0;
+    }
+
     // ---- character -------------------------------------------------------------
 
     private static void WriteCharacter(string s, Encoding encoding, Span<byte> dest)

@@ -273,6 +273,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   lookups by name (`GetOrdinal`, `DataTable` columns) are case-insensitive and keep working for unchanged names.
   `INTO TABLE` / `INTO CURSOR` still cut field names to 10 characters, so long result names there now become
   e.g. `ACCOUNT_NU` / `ACCOUNT__2` (was `ca_account` / `ao_account`).
+- SQL `INSERT INTO t (a, b) VALUES (…)` wrote `.NULL.` into every NULL-able column the column list left out, so
+  VFP9 read e.g. an omitted nullable memo as `.NULL.` instead of `''`. Omitted columns now follow `SET NULL` as
+  in VFP9: under `SET NULL OFF` (the default) they are written blank with the null bit clear; under
+  `SET NULL ON` a NULL-able one is `.NULL.` and a NOT NULL one rejects the row with error 1581 "does not accept
+  null values" (AUTOINC columns and DBC fields with a DEFAULT excepted). `INSERT … FROM MEMVAR` treats a field
+  without a memvar the same way, and the fields a short `INSERT … FROM ARRAY` row does not reach are always
+  blank. microVFP's `SET NULL` applies. A `.NULL.` Varchar/Varbinary, and one an INSERT leaves blank, is now
+  stored as VFP9 stores it (0x20 padding, length byte 0, varlen bit set) instead of zero bytes.
 
 ## [0.10.0] - 2026-10-22
 

@@ -16,6 +16,15 @@ public static class RecordEncoder
     /// a fresh <c>byte[RecordLength]</c> for <paramref name="schema"/>.
     /// </summary>
     public static byte[] Encode(DbfTable schema, object?[] values, bool deleted = false)
+        => Encode(schema, values, deleted, blankWhenNull: null);
+
+    /// <summary>
+    /// <see cref="Encode(DbfTable, object?[], bool)"/> with a per-column BLANK mask (positional, like
+    /// <paramref name="values"/>): a null value whose mask entry is set encodes as the VFP blank of its
+    /// type with the NULL bit left CLEAR — what VFP9 stores for a column an <c>INSERT</c> omits under
+    /// <c>SET NULL OFF</c> — instead of <c>.NULL.</c>.
+    /// </summary>
+    internal static byte[] Encode(DbfTable schema, object?[] values, bool deleted, bool[]? blankWhenNull)
     {
         ArgumentNullException.ThrowIfNull(schema);
         ArgumentNullException.ThrowIfNull(values);
@@ -53,9 +62,22 @@ public static class RecordEncoder
 
             if (value is null)
             {
-                // Type-appropriate empty bytes + set the NULL bit for a nullable column.
-                FieldEncoder.Encode(column, null, fieldEnc, field);
-                if (nullBit >= 0 && nf is not null)
+                bool blank = blankWhenNull is not null && ci < blankWhenNull.Length && blankWhenNull[ci];
+                if ((blank || nullBit >= 0) && column.Type is ('V' or 'Q') && varlenBit >= 0 && nf is not null)
+                {
+                    // VFP9 writes a blank AND a .NULL. Varchar/Varbinary the same way: 0x20 padding, a 0
+                    // length in the last byte and the varlen bit set (the null bit then tells them apart).
+                    FieldEncoder.EncodeEmptyVarlen(field);
+                    SetBit(dest, nf, varlenBit);
+                }
+                else
+                {
+                    // Type-appropriate empty bytes.
+                    FieldEncoder.Encode(column, null, fieldEnc, field);
+                }
+
+                // The NULL bit for a nullable column — unless the caller asked for the blank.
+                if (!blank && nullBit >= 0 && nf is not null)
                     SetBit(dest, nf, nullBit);
             }
             else

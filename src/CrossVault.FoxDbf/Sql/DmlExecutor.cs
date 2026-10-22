@@ -80,7 +80,7 @@ internal sealed class DmlExecutor
 
         if (st.Columns is { } cols)
         {
-            // Explicit column list: map name → value (missing columns stay blank / NULL); validate count.
+            // Explicit column list: map name → value (omitted columns follow SET NULL); validate count.
             if (cols.Count != values.Length)
                 throw new FoxDbfSqlException(
                     $"INSERT column/value count mismatch: {cols.Count} column(s) but {values.Length} value(s).");
@@ -98,7 +98,7 @@ internal sealed class DmlExecutor
                         { VfpErrorNumber = 12 };
                 map[cols[i]] = values[i];
             }
-            writer.AppendRecord(map);
+            writer.AppendRecord(map, OmittedColumnsBlankMask(session, st.Table, columns, map, honourSetNull: true));
         }
         else
         {
@@ -134,14 +134,15 @@ internal sealed class DmlExecutor
             var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             int k = Math.Min(row.Count, columns.Count);   // excess elements ignored; short row → blanks.
             for (int i = 0; i < k; i++) map[columns[i].Name] = row[i];
-            writer.AppendRecord(map);
+            writer.AppendRecord(map, OmittedColumnsBlankMask(_session, st.Table, columns, map, honourSetNull: false));
             count++;
         }
         return SqlResult.Dml(count);
     }
 
     /// <summary><c>INSERT INTO tbl FROM MEMVAR</c>: a single row whose fields map by NAME from the same-named
-    /// <c>m.&lt;field&gt;</c> memvars; a field with no matching memvar is left blank (VFP-pinned).</summary>
+    /// <c>m.&lt;field&gt;</c> memvars; a field with no matching memvar is an omitted column — blank under
+    /// <c>SET NULL OFF</c>, <c>.NULL.</c> / error 1581 under <c>SET NULL ON</c> (VFP-pinned).</summary>
     private SqlResult InsertFromMemvar(InsertStatement st)
     {
         var bridge = _session.MemoryBridge
@@ -155,8 +156,70 @@ internal sealed class DmlExecutor
         var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var col in columns)
             if (bridge.TryReadMemvar(col.Name, out var v)) map[col.Name] = v;
-        writer.AppendRecord(map);
+        writer.AppendRecord(map, OmittedColumnsBlankMask(_session, st.Table, columns, map, honourSetNull: true));
         return SqlResult.Dml(1);
+    }
+
+    // ---- omitted INSERT columns -----------------------------------------------------------
+
+    /// <summary>
+    /// The positional blank mask for an INSERT row that does not supply every column (the keys of
+    /// <paramref name="provided"/> are the supplied ones), per VFP9 (oracle-pinned by
+    /// SqlInsertOmittedColumnsVfp9OracleTests, free tables and DBC members alike):
+    /// <list type="bullet">
+    /// <item><description><c>SET NULL OFF</c> (the default), or <paramref name="honourSetNull"/> false
+    /// (<c>FROM ARRAY</c> with a short row): every omitted column is written BLANK — a NULL-able one too,
+    /// with its null bit clear.</description></item>
+    /// <item><description><c>SET NULL ON</c>: an omitted NULL-able column is <c>.NULL.</c>; an omitted
+    /// NOT NULL column raises error 1581 before anything is written — except an AUTOINC column (the writer
+    /// assigns it) and a DBC member's column with a DEFAULT, which VFP fills from the default. The default
+    /// itself is not evaluated here, so that column is written blank.</description></item>
+    /// </list>
+    /// </summary>
+    private static bool[] OmittedColumnsBlankMask(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
+        IReadOnlyDictionary<string, object?> provided, bool honourSetNull)
+    {
+        // Session.Context, not SqlContext(): the microVFP interpreter's SET NULL writes Context.NullSetting.
+        bool nullOn = honourSetNull && session.Context.NullSetting;
+        var blank = new bool[columns.Count];
+        DbcTableRules? rules = null;
+        bool rulesRead = false;
+        int field = -1;   // the column's position among the non-system columns (= its DBC Field record).
+        for (int i = 0; i < columns.Count; i++)
+        {
+            var col = columns[i];
+            if (col.IsSystem) continue;
+            field++;
+            if (provided.ContainsKey(col.Name)) continue;
+            if (!nullOn) { blank[i] = true; continue; }
+            if (col.IsNullable || col.IsAutoIncrement) continue;
+
+            if (!rulesRead) { rules = TableRules(session, table); rulesRead = true; }
+            var fieldRules = rules is null ? null
+                : field < rules.Fields.Count && rules.Fields.Count == CountUserColumns(columns) ? rules.Fields[field]
+                : rules.Field(col.Name);
+            if (!string.IsNullOrEmpty(fieldRules?.DefaultValue)) { blank[i] = true; continue; }
+
+            throw new FoxDbfSqlException($"Field {col.Name.ToUpperInvariant()} does not accept null values.")
+                { VfpErrorNumber = 1581 };
+        }
+        return blank;
+    }
+
+    /// <summary>The DBC rules of <paramref name="table"/> when it is a member of the session's open database,
+    /// else <see langword="null"/> (a free table).</summary>
+    private static DbcTableRules? TableRules(VfpSession session, string table)
+    {
+        if (session.Database is not { } database) return null;
+        try { return database.GetTableRules(table); }
+        catch (DbfFileNotFoundException) { return null; }
+    }
+
+    private static int CountUserColumns(IReadOnlyList<DbfColumn> columns)
+    {
+        int n = 0;
+        foreach (var c in columns) if (!c.IsSystem) n++;
+        return n;
     }
 
     // ---- UPDATE ---------------------------------------------------------------------------
