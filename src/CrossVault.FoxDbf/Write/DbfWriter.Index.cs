@@ -194,7 +194,7 @@ public sealed partial class DbfWriter
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var byOffset = new List<(uint Offset, CdxTagDefinition Def)>();
         foreach (var (headerOffset, nameBytes) in
-                 IndexTraversal.EnumerateCompact(index, fileHeader.Root, fileHeader.KeyLength, isCharacter: true))
+                 IndexTraversal.EnumerateCompact(index, fileHeader.Root, fileHeader.KeyLength, pad: 0x20))
         {
             string name = TrimName(nameBytes, textEncoding);
             if (name.Length == 0 || !seen.Add(name))
@@ -260,7 +260,7 @@ public sealed partial class DbfWriter
             // which is what TAG()/SYS(14)/DESCENDING() enumerate over (verified vs the VFP9 runtime).
             var byOffset = new List<(uint Offset, CdxTagDefinition Def)>();
             foreach (var (headerOffset, nameBytes) in
-                     IndexTraversal.EnumerateCompact(index, fileHeader.Root, fileHeader.KeyLength, isCharacter: true))
+                     IndexTraversal.EnumerateCompact(index, fileHeader.Root, fileHeader.KeyLength, pad: 0x20))
             {
                 string name = TrimName(nameBytes, textEncoding);
                 if (name.Length == 0 || !seen.Add(name))
@@ -522,7 +522,7 @@ public sealed partial class DbfWriter
             var result = new List<(string, long)>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var (headerOffset, nameBytes) in
-                     IndexTraversal.EnumerateCompact(index, fileHeader.Root, fileHeader.KeyLength, isCharacter: true))
+                     IndexTraversal.EnumerateCompact(index, fileHeader.Root, fileHeader.KeyLength, pad: 0x20))
             {
                 string name = TrimName(nameBytes, textEncoding);
                 if (name.Length == 0 || !seen.Add(name))

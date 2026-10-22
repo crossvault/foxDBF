@@ -193,6 +193,13 @@ public sealed class IndexFile : IDisposable
     /// never throws.
     /// </summary>
     public IReadOnlyList<LeafEntry> ReadLeafEntries(long byteOffset, int keyLength, bool isCharacter)
+        => ReadLeafEntries(byteOffset, keyLength, isCharacter ? (byte)0x20 : (byte)0x00);
+
+    /// <summary>
+    /// As <see cref="ReadLeafEntries(long,int,bool)"/> with the trailing <paramref name="pad"/> byte given directly
+    /// (<see cref="IndexKey.CharacterKeyPad"/>: 0x00 for a weighted character tag).
+    /// </summary>
+    internal IReadOnlyList<LeafEntry> ReadLeafEntries(long byteOffset, int keyLength, byte pad)
     {
         var page = ReadPage(byteOffset);
         if (page is null || keyLength <= 0)
@@ -202,7 +209,7 @@ public sealed class IndexFile : IDisposable
         if (!header.IsLeaf)
             return Array.Empty<LeafEntry>();
 
-        return CompactLeaf.Decode(page, keyLength, isCharacter);
+        return CompactLeaf.Decode(page, keyLength, pad);
     }
 
     private bool ReadExact(long offset, byte[] buffer, int count)

@@ -118,7 +118,7 @@ public sealed class CdxFile : IDisposable
         int dirKeyLength = file.KeyLength; // directory keys are 10-byte tag names
 
         foreach (var (headerOffset, nameBytes) in
-                 IndexTraversal.EnumerateCompact(_index, file.Root, dirKeyLength, isCharacter: true))
+                 IndexTraversal.EnumerateCompact(_index, file.Root, dirKeyLength, pad: 0x20))
         {
             string name = TrimName(nameBytes, _index.TextEncoding);
             if (name.Length == 0 || _tags.ContainsKey(name))
@@ -163,16 +163,16 @@ public sealed class CdxFile : IDisposable
     }
 
     /// <summary>
-    /// Decides the compact-leaf pad byte for a tag: a CHARACTER key pads with
-    /// <c>0x20</c>, everything else with <c>0x00</c>. When the KEY expression is a
-    /// bare field name and a <see cref="DbfTable"/> was supplied, the column type
-    /// decides.
+    /// Decides whether a tag holds CHARACTER keys, and so its compact-leaf pad byte: a MACHINE character key pads
+    /// with <c>0x20</c>, a GENERAL / SPANISH one and everything else with <c>0x00</c>
+    /// (<see cref="IndexKey.CharacterKeyPad"/>). When the KEY expression is a bare field name and a
+    /// <see cref="DbfTable"/> was supplied, the column type decides.
     /// <para>
     /// With NO schema we default to <c>false</c> (pad <c>0x00</c>) — the
     /// ORDER-PRESERVING default: <c>0x00</c> is the true on-disk trailing pad for
-    /// every numeric/date/datetime/integer key, so their transformed key bytes stay
-    /// byte-exact, and character keys still ENUMERATE in correct order because
-    /// <c>0x00</c> sorts below printable ASCII. (Byte-exact CHARACTER keys — which
+    /// every numeric/date/datetime/integer key and weighted character key, so their key bytes stay
+    /// byte-exact, and MACHINE character keys still ENUMERATE in correct order because
+    /// <c>0x00</c> sorts below printable ASCII. (Byte-exact MACHINE CHARACTER keys — which
     /// pad with <c>0x20</c> — therefore still require a <see cref="DbfTable"/>
     /// schema to be resolved.) Padding an unknown key with <c>0x20</c> would instead
     /// corrupt the value of any numeric key whose transform has trailing zero bytes.

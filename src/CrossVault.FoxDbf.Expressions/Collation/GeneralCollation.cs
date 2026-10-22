@@ -23,9 +23,9 @@ namespace CrossVault.FoxDbf.Expressions;
 /// variant for a table code page.
 /// </para>
 /// <para>
-/// VFP trims the trailing 0x00 tail bytes and the host space-pads (0x20) the key field
-/// to the tag key length, so <see cref="GetCollatedKey"/> returns the NATURAL key (heads
-/// then non-trailing-zero tails). The stored GENERAL CDX key IS these weight bytes.
+/// <see cref="GetCollatedKey"/> returns the NATURAL key (heads then tails, trailing 0x00
+/// tail bytes trimmed); VFP9 pads it with 0x00 to the tag key length, so the trimmed tails
+/// and the pad are the same bytes. The stored GENERAL CDX key IS these weight bytes.
 /// Examples: <c>"ADMIN"</c> → <c>60 64 6F 6A 70</c>; <c>"JMÖLCK"</c> →
 /// <c>6B 6F 72 6D 62 6C 04</c>; <c>"ARÖTTGER"</c> → <c>60 75 72 77 77 68 66 75 00 04</c>.
 /// </para>
@@ -69,7 +69,7 @@ public sealed class GeneralCollation : IVfpCollation
     /// Builds the natural GENERAL key for <paramref name="s"/>: the head pass then the
     /// diacritic-tail pass, with trailing 0x00 tail bytes trimmed and trailing source
     /// spaces ignored (VFP keys on the trimmed value). The host pads the result with
-    /// spaces (0x20) to the stored tag key length for the byte-exact CDX key.
+    /// 0x00 to the stored tag key length for the byte-exact CDX key.
     /// </summary>
     public byte[] GetCollatedKey(ReadOnlySpan<char> s)
     {
@@ -84,6 +84,20 @@ public sealed class GeneralCollation : IVfpCollation
         heads[..hc].CopyTo(key);
         tails[..tc].CopyTo(key.AsSpan(hc));
         return key;
+    }
+
+    /// <summary>
+    /// The head (primary) weights of <paramref name="s"/> alone — the leading part of <see cref="GetCollatedKey"/>
+    /// before the diacritic tails. VFP9 SEEKs with this needle under SET EXACT OFF.
+    /// </summary>
+    internal byte[] GetHeadKey(ReadOnlySpan<char> s)
+    {
+        int cap = s.Length * 2;
+        Span<byte> heads = cap <= StackCap ? stackalloc byte[StackCap] : new byte[cap];
+        Span<byte> tails = cap <= StackCap ? stackalloc byte[StackCap] : new byte[cap];
+
+        BuildKey(s, heads, tails, out int hc, out _);
+        return heads[..hc].ToArray();
     }
 
     /// <inheritdoc/>

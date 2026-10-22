@@ -526,7 +526,7 @@ public sealed class DbfDatabaseBuilderTests
         var fileHdr = idx.ReadCdxHeader(0);
         var result = new List<(string, CdxHeader)>();
         foreach (var (headerOffset, nameBytes) in
-                 IndexTraversal.EnumerateCompact(idx, fileHdr.Root, fileHdr.KeyLength, isCharacter: true))
+                 IndexTraversal.EnumerateCompact(idx, fileHdr.Root, fileHdr.KeyLength, pad: 0x20))
         {
             string name = System.Text.Encoding.ASCII.GetString(nameBytes).Trim('\0', ' ');
             if (name.Length == 0)

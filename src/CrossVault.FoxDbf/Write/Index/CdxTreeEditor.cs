@@ -19,7 +19,8 @@ namespace CrossVault.FoxDbf.Write;
 /// (b) SEEK finds the new key / no longer finds a removed one; (c) a real VFP9 opens the maintained file and
 /// SEEKs correctly (the branch separators = subtree-MAX are maintained, which VFP's descent relies on).
 /// The reader/editor never trusts a malformed page beyond the defensive guards inherited from
-/// <see cref="IndexFile"/>. Character vs numeric pad (0x20 / 0x00) is supplied per operation by the caller.
+/// <see cref="IndexFile"/>. The key pad (0x20 for a MACHINE character tag, else 0x00) is supplied per operation by
+/// the caller.
 /// </remarks>
 internal sealed class CdxTreeEditor : IDisposable
 {
@@ -53,7 +54,7 @@ internal sealed class CdxTreeEditor : IDisposable
         var fileHeader = ReadCdxHeader(0);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (headerOffset, nameBytes) in
-                 EnumerateCompact(fileHeader.Root, fileHeader.KeyLength, isCharacter: true))
+                 EnumerateCompact(fileHeader.Root, fileHeader.KeyLength, pad: 0x20))
         {
             string name = TrimName(nameBytes, _textEncoding);
             if (name.Length == 0 || !seen.Add(name))
@@ -419,8 +420,7 @@ internal sealed class CdxTreeEditor : IDisposable
 
     private List<(byte[] Key, uint Recno)> ReadLeafList(long off, int keyLen, byte pad)
     {
-        bool isChar = pad == 0x20;
-        var raw = ReadLeafEntries(off, keyLen, isChar);
+        var raw = ReadLeafEntries(off, keyLen, pad);
         var list = new List<(byte[], uint)>(raw.Count);
         foreach (var e in raw)
             list.Add((e.Key, e.RecordNumber));
@@ -533,10 +533,10 @@ internal sealed class CdxTreeEditor : IDisposable
         return entries;
     }
 
-    private IReadOnlyList<LeafEntry> ReadLeafEntries(long byteOffset, int keyLength, bool isCharacter)
+    private IReadOnlyList<LeafEntry> ReadLeafEntries(long byteOffset, int keyLength, byte pad)
     {
         if (_appendPageCache is null)
-            return _reader.ReadLeafEntries(byteOffset, keyLength, isCharacter);
+            return _reader.ReadLeafEntries(byteOffset, keyLength, pad);
 
         var page = TryReadPage(byteOffset);
         if (page is null || keyLength <= 0)
@@ -546,17 +546,17 @@ internal sealed class CdxTreeEditor : IDisposable
         if (!header.IsLeaf)
             return Array.Empty<LeafEntry>();
 
-        return CompactLeaf.Decode(page, keyLength, isCharacter);
+        return CompactLeaf.Decode(page, keyLength, pad);
     }
 
-    private IEnumerable<(uint Recno, byte[] Key)> EnumerateCompact(uint root, int keyLength, bool isCharacter)
+    private IEnumerable<(uint Recno, byte[] Key)> EnumerateCompact(uint root, int keyLength, byte pad)
     {
         if (_appendPageCache is null)
-            return IndexTraversal.EnumerateCompact(_reader, root, keyLength, isCharacter);
-        return EnumerateCompactCached(root, keyLength, isCharacter);
+            return IndexTraversal.EnumerateCompact(_reader, root, keyLength, pad);
+        return EnumerateCompactCached(root, keyLength, pad);
     }
 
-    private IEnumerable<(uint Recno, byte[] Key)> EnumerateCompactCached(uint root, int keyLength, bool isCharacter)
+    private IEnumerable<(uint Recno, byte[] Key)> EnumerateCompactCached(uint root, int keyLength, byte pad)
     {
         if (keyLength <= 0)
             yield break;
@@ -587,7 +587,7 @@ internal sealed class CdxTreeEditor : IDisposable
             if (!visited.Add(cur))
                 yield break;
 
-            foreach (var e in ReadLeafEntries(cur, keyLength, isCharacter))
+            foreach (var e in ReadLeafEntries(cur, keyLength, pad))
                 yield return (e.RecordNumber, e.Key);
 
             var header = ReadNodeHeader(cur);

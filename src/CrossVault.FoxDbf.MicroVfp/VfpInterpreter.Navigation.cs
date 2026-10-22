@@ -495,12 +495,13 @@ public sealed partial class VfpInterpreter
     }
 
     /// <summary>The stored-key bytes for a CHARACTER SET KEY bound: the natural CDX weights or IDX
-    /// code-page bytes, right-padded with spaces (0x20) to or truncated at the order's key length.</summary>
+    /// code-page bytes, right-padded to or truncated at the order's key length with the order's pad (blanks for
+    /// MACHINE and standalone IDX, 0x00 for a GENERAL / SPANISH tag — VFP9's stored form).</summary>
     private static byte[] PaddedCharacterKey(OrderSource src, VfpValue bound)
     {
         var natural = NaturalCharacterKey(src, bound);
         var key = new byte[src.KeyLength];
-        Array.Fill(key, (byte)0x20);
+        Array.Fill(key, src.CdxTag?.KeyPad ?? (byte)0x20);
         int copy = Math.Min(natural.Length, src.KeyLength);
         natural.AsSpan(0, copy).CopyTo(key);
         return key;
@@ -517,18 +518,27 @@ public sealed partial class VfpInterpreter
         return EncodeTagCharacterKey(src.CdxTag!, text);
     }
 
-    /// <summary>The natural (unpadded) byte needle used by interpreter character seeks on a CDX tag:
-    /// exactly the bytes the CDX builder stored for that value (see <see cref="CdxTag.EncodeCharacterKey"/>).</summary>
+    /// <summary>The PREFIX byte needle of an interpreter character SEEK on a CDX tag (VFP9 SEEK under SET EXACT
+    /// OFF): the stored bytes under MACHINE, the head weights only under GENERAL / SPANISH
+    /// (see <see cref="CdxTag.EncodeCharacterSeekKey"/>).</summary>
     private static byte[] NaturalCharacterSeekNeedle(CdxTag tag, VfpValue key)
-        => EncodeTagCharacterKey(tag, key.AsString ?? string.Empty);
+        => EncodeTagCharacterKey(tag, key.AsString ?? string.Empty, seekExact: false);
 
-    /// <summary><see cref="CdxTag.EncodeCharacterKey"/>, surfacing an unsupported collating sequence (a tag built
-    /// by VFP under e.g. GERMAN) as a catchable runtime error instead of a silent miss.</summary>
-    private static byte[] EncodeTagCharacterKey(CdxTag tag, string text)
+    /// <summary>The character byte needle a SEEK on <paramref name="src"/> compares: an IDX's code-page bytes, a CDX
+    /// tag's SEEK needle — the full stored key when <paramref name="exact"/>, else the prefix needle.</summary>
+    private static byte[] SeekCharacterNeedle(OrderSource src, VfpValue key, bool exact)
+        => src.Idx is not null
+            ? NaturalCharacterKey(src, key)
+            : EncodeTagCharacterKey(src.CdxTag!, key.AsString ?? string.Empty, seekExact: exact);
+
+    /// <summary><see cref="CdxTag.EncodeCharacterKey"/> (or, with <paramref name="seekExact"/> given, the SEEK needle
+    /// <see cref="CdxTag.EncodeCharacterSeekKey"/>), surfacing an unsupported collating sequence (a tag built by VFP
+    /// under e.g. GERMAN) as a catchable runtime error instead of a silent miss.</summary>
+    private static byte[] EncodeTagCharacterKey(CdxTag tag, string text, bool? seekExact = null)
     {
         try
         {
-            return tag.EncodeCharacterKey(text);
+            return seekExact is bool exact ? tag.EncodeCharacterSeekKey(text, exact) : tag.EncodeCharacterKey(text);
         }
         catch (NotSupportedException ex)
         {
@@ -941,7 +951,7 @@ public sealed partial class VfpInterpreter
         if (src is null) { m.Found = false; return false; }
 
         byte[]? characterNeedle = src.IsCharacterKey && key.Type == VfpType.Character
-            ? NaturalCharacterKey(src, key)
+            ? SeekCharacterNeedle(src, key, relationSeek && _ctx.Exact)
             : null;
 
         uint? recno = null;

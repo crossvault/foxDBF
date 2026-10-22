@@ -50,11 +50,19 @@ public sealed class CdxTag
     public uint RootPageOffset { get; }
 
     /// <summary>
-    /// True when the key is a CHARACTER key (compact-leaf trailing pad = 0x20);
-    /// false for numeric/date/datetime/integer keys (pad = 0x00). Derived from the
-    /// KEY expression + optional DBF schema.
+    /// True when the key is a CHARACTER key; false for numeric/date/datetime/integer keys. Derived from the
+    /// KEY expression + optional DBF schema. A character key pads with 0x20 under MACHINE and with 0x00 under a
+    /// weighted sequence (see <see cref="KeyPad"/>); every other key pads with 0x00.
     /// </summary>
     public bool IsCharacterKey { get; }
+
+    /// <summary>
+    /// The byte the stored keys of this tag are padded with up to <see cref="KeyLength"/>: 0x20 for a MACHINE
+    /// character key, 0x00 for a GENERAL / SPANISH (any weighted) character key and for every non-character key.
+    /// Taken from the sort sequence NAME in the tag header, so a tag under a sequence we cannot weight (GERMAN) still
+    /// reads with VFP's pad.
+    /// </summary>
+    internal byte KeyPad { get; }
 
     /// <summary>
     /// The logical key type (plan §C5), resolved from the <see cref="KeyExpression"/>
@@ -116,6 +124,7 @@ public sealed class CdxTag
         Collation = collation;
         RootPageOffset = rootPageOffset;
         IsCharacterKey = isCharacterKey;
+        KeyPad = isCharacterKey ? IndexKey.CharacterKeyPad(collation) : (byte)0x00;
         KeyType = keyType;
         CharacterEncoding = characterEncoding ?? IndexKey.ResolveCharacterEncoding(null, null);
         _collationSupport = VfpCollations.Resolve(collation, tableCodePage, out _collation);
@@ -135,6 +144,21 @@ public sealed class CdxTag
             throw new NotSupportedException(
                 $"Index tag '{Name}' uses collating sequence '{Collation}', which is not supported for SEEK (MACHINE, GENERAL and SPANISH are).");
         return IndexKey.EncodeCharacterKey(s.AsSpan(), _collation, CharacterEncoding, KeyLength);
+    }
+
+    /// <summary>
+    /// The needle VFP9's SEEK uses for the character value <paramref name="s"/> in this tag. With
+    /// <paramref name="exact"/> (SET EXACT ON) it is the full stored key (<see cref="EncodeCharacterKey"/>), matched
+    /// with the rest of the key all <see cref="KeyPad"/>. Without, it is a PREFIX needle: under a weighted sequence
+    /// only the head weights (the diacritic tails are ignored; VFP9: SEEK('áa') finds 'Aa', SEEK('Müller') finds
+    /// 'Muller' when that sorts first), under MACHINE the raw bytes.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The tag's sort sequence is unknown (see <see cref="EncodeCharacterKey"/>).</exception>
+    internal byte[] EncodeCharacterSeekKey(string s, bool exact)
+    {
+        if (exact || _collationSupport == CollationSupport.Unsupported)
+            return EncodeCharacterKey(s);
+        return IndexKey.EncodeCharacterPrefixNeedle(s.AsSpan(), _collation, CharacterEncoding, KeyLength);
     }
 
     /// <summary>
@@ -159,9 +183,10 @@ public sealed class CdxTag
     /// Raw-byte seek. With <paramref name="exact"/> <c>false</c> (the default) this is a PREFIX seek: the
     /// first key that carries <paramref name="keyBytes"/> as a prefix wins (VFP SET EXACT OFF). With
     /// <paramref name="exact"/> <c>true</c> it is an EXACT seek matching VFP SET EXACT ON: the key must
-    /// equal the needle padded with trailing BLANKS to the key length — so a short value still matches a
-    /// single-field key (the pad-blanks fill the field width) but a PREFIX of a COMPOSITE key does NOT
-    /// (the following key bytes are non-blank), landing the caller at EOF.
+    /// equal the needle padded with the tag's <see cref="KeyPad"/> to the key length (blanks under MACHINE, 0x00
+    /// under a weighted sequence) — so a short value still matches a single-field key (the pad fills the field
+    /// width) but a PREFIX of a COMPOSITE key does NOT (the following key bytes are not pad), landing the caller
+    /// at EOF.
     /// </summary>
     public uint? Seek(ReadOnlySpan<byte> keyBytes, bool exact)
     {
@@ -185,7 +210,7 @@ public sealed class CdxTag
         var needle = keyBytes.ToArray();
         foreach (var entry in EnumerateFrom(needle))
         {
-            int cmp = ComparePrefix(needle, entry.Key, exact);
+            int cmp = ComparePrefix(needle, entry.Key, exact, KeyPad);
             if (cmp == 0)
                 return entry.RecordNumber;   // (prefix) match → first matching record
             if (cmp < 0)
@@ -199,10 +224,10 @@ public sealed class CdxTag
     /// Unsigned byte comparison of <paramref name="needle"/> against the start of
     /// <paramref name="key"/>: returns 0 when they match, negative when the needle sorts
     /// before the key, positive after. When <paramref name="exact"/> is false a plain
-    /// prefix is a match; when true, any key bytes beyond the needle must all be BLANKS
-    /// (VFP EXACT-ON blank-padded equality), otherwise the needle sorts by that blank.
+    /// prefix is a match; when true, any key bytes beyond the needle must all be the tag's
+    /// <paramref name="pad"/> (VFP EXACT-ON padded equality), otherwise the needle sorts by that pad byte.
     /// </summary>
-    private static int ComparePrefix(byte[] needle, byte[] key, bool exact = false)
+    private static int ComparePrefix(byte[] needle, byte[] key, bool exact, byte pad)
     {
         int n = Math.Min(needle.Length, key.Length);
         for (int i = 0; i < n; i++)
@@ -215,17 +240,20 @@ public sealed class CdxTag
             return 1;             // key is a prefix of needle → needle sorts after.
         if (!exact)
             return 0;             // prefix seek: needle ⊑ key is a match.
-        // Exact seek: the needle is blank-padded to the key length, so the trailing key
-        // bytes must all be spaces to be equal; otherwise compare that blank vs the byte.
+        // Exact seek: the needle is padded to the key length, so the trailing key
+        // bytes must all be pad to be equal; otherwise compare that pad vs the byte.
         for (int i = needle.Length; i < key.Length; i++)
-            if (key[i] != (byte)' ')
-                return (byte)' ' - key[i];
+            if (key[i] != pad)
+                return pad - key[i];
         return 0;
     }
 
     /// <summary>
     /// Encodes <paramref name="value"/> to key bytes via this tag's
     /// <see cref="KeyType"/> transform, then seeks it (see <see cref="Seek(ReadOnlySpan{byte})"/>).
+    /// A character value seeks like VFP9's SEEK under SET EXACT OFF: a prefix seek whose needle, under a weighted
+    /// sequence (GENERAL / SPANISH), is the value's head weights only, so <c>Seek("áa")</c> lands on the first key
+    /// whose heads start with those of <c>áa</c>, which may be <c>Aa</c> (see <see cref="EncodeCharacterSeekKey"/>).
     /// Returns <see cref="NotFound"/> for an absent value, an unencodable type or a character key under an
     /// unsupported collating sequence. Never throws.
     /// </summary>
@@ -233,7 +261,7 @@ public sealed class CdxTag
     {
         // A character tag whose expression could not be typed (e.g. a UDF) still holds character keys.
         if ((KeyType == IndexKeyType.Character || (KeyType == IndexKeyType.Unknown && IsCharacterKey)) && value is string s)
-            return _collationSupport == CollationSupport.Unsupported ? NotFound : Seek(EncodeCharacterKey(s).AsSpan());
+            return _collationSupport == CollationSupport.Unsupported ? NotFound : Seek(EncodeCharacterSeekKey(s, exact: false).AsSpan());
 
         var keyBytes = IndexKey.Encode(value, KeyType);
         return keyBytes is null ? NotFound : Seek(keyBytes.AsSpan());
@@ -286,7 +314,7 @@ public sealed class CdxTag
     public IEnumerable<IndexEntry> EnumerateEntries()
     {
         var ascending = IndexTraversal
-            .EnumerateCompact(_index, RootPageOffset, KeyLength, IsCharacterKey)
+            .EnumerateCompact(_index, RootPageOffset, KeyLength, KeyPad)
             .Select(t => new IndexEntry(t.Recno, t.Key));
 
         if (!Descending)
@@ -331,7 +359,7 @@ public sealed class CdxTag
             if (!visited.Add(cur))
                 yield break; // corrupt sibling cycle
 
-            foreach (var e in _index.ReadLeafEntries(cur, KeyLength, IsCharacterKey))
+            foreach (var e in _index.ReadLeafEntries(cur, KeyLength, KeyPad))
                 yield return new IndexEntry(e.RecordNumber, e.Key);
 
             var header = _index.ReadNodeHeader(cur);

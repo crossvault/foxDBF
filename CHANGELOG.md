@@ -15,6 +15,23 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   W columns, the declared width and `IsLong = false` for V and Q (Varbinary was wrongly flagged as long).
   `GetSchema("Columns")` gives the same `CHARACTER_MAXIMUM_LENGTH` / `CHARACTER_OCTET_LENGTH`, and, as VFPOLEDB,
   none for numeric, date and logical columns (previously their field width).
+- GENERAL and SPANISH (weighted) CDX keys are padded with 0x00 up to the key length, as VFP9 pads them; MACHINE
+  keys keep the blank (0x20) pad. The reader, the bulk build, incremental row maintenance (leaves and interior
+  keys), exact `SEEK`, microVFP `SET KEY` bounds and the Highlike key statistics use the tag's pad. Keys that are a
+  prefix of one another now sit in VFP9's order (`Aa` = `60 60` before `áa` = `60 60 01`, `Muller` before
+  `Müller`, the empty key first), and a trailing weight 0x20 (the head of `/`) is stored as data instead of being
+  taken for pad. Our bulk-built leaves now hold the same entries as VFP9's `INDEX ON`, VFP9 SEEKs on our CDX as on
+  its own, and our SEEK and Rushmore find VFP9's rows on its CDX. The "cut, then lose the trailing 0x00 tail
+  bytes" rule listed for 0.10.0 is this pad. GENERAL/SPANISH CDX files written by an earlier version keep the
+  old order and lose a trailing `/` on read: REINDEX them.
+
+### Changed
+
+- BREAKING: A character `SEEK` on a GENERAL/SPANISH tag (`CdxTag.Seek(object)` and microVFP `SEEK`) uses VFP9's SET EXACT
+  OFF needle: only the head weights of the value, so the diacritics of the needle are ignored and the first key
+  whose heads start with them matches (`Seek("áa")` lands on `Aa`, `Seek("Müller")` on `Muller` when that sorts
+  first), exactly as VFP9's `SEEK`. The raw-byte `CdxTag.Seek(bytes, exact: true)` compares the rest of the key
+  against the tag's pad (0x00 for a weighted tag) instead of blanks.
 
 ## [0.10.0] - 2026-10-22
 

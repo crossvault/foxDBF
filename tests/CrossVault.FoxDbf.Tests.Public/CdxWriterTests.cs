@@ -700,15 +700,73 @@ public sealed class CdxWriterTests
             // Collated order: ADMIN(60 64) < Æ(60 66) < JMÖLCK(6b) < STRAßE(76).
             Assert.Equal(new[] { 3, 4, 1, 2 }, Recnos(tag));
 
-            // The two over-width keys must survive WHOLE (7 weight bytes), space-padded to 12 —
-            // proof the variable-length collated key was not truncated to the field width.
+            // The two over-width keys must survive WHOLE (7 weight bytes), padded to 12 with 0x00 (VFP9 pads a
+            // weighted key with 0x00) — proof the variable-length collated key was not truncated to the field width.
             var byRec = tag.EnumerateEntries().ToDictionary(e => (int)e.RecordNumber, e => e.Key);
             Assert.Equal(
-                new byte[] { 0x76, 0x77, 0x75, 0x60, 0x76, 0x76, 0x66, 0x20, 0x20, 0x20, 0x20, 0x20 },
+                new byte[] { 0x76, 0x77, 0x75, 0x60, 0x76, 0x76, 0x66, 0x00, 0x00, 0x00, 0x00, 0x00 },
                 byRec[2]);
             Assert.Equal(
-                new byte[] { 0x6b, 0x6f, 0x72, 0x6d, 0x62, 0x6c, 0x04, 0x20, 0x20, 0x20, 0x20, 0x20 },
+                new byte[] { 0x6b, 0x6f, 0x72, 0x6d, 0x62, 0x6c, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00 },
                 byRec[1]);
+        }
+        finally { Cleanup(dir); }
+    }
+
+    [Theory]
+    [InlineData("GENERAL")]
+    [InlineData("SPANISH")]
+    public void CharacterTag_Weighted_PadsWithZero_PrefixKeysSortShorterFirst_BulkAndIncremental(string collation)
+    {
+        // VFP9 pads a weighted key with 0x00 (MACHINE: 0x20). So a key that is a prefix of another sorts first
+        // (Aa = 60 60 before áa = 60 60 01, Muller before Müller, the empty key before everything) and the trailing
+        // weight 0x20 of '/' is data. VFP9 SEEK (EXACT OFF) compares only the head weights of the needle.
+        string dir = FreshTempDir();
+        try
+        {
+            var cols = new[] { new DbfColumnDef("NAME", 'C', 10) };
+            string[] values = { "áa", "Aa", "Müller", "Muller", "", "ab/", "ab", "/" };
+            var (dbf, cdx) = CreateWithTags(dir, cols, values.Select(v => new object?[] { v }),
+                new CdxTagDefinition("W", "NAME", collation: collation),
+                new CdxTagDefinition("M", "NAME"));
+
+            string incr = Path.Combine(dir, "incr.dbf");
+            using (var w = DbfWriter.Create(incr, cols))
+            {
+                w.CreateTag(new CdxTagDefinition("W", "NAME", collation: collation));
+                w.CreateTag(new CdxTagDefinition("M", "NAME"));
+            }
+            using (var w = DbfWriter.Open(incr))
+            {
+                foreach (var v in values) w.AppendRecord(v == "Aa" ? "zz" : v);
+                w.UpdateRecord(1, new object?[] { "Aa" });   // delete + re-insert in both trees
+            }
+
+            foreach (var path in new[] { dbf, incr })
+            {
+                using var table = DbfTable.Open(path);
+                using var cdxFile = CdxFile.Open(Path.ChangeExtension(path, ".cdx"), table);
+                var w = cdxFile.Tag("W")!;
+                Assert.Equal(new[] { 5, 8, 2, 1, 7, 6, 4, 3 }, Recnos(w));
+                var byRec = w.EnumerateEntries().ToDictionary(e => (int)e.RecordNumber, e => e.Key);
+                Assert.Equal(new byte[20], byRec[5]);
+                Assert.Equal(new byte[] { 0x20 }.Concat(new byte[19]).ToArray(), byRec[8]);
+                Assert.Equal(new byte[] { 0x60, 0x61, 0x20 }.Concat(new byte[17]).ToArray(), byRec[6]);
+
+                Assert.Equal(2u, w.Seek("áa"));                                    // heads only: lands on Aa
+                Assert.Equal(1u, w.Seek(w.EncodeCharacterKey("áa"), exact: true)); // full key: áa itself
+                Assert.Equal(4u, w.Seek("Müller"));
+                Assert.Equal(4u, w.Seek("Mü"));
+                Assert.Equal(3u, w.Seek(w.EncodeCharacterKey("Müller"), exact: true));
+                Assert.Null(w.Seek(w.EncodeCharacterKey("Mü"), exact: true));
+
+                // MACHINE keeps the blank pad.
+                var m = cdxFile.Tag("M")!;
+                Assert.Equal(new[] { 5, 8, 2, 4, 3, 7, 6, 1 }, Recnos(m));
+                Assert.Equal(Enumerable.Repeat((byte)0x20, 10).ToArray(),
+                    m.EnumerateEntries().Single(e => e.RecordNumber == 5).Key);
+                Assert.Equal(3u, m.Seek("Müller"));
+            }
         }
         finally { Cleanup(dir); }
     }

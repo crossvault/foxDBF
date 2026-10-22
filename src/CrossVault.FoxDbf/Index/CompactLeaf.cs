@@ -25,7 +25,8 @@ namespace CrossVault.FoxDbf.Index;
 /// The key is then rebuilt as <c>dup</c> prefix bytes copied from the PREVIOUS
 /// reconstructed key, followed by <c>keyLength - dup - trail</c> fresh bytes taken
 /// backward from the tail cursor, followed by <c>trail</c> pad bytes
-/// (<c>0x20</c> for a character tag, otherwise <c>0x00</c>).
+/// (<c>0x20</c> for a MACHINE character tag, otherwise <c>0x00</c> — a GENERAL / SPANISH key is
+/// padded with 0x00, see <see cref="IndexKey.CharacterKeyPad"/>).
 /// </summary>
 public static class CompactLeaf
 {
@@ -66,7 +67,14 @@ public static class CompactLeaf
     /// empty leaf and never throws on a malformed page.
     /// </summary>
     public static IReadOnlyList<LeafEntry> Decode(ReadOnlySpan<byte> page, int keyLength, bool isCharacter)
-        => Decode(page, keyLength, isCharacter, DecodePath.Auto);
+        => Decode(page, keyLength, isCharacter ? (byte)0x20 : (byte)0x00, DecodePath.Auto);
+
+    /// <summary>
+    /// As <see cref="Decode(ReadOnlySpan{byte},int,bool)"/> with the trailing <paramref name="pad"/> byte given
+    /// directly (a weighted character tag pads with <c>0x00</c>, a MACHINE one with <c>0x20</c>).
+    /// </summary>
+    internal static IReadOnlyList<LeafEntry> Decode(ReadOnlySpan<byte> page, int keyLength, byte pad)
+        => Decode(page, keyLength, pad, DecodePath.Auto);
 
     /// <summary>
     /// As <see cref="Decode(ReadOnlySpan{byte},int,bool)"/> but with an explicit
@@ -74,6 +82,9 @@ public static class CompactLeaf
     /// kernel differs between paths; the decoded result is byte-identical.
     /// </summary>
     internal static IReadOnlyList<LeafEntry> Decode(ReadOnlySpan<byte> page, int keyLength, bool isCharacter, DecodePath path)
+        => Decode(page, keyLength, isCharacter ? (byte)0x20 : (byte)0x00, path);
+
+    private static IReadOnlyList<LeafEntry> Decode(ReadOnlySpan<byte> page, int keyLength, byte pad, DecodePath path)
     {
         if (page.Length < LeafInfo.EntryArrayOffset || keyLength <= 0)
             return Array.Empty<LeafEntry>();
@@ -100,8 +111,6 @@ public static class CompactLeaf
         // Cap to what can physically fit in the 488-byte entry region so a
         // crafted KeyCount cannot drive an out-of-bounds read or huge alloc.
         keyCount = CapKeyCount(keyCount, kBy);
-
-        byte pad = isCharacter ? (byte)0x20 : (byte)0x00;
 
         // Resolve the field-extraction kernel ONCE for the whole page. The BMI2 path is
         // only ever taken when the CPU actually supports it, so an unsupported CPU (ARM,
@@ -161,7 +170,7 @@ public static class CompactLeaf
             }
             tail -= fresh;
 
-            // 3) `trail` pad bytes (0x20 for character tags, else 0x00).
+            // 3) `trail` pad bytes (0x20 for MACHINE character tags, else 0x00).
             for (int j = 0; j < trail; j++)
                 key[dup + fresh + j] = pad;
 

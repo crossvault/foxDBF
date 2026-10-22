@@ -353,10 +353,9 @@ public static class HighlikeStatistics
         if (IsIdentityCollation(tag.Collation))
             return tag.CharacterEncoding.GetString(keyBytes).TrimEnd(' ', '\0');
 
-        // Non-MACHINE collation: weight bytes. Trim the trailing 0x20 char-key pad (and any trailing
-        // 0x00) before hex-encoding so equal-but-differently-padded bounds compare equal.
+        // Non-MACHINE collation: weight bytes, padded with 0x00 (VFP9). Trim only that pad before hex-encoding so
+        // equal-but-differently-padded bounds compare equal; a trailing 0x20 is a weight (the head of '/'), not pad.
         ReadOnlySpan<byte> span = keyBytes;
-        span = span.TrimEnd((byte)0x20);
         span = span.TrimEnd((byte)0x00);
         return "0x" + Convert.ToHexString(span);
     }

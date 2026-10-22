@@ -394,7 +394,8 @@ internal static class CdxIndexBuilder
 
         var (keyType, baseLen, isChar) = ResolveKey(schema, def.KeyExpression);
         int keyLen = CollatedKeyLength(baseLen, isChar, collation);
-        byte pad = isChar ? (byte)0x20 : (byte)0x00;
+        // VFP9 pads a MACHINE character key with blanks and a weighted (GENERAL / SPANISH) one with 0x00.
+        byte pad = isChar ? IndexKey.CharacterKeyPad(def.Collation) : (byte)0x00;
 
         var keyFn = VfpExpression.Parse(def.KeyExpression).Compile(ctx);
         Func<IRowContext, VfpValue>? forFn = !string.IsNullOrWhiteSpace(def.ForExpression)
@@ -759,11 +760,11 @@ internal static class CdxIndexBuilder
     {
         if (type == IndexKeyType.Character)
         {
-            // Space-pad (0x20) the NATURAL collated key up to the (already collation-expanded) keyLen.
-            // MACHINE stores the raw TABLE code-page bytes (VFP9: CP850 'Peñarol' = 50 65 A4 ...).
-            // For GENERAL the natural key is the head+tail weight run, which for accented / ligature
-            // data is LONGER than the field width — keyLen is 2× the base width so it rarely is truncated;
-            // when heads+tails still overflow, the key is cut and loses its trailing 0x00 tails as in VFP9.
+            // Pad the NATURAL collated key up to the (already collation-expanded) keyLen: blanks under MACHINE,
+            // 0x00 under GENERAL / SPANISH (VFP9; see IndexKey.CharacterKeyPad). MACHINE stores the raw TABLE
+            // code-page bytes (VFP9: CP850 'Peñarol' = 50 65 A4 ...). For GENERAL the natural key is the head+tail
+            // weight run, which for accented / ligature data is LONGER than the field width — keyLen is 2× the base
+            // width so it rarely is truncated; when heads+tails still overflow, the key is cut at keyLen.
             var natural = value.IsNull
                 ? Array.Empty<byte>()
                 : IndexKey.EncodeCharacterKey(value.AsString.AsSpan(), collation, characterEncoding, keyLen);

@@ -66,8 +66,9 @@ public interface IVfpCollation
 
     /// <summary>
     /// Builds the collation key bytes for <paramref name="s"/> — the head/tail weight
-    /// bytes the host pads (with spaces, to the tag key length) to reproduce the
-    /// stored CDX key. For MACHINE this is simply the code-page (CP1252) encoding;
+    /// bytes the host pads to the tag key length (MACHINE with spaces, a weighted
+    /// collation with 0x00) to reproduce the stored CDX key. For MACHINE this is simply
+    /// the code-page (CP1252) encoding;
     /// for GENERAL it is the two-pass head+tail key. Consistent with <see cref="Compare"/>.
     /// </summary>
     byte[] GetCollatedKey(ReadOnlySpan<char> s);

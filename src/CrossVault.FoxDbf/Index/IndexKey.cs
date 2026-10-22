@@ -15,7 +15,8 @@ public enum IndexKeyType
     /// <summary>Type could not be resolved (no schema / composite expression / unknown column).</summary>
     Unknown = 0,
 
-    /// <summary>Character key (raw space-padded bytes; pad <c>0x20</c>).</summary>
+    /// <summary>Character key: raw code-page bytes padded with <c>0x20</c> under MACHINE, collation weights padded
+    /// with <c>0x00</c> under GENERAL / SPANISH (see <see cref="IndexKey.CharacterKeyPad"/>).</summary>
     Character,
 
     /// <summary>Integer (DBF type <c>I</c>): 4-byte big-endian with the sign bit flipped.</summary>
@@ -301,10 +302,11 @@ public readonly struct IndexKey
 
     /// <summary>
     /// <see cref="EncodeCharacterKey(ReadOnlySpan{char}, IVfpCollation, Encoding)"/> as stored in a tag whose keys
-    /// are <paramref name="keyLength"/> bytes. A weight key longer than that is cut to the key length and THEN loses
-    /// its trailing 0x00 tail bytes (VFP9: a C(8) GENERAL key whose heads+tails run past 16 bytes stores
-    /// <c>... 00 00 02</c> + blanks, not <c>... 00 00 02 00 00 00</c>). Weight heads are never 0x00, so only tail
-    /// bytes are trimmed. MACHINE keys are returned unchanged (a 0x00 there is data).
+    /// are <paramref name="keyLength"/> bytes. A weight key longer than that is cut to the key length; trailing
+    /// 0x00 tail bytes of the cut key are dropped, which changes no stored byte (a weighted key is padded with 0x00,
+    /// see <see cref="CharacterKeyPad"/>) and keeps the needle as short as the natural key of a value that fits.
+    /// Weight heads are never 0x00, so only tail bytes are trimmed. MACHINE keys are returned unchanged (a 0x00 there
+    /// is data).
     /// </summary>
     internal static byte[] EncodeCharacterKey(ReadOnlySpan<char> s, IVfpCollation collation, Encoding encoding, int keyLength)
     {
@@ -315,6 +317,34 @@ public readonly struct IndexKey
         while (n > 0 && key[n - 1] == 0) n--;
         return key.AsSpan(0, n).ToArray();
     }
+
+    /// <summary>
+    /// The SEEK needle VFP9 builds for the character value <paramref name="s"/> with SET EXACT OFF: under a weighted
+    /// collation only the HEAD (primary) weights, so the diacritic tails of the needle are ignored and the first key
+    /// whose heads start with them matches (VFP9: SEEK('áa') lands on 'Aa', SEEK('Müller') on 'Muller' when that sorts
+    /// first). Under MACHINE the raw code-page bytes, exactly as <see cref="EncodeCharacterKey(ReadOnlySpan{char},
+    /// IVfpCollation, Encoding, int)"/>. Cut to <paramref name="keyLength"/>.
+    /// </summary>
+    internal static byte[] EncodeCharacterPrefixNeedle(ReadOnlySpan<char> s, IVfpCollation collation, Encoding encoding, int keyLength)
+    {
+        if (collation is not GeneralCollation general)
+            return EncodeCharacterKey(s, collation, encoding, keyLength);
+        var heads = general.GetHeadKey(s);
+        return heads.Length <= keyLength ? heads : heads.AsSpan(0, Math.Max(0, keyLength)).ToArray();
+    }
+
+    /// <summary>
+    /// The byte VFP9 pads a stored CHARACTER key with up to the tag key length, by the tag's sort sequence name as
+    /// stored in its header: <c>0x20</c> under MACHINE (or no name), <c>0x00</c> under every weighted sequence
+    /// (GENERAL, SPANISH and any other, including one we cannot weight such as GERMAN). Keys that are a prefix of one
+    /// another therefore sort shorter-first in a weighted tag (<c>Aa</c> = 60 60 before <c>áa</c> = 60 60 01), and a
+    /// trailing weight 0x20 (the head of '/') is data there, not pad. Non-character keys always pad with 0x00.
+    /// </summary>
+    internal static byte CharacterKeyPad(string? sortSequence)
+        => string.IsNullOrWhiteSpace(sortSequence)
+           || string.Equals(sortSequence.Trim(), VfpCollations.Machine.Name, StringComparison.OrdinalIgnoreCase)
+            ? (byte)0x20
+            : (byte)0x00;
 
     /// <summary>True for the identity (MACHINE) collation, whose keys are raw code-page bytes.</summary>
     internal static bool IsMachineCollation(IVfpCollation collation)
