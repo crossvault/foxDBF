@@ -97,7 +97,7 @@ internal sealed class DmlExecutor
         return values;
     }
 
-    /// <summary>An explicit column list's name → value map (omitted columns follow DEFAULT / SET NULL),
+    /// <summary>An explicit column list's column name → value map (omitted columns follow DEFAULT / SET NULL),
     /// validating the count and every name.</summary>
     private static Dictionary<string, object?> MapValues(InsertStatement st, IReadOnlyList<DbfColumn> columns, object?[] values)
     {
@@ -109,7 +109,8 @@ internal sealed class DmlExecutor
         var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < cols.Count; i++)
         {
-            if (IndexOfColumn(columns, cols[i]) < 0)
+            int index = IndexOfColumn(columns, cols[i]);
+            if (index < 0)
                 // VFP treats an unknown name in the INSERT column-list as an undefined VARIABLE, not an
                 // SQL column: err 12 "Variable '...' is not found." (oracle-pinned against the VFP9
                 // runtime, project-review 5.3). Typed so the interpreter's ErrorNumberOf carries the
@@ -117,7 +118,9 @@ internal sealed class DmlExecutor
                 // mis-map it to err 1 "File does not exist").
                 throw new FoxDbfSqlException($"Column '{cols[i]}' does not exist in table '{st.Table}'.")
                     { VfpErrorNumber = 12 };
-            map[cols[i]] = values[i];
+            // Keyed by the schema's name, so the omitted-column checks see the column as supplied however the
+            // list spelled it.
+            map[columns[index].Name] = values[i];
         }
         return map;
     }

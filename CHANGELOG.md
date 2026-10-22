@@ -288,9 +288,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   current work area (so a stored-procedure DEFAULT such as TasTrade's `newid()` reads the right `ALIAS()`),
   for `INSERT … VALUES`, `INSERT … FROM MEMVAR` and a buffered `INSERT` (whose DEFAULTs show in the buffer
   before `TABLEUPDATE()`). A short `INSERT … FROM ARRAY` row still leaves the fields it does not reach blank, as
-  in VFP9. This includes stored procedures called through the ADO.NET provider. A plain ADO.NET command
-  without `EnforceRules=on` still takes the raw path and does not evaluate DEFAULTs. Inside a DEFAULT,
-  `RECCOUNT()` does not yet count the new row (VFP9's does).
+  in VFP9. Under `SET NULL ON` the fields are taken in order and the first omitted NOT NULL field without a
+  DEFAULT rejects the row with error 1581, so DEFAULTs after it never run (a counter UDF such as `newid()`
+  still advances for the ones before it, as in VFP9). This includes stored procedures called through the
+  ADO.NET provider. A plain ADO.NET command without `EnforceRules=on` still takes the raw path and does not
+  evaluate DEFAULTs. Inside a DEFAULT, `RECCOUNT()` does not yet count the new row (VFP9's does). A DEFAULT
+  that microVFP cannot evaluate (for instance a UDF whose stored procedures were not loaded with
+  `LoadStoredProceduresFromDatabase()`) now rejects the row; because a microVFP `INSERT` swallows its errors,
+  no row lands, where before it landed with that column blank.
 
 ## [0.10.0] - 2026-10-22
 
