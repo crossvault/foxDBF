@@ -10,24 +10,16 @@ namespace CrossVault.FoxDbf.Write;
 /// <see cref="CrossVault.FoxDbf.Index.IdxFile"/>. Unlike the compact CDX, a legacy IDX node is
 /// UNCOMPRESSED: each entry is <c>[key(KeyLength)] [pointer(4, BIG-endian)]</c> and the 512-byte
 /// header stores the KEY / FOR expression text inline. Computes every key via the expression engine,
-/// sorts the (key, recno) pairs by unsigned key bytes (recno tiebreak), bulk-loads a balanced B-tree
-/// into 512-byte pages, and writes the file.
+/// sorts the (key, recno) pairs by unsigned key bytes (recno tiebreak), lays them out in the B-tree VFP9's
+/// <c>INDEX ON … TO</c> builds (see <see cref="Layout"/>) and writes the file.
 /// </summary>
 /// <remarks>
-/// GUARANTEES (what the oracle pins):
-/// <list type="bullet">
-/// <item>SINGLE-LEAF (fits one 512-byte node): byte-for-byte identical to VFP9 in every DETERMINISTIC
-/// region — the header (@0 root, @4 free=−1, @8 eof, @12 key length, @14 options, @15 signature 0x01,
-/// @16 KEY text, @236 FOR text) and every used leaf entry. VFP leaves the node SLACK filled with
+/// GUARANTEE (what the oracles pin): byte-for-byte identical to VFP9 in every DETERMINISTIC region, single leaf
+/// or many levels — the header page (@0 root, @4 free=−1, @8 eof, @12 key length, @14 options, @15 signature
+/// 0x01, @16 KEY text, @236 FOR text) and, on every page, the node header (attribute, key count, sibling links)
+/// and every used entry (leaf: key + recno, branch: key + child offset). VFP leaves the node SLACK filled with
 /// uninitialised heap memory (non-deterministic even run-to-run); this builder zero-fills it — the reader
-/// ignores the slack, so behaviour is identical.</item>
-/// <item>MULTI-LEAF (needs branch nodes) and non-character (INTEGER/NUMERIC/DATE) keys: a VALID,
-/// VFP9-READABLE B-tree — VFP9 opens it and SEEK/SCANs it in the correct order (oracle-verified). It is
-/// NOT byte-for-byte identical to VFP9's own multi-leaf file: this builder's greedy leaf packing +
-/// append-branches-last page layout differs from VFP9's balanced-leaf / root-after-header layout (same
-/// total size, different page order and per-leaf counts). Full physical parity for the general case is
-/// out of scope; the writer→<see cref="IdxFile"/>-reader round-trip and VFP9-readability are what hold.</item>
-/// </list>
+/// ignores the slack, so behaviour is identical. Only the uncompressed format is written (no COMPACT .idx).
 /// </remarks>
 internal static class IdxIndexBuilder
 {
@@ -142,77 +134,129 @@ internal static class IdxIndexBuilder
     private static void WriteFile(string idxPath, List<Entry> entries, int keyLen, byte options,
         byte[] keyText, byte[] forText)
     {
-        int entrySize = keyLen + 4;
-        int perLeaf = Math.Max(1, (Page - StdHeader) / entrySize);
+        var layout = Layout(entries.Count, keyLen);
+        var pages = new byte[layout.PageCount][];
+        for (int i = 0; i < pages.Length; i++) pages[i] = new byte[Page];
 
-        // Slice the sorted entries into leaves.
-        var leafSlices = new List<List<Entry>>();
-        if (entries.Count == 0)
-            leafSlices.Add(new List<Entry>());
-        else
-            for (int i = 0; i < entries.Count; i += perLeaf)
-                leafSlices.Add(entries.GetRange(i, Math.Min(perLeaf, entries.Count - i)));
-
-        var sink = new PageSink();
-        sink.Reserve();                                   // page 0: header (filled last)
-
-        // Reserve every leaf page first so siblings can reference each other.
-        var leafIndex = new int[leafSlices.Count];
-        for (int i = 0; i < leafSlices.Count; i++) leafIndex[i] = sink.Reserve();
-
-        bool singleLeaf = leafSlices.Count == 1;
-        for (int i = 0; i < leafSlices.Count; i++)
+        // Leaves: the sorted entries in VFP's per-leaf counts, each on VFP's page.
+        var leaves = layout.Levels[0];
+        bool singleLeaf = leaves.Count == 1;
+        var level = new List<ChildRef>(leaves.Count);
+        int start = 0;
+        for (int i = 0; i < leaves.Count; i++)
         {
-            uint left = i > 0 ? (uint)(leafIndex[i - 1] * Page) : NoPtr;
-            uint right = i < leafSlices.Count - 1 ? (uint)(leafIndex[i + 1] * Page) : NoPtr;
+            var items = entries.GetRange(start, leaves[i].Count);
+            start += leaves[i].Count;
             ushort attr = (ushort)(AttrLeaf | (singleLeaf ? AttrRoot : 0));
-            WriteLeaf(sink.At(leafIndex[i]), leafSlices[i], keyLen, attr, left, right);
+            WriteLeaf(pages[leaves[i].Page], items, keyLen, attr, SiblingOffset(leaves, i - 1), SiblingOffset(leaves, i + 1));
+            // An empty index is a single empty root leaf; it is never referenced by a branch.
+            level.Add(new ChildRef((uint)(leaves[i].Page * Page), items.Count > 0 ? items[^1].Key : Array.Empty<byte>()));
         }
 
-        uint root;
-        if (singleLeaf)
-        {
-            root = (uint)(leafIndex[0] * Page);
-        }
-        else
-        {
-            // Build interior levels: one entry per child (separator = child's LAST key), until one root.
-            var level = new List<ChildRef>(leafSlices.Count);
-            for (int i = 0; i < leafSlices.Count; i++)
-                level.Add(new ChildRef((uint)(leafIndex[i] * Page), leafSlices[i][^1].Key));
-            while (level.Count > 1)
-                level = BuildBranchLevel(sink, level, keyLen);
-            root = level[0].Offset;
-        }
+        // Branch levels: one entry per child (separator = the child's LAST key), grouped as VFP groups them.
+        for (int h = 1; h < layout.Levels.Count; h++)
+            level = BuildBranchLevel(pages, level, keyLen, layout.Levels[h], isRoot: h == layout.Levels.Count - 1);
 
-        long eof = (long)sink.PageCount * Page;
-        WriteHeader(sink.At(0), root, (ushort)keyLen, options, keyText, forText, (uint)eof);
-        File.WriteAllBytes(idxPath, sink.ToArray());
+        uint root = level[0].Offset;
+        WriteHeader(pages[0], root, (ushort)keyLen, options, keyText, forText, (uint)(pages.Length * Page));
+        var buf = new byte[pages.Length * Page];
+        for (int i = 0; i < pages.Length; i++) pages[i].CopyTo(buf, i * Page);
+        File.WriteAllBytes(idxPath, buf);
     }
 
-    private static List<ChildRef> BuildBranchLevel(PageSink sink, List<ChildRef> children, int keyLen)
+    private static uint SiblingOffset(List<Node> nodes, int i)
+        => i >= 0 && i < nodes.Count ? (uint)(nodes[i].Page * Page) : NoPtr;
+
+    private static List<ChildRef> BuildBranchLevel(byte[][] pages, List<ChildRef> children, int keyLen,
+        List<Node> nodes, bool isRoot)
     {
-        int entrySize = keyLen + 4;
-        int maxPer = Math.Max(1, (Page - StdHeader) / entrySize);
-
-        var groups = new List<List<ChildRef>>();
-        for (int i = 0; i < children.Count; i += maxPer)
-            groups.Add(children.GetRange(i, Math.Min(maxPer, children.Count - i)));
-
-        // Reserve the branch pages first (sibling links).
-        var idx = new int[groups.Count];
-        for (int i = 0; i < groups.Count; i++) idx[i] = sink.Reserve();
-
-        bool isRoot = groups.Count == 1;
-        var result = new List<ChildRef>(groups.Count);
-        for (int n = 0; n < groups.Count; n++)
+        var result = new List<ChildRef>(nodes.Count);
+        int start = 0;
+        for (int n = 0; n < nodes.Count; n++)
         {
-            uint left = n > 0 ? (uint)(idx[n - 1] * Page) : NoPtr;
-            uint right = n < groups.Count - 1 ? (uint)(idx[n + 1] * Page) : NoPtr;
-            WriteBranch(sink.At(idx[n]), groups[n], keyLen, (ushort)(isRoot ? AttrRoot : 0), left, right);
-            result.Add(new ChildRef((uint)(idx[n] * Page), groups[n][^1].Key));
+            var kids = children.GetRange(start, nodes[n].Count);
+            start += nodes[n].Count;
+            WriteBranch(pages[nodes[n].Page], kids, keyLen, (ushort)(isRoot ? AttrRoot : 0),
+                SiblingOffset(nodes, n - 1), SiblingOffset(nodes, n + 1));
+            result.Add(new ChildRef((uint)(nodes[n].Page * Page), kids[^1].Key));
         }
+        if (start != children.Count)
+            throw new InvalidOperationException($"IDX branch layout covers {start} of {children.Count} children.");
         return result;
+    }
+
+    /// <summary>A node of the tree: its page number and its entry (leaf) or child (branch) count.</summary>
+    internal readonly record struct Node(int Page, int Count);
+
+    /// <summary>
+    /// The tree VFP9's <c>INDEX ON … TO x.idx</c> builds over <paramref name="entryCount"/> sorted entries:
+    /// every node with its page and entry count, level by level from the leaves (level 0) up to the root, and
+    /// the file's page count (header page included).
+    /// <para>
+    /// VFP9 grows the tree as if the sorted keys were inserted one by one. The root stays on page 1 (right after
+    /// the header); a root split takes the next two pages (the right half on the lower one), every other new
+    /// node the next page, in the order nodes appear (a leaf first, then the cascade bottom-up). Every node,
+    /// leaf or branch, holds up to 500 / (key length + 4) entries. When a full node gets one more entry, a new
+    /// node opens to its right with just that entry — except when the full node sits on an ODD page and an
+    /// entry is shorter than 50 bytes (key length &lt;= 45): then it also gives up its last entry (it keeps
+    /// capacity-1, the new node starts with 2). The same rule as the CDX branch levels
+    /// (<see cref="CdxIndexBuilder"/>), with the 4-byte entries of the uncompressed format, and applied to the
+    /// leaves as well (key length 45: leaves of 9/10/10/9/10/9…). Derived from VFP9 over 335 trees (key
+    /// lengths 1-96, up to five levels): every node's count, every page number and the file size reproduce.
+    /// </para>
+    /// </summary>
+    internal static (List<List<Node>> Levels, int PageCount) Layout(int entryCount, int keyLen)
+    {
+        const int rootPage = 1;
+        int entrySize = keyLen + 4;
+        int cap = Math.Max(2, (Page - StdHeader) / entrySize);
+        bool givesUpLast = entrySize < 50;
+        int next = rootPage + 1;
+        var levels = new List<List<Node>> { new() { new Node(rootPage, 0) } };
+
+        int remaining = entryCount;
+        while (remaining > 0)
+        {
+            var leaves = levels[0];
+            int room = cap - leaves[^1].Count;
+            if (room > 0)
+            {
+                // Fill the rightmost leaf in one step: nothing splits until it is full.
+                int take = Math.Min(room, remaining);
+                leaves[^1] = leaves[^1] with { Count = leaves[^1].Count + take };
+                remaining -= take;
+                continue;
+            }
+
+            // One more entry for a full leaf: split, and cascade up while the parent is full as well.
+            remaining--;
+            for (int h = 0; ; h++)
+            {
+                var level = levels[h];
+                var node = level[^1];
+                if (node.Count < cap)
+                {
+                    level[^1] = node with { Count = node.Count + 1 };
+                    break;
+                }
+
+                int keep = givesUpLast && (node.Page & 1) == 1 ? cap - 1 : cap;
+                if (h == levels.Count - 1)
+                {
+                    // Root split: its entries go to two new nodes, the root (same page) gets a level above them.
+                    int right = next++;
+                    int left = next++;
+                    level[^1] = new Node(left, keep);
+                    level.Add(new Node(right, cap + 1 - keep));
+                    levels.Add(new List<Node> { new(rootPage, 2) });
+                    break;
+                }
+
+                level[^1] = node with { Count = keep };
+                level.Add(new Node(next++, cap + 1 - keep));
+            }
+        }
+        return (levels, next);
     }
 
     private static void WriteLeaf(byte[] page, List<Entry> items, int keyLen, ushort attr, uint left, uint right)
@@ -302,20 +346,6 @@ internal static class IdxIndexBuilder
             }
             if (x.Key.Length != y.Key.Length) return x.Key.Length - y.Key.Length;
             return x.Recno.CompareTo(y.Recno);
-        }
-    }
-
-    private sealed class PageSink
-    {
-        private readonly List<byte[]> _pages = new();
-        public int PageCount => _pages.Count;
-        public int Reserve() { _pages.Add(new byte[Page]); return _pages.Count - 1; }
-        public byte[] At(int index) => _pages[index];
-        public byte[] ToArray()
-        {
-            var buf = new byte[_pages.Count * Page];
-            for (int i = 0; i < _pages.Count; i++) Array.Copy(_pages[i], 0, buf, i * Page, Page);
-            return buf;
         }
     }
 }
