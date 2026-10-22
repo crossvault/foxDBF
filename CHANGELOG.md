@@ -313,8 +313,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   (`WHERE ISNULL(n)`, `COUNT(n)`, `INTO ARRAY`, `INTO CURSOR`). As in VFP9, such a field now reads as its
   empty value (0, `{}`, `""`) with `ISNULL()` `.F.` and `EMPTY()` `.T.`; only a set null bit is `.NULL.`.
   `SELECT … INTO CURSOR`/`TABLE` from microVFP makes a column NULL-able when a `.NULL.` lands in it, so the
-  value stays `.NULL.` there. `EMPTY(.NULL.)` now returns `.F.`, as in VFP9. `DbfRecord`, `VfpSession.Execute`
-  and ADO.NET are unchanged: a blank N/F/D/T/M field still reads as `null` (`IsDBNull` true).
+  value stays `.NULL.` there. In microVFP `EMPTY(.NULL.)` now returns `.F.`, as in VFP9. `DbfRecord`,
+  `VfpSession.Execute` and ADO.NET are unchanged: a blank N/F/D/T/M field still reads as `null` (`IsDBNull`
+  true), and there `EMPTY()` still matches it.
 
 ## [0.10.0] - 2026-10-22
 
