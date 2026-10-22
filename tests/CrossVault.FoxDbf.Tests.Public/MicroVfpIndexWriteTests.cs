@@ -388,13 +388,13 @@ public sealed class MicroVfpIndexWriteTests
     }
 
     // #6 — the live SET EXACT is propagated into KEY/FOR expression evaluation during the build. With
-    // SET EXACT ON (the microVFP default) `city = 'berl'` matches NOTHING; with SET EXACT OFF it matches
-    // the two 'berlin' rows (prefix compare) — so the two builds produce different tag membership.
+    // SET EXACT ON `city = 'berl'` matches NOTHING; with SET EXACT OFF (the default) it matches the two
+    // 'berlin' rows (prefix compare) — so the two builds produce different tag membership.
     [Fact]
     public void IndexOn_ForFilter_HonoursLiveSetExact()
     {
         using var b = new Bench();
-        b.Run("USE people\nINDEX ON id TAG eon FOR city = 'berl'");
+        b.Run("SET EXACT ON\nUSE people\nINDEX ON id TAG eon FOR city = 'berl'");
         Assert.Equal(0, b.TagEntryCount("eon"));    // EXACT ON: 'berlin' <> 'berl'.
 
         b.Run("SET EXACT OFF\nINDEX ON id TAG eoff FOR city = 'berl'");

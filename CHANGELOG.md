@@ -48,8 +48,16 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   SET`) and SQL results (`SELECT *`, `SELECT name`, ADO.NET readers) carry a character field at its full width,
   as a VFP cursor does: `SELECT name` returns `'Smith     '` for a C(10), an Xbase filter (`QueryOptimizer`)
   `name == 'Smith'` is false on it (VFP: `ALLTRIM(name) == 'Smith'` or `name = 'Smith'`; SQL `==` pads and
-  matches), and `UPDATE … SET name = name + 'x'` leaves the field unchanged. `DbfRecord`'s indexer still returns the trimmed value; microVFP keeps its right-trimmed field
-  reads.
+  matches), and `UPDATE … SET name = name + 'x'` leaves the field unchanged. `DbfRecord`'s indexer still returns
+  the trimmed value.
+- BREAKING: microVFP reads a character field at its full declared width as well (pinned by a VFP9 golden master,
+  `vfp_test/mvfpwidth`): `LEN(name)` is the field width, leading and trailing blanks stay, on disk as in a
+  buffered edit or appended row, through `OLDVAL()`/`CURVAL()`, memory variable copies, `SCATTER` (`SCATTER …
+  BLANK` gives blanks of the field width) and `TOTAL`. `name == 'abc'` is false for a C(10) (`name ==
+  PADR('abc', 10)` or `ALLTRIM(name) == 'abc'`), `REPLACE name WITH name + 'x'` leaves the field unchanged, and a
+  field value used as a `SEEK` needle carries its trailing blanks. The interpreter now starts under VFP's default
+  SET EXACT OFF instead of forcing SET EXACT ON (also on the `VfpSession` it runs on, and for a new data
+  session): `name = 'ab'` matches `'abc'` and `'abcdef'` unless the program sets SET EXACT ON.
 - BREAKING: A character `SEEK` on a GENERAL/SPANISH tag (`CdxTag.Seek(object)` and microVFP `SEEK`) uses VFP9's SET EXACT
   OFF needle: only the head weights of the value, so the diacritics of the needle are ignored and the first key
   whose heads start with them matches (`Seek("áa")` lands on `Aa`, `Seek("Müller")` on `Muller` when that sorts

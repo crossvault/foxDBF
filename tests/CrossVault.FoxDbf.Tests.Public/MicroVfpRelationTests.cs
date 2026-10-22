@@ -284,11 +284,11 @@ public sealed class MicroVfpRelationTests
         }
     }
 
-    /// <summary>At the microVFP DEFAULT (SET EXACT ON) a relation key that is only the cust_id PREFIX of the
-    /// composite cust_id+ord_id child key does NOT match — the child lands at EOF (hackfox quirk 1,
-    /// VFP9-confirmed: EXACT ON → child EOF; the prefix match is EXACT-OFF-only).</summary>
+    /// <summary>Under SET EXACT ON a relation key that is only the cust_id PREFIX of the composite cust_id+ord_id
+    /// child key does NOT match — the child lands at EOF (hackfox quirk 1, VFP9-confirmed: EXACT ON → child EOF;
+    /// the prefix match is EXACT-OFF-only).</summary>
     [Fact]
-    public void SetRelation_PrefixOfCompositeChildKey_GoesEofUnderDefaultExactOn()
+    public void SetRelation_PrefixOfCompositeChildKey_GoesEofUnderExactOn()
     {
         var b = new Bench();
         b.CreateTable("customer", new[] { C("cust_id", 4), C("cname", 10) }, w =>
@@ -305,8 +305,7 @@ public sealed class MicroVfpRelationTests
         using (b)
         {
             b.Run("SELECT 0\nUSE customer\nSELECT 0\nUSE orders\nINDEX ON cust_id+ord_id TAG custord2");
-            // NOTE: deliberately NO `SET EXACT OFF` — this pins the behaviour on microVFP's default (ON).
-            b.Run("SELECT customer\nSET RELATION TO cust_id INTO orders\nGO TOP");   // A001
+            b.Run("SET EXACT ON\nSELECT customer\nSET RELATION TO cust_id INTO orders\nGO TOP");   // A001
             Assert.True(b.Bool("EOF('orders')"));
             b.Run("GO 2");                                                          // A002
             Assert.True(b.Bool("EOF('orders')"));

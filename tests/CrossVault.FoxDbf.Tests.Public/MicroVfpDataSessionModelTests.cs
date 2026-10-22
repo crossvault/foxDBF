@@ -164,16 +164,16 @@ public sealed class MicroVfpDataSessionModelTests
         var it = f.New(out var s);
         using (s)
         {
-            // Mutate session 1 AWAY from the microVFP baseline (DELETED ON / EXACT ON).
+            // Mutate session 1 AWAY from the microVFP baseline (DELETED ON / EXACT OFF).
             it.Execute("SET DELETED OFF");
-            it.Execute("SET EXACT OFF");
+            it.Execute("SET EXACT ON");
             Assert.Equal("OFF", Str(it, "SET('DELETED')"));
 
             // A newly created session starts at the DEFAULT baseline — NOT a copy of session 1's mutated state.
             int id = it.CreateDataSession();
             it.Execute("SET DATASESSION TO " + id);
             Assert.Equal("ON", Str(it, "SET('DELETED')"));      // default, not the copied OFF.
-            Assert.Equal("ON", Str(it, "SET('EXACT')"));
+            Assert.Equal("OFF", Str(it, "SET('EXACT')"));       // default, not the copied ON.
         }
     }
 

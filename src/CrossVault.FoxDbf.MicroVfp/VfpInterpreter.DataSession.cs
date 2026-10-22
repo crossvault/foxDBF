@@ -163,12 +163,12 @@ public sealed partial class VfpInterpreter
     }
 
     /// <summary>The SET/evaluation context a NEW data session starts with: the microVFP BASELINE defaults
-    /// (SET DELETED ON, SET EXACT ON, Latin1) — the same baseline the ctor applies to session 1, and NOT a
+    /// (SET DELETED ON, SET EXACT OFF, Latin1) — the same baseline the ctor applies to session 1, and NOT a
     /// copy of the current session's (possibly mutated) settings. Consistent per-session start point; the
     /// oracle test pins that DELETED/EXACT are session-SCOPED (isolated), which is the load-bearing fact.</summary>
     private static EvaluationContext FreshSessionContext()
     {
-        var c = new EvaluationContext { Exact = true, Deleted = true };
+        var c = new EvaluationContext { Exact = false, Deleted = true };
         c.Encoding ??= Encoding.Latin1;
         return c;
     }

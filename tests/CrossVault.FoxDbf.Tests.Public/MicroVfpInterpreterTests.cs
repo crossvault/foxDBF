@@ -252,9 +252,10 @@ PROCEDURE repl_one
 ";
             interp.Load(PrgParser.Parse(prg));
             string r = interp.Call("repl_one").AsString;
-            // record 1 now 'XX'; record 2 is whatever it was — must NOT be 'XX'.
-            Assert.StartsWith("XX|", r);
-            Assert.NotEqual("XX|XX", r);
+            // record 1 now 'XX' (setup.value is a C(6), read at its full width as in VFP); record 2 is whatever it was
+            // — must NOT be 'XX'.
+            Assert.StartsWith("XX    |", r);
+            Assert.NotEqual("XX    |XX", r);
         }
     }
 

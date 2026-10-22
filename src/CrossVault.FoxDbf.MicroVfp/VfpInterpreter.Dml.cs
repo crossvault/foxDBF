@@ -934,7 +934,8 @@ public sealed partial class VfpInterpreter
 
     private static VfpValue BlankValueFor(DbfColumn col) => col.Type switch
     {
-        'C' or 'V' or 'M' or 'G' or 'P' or 'W' => VfpValue.Character(string.Empty),
+        'C' => VfpValue.Character(new string(' ', col.Length)),
+        'V' or 'M' or 'G' or 'P' or 'W' => VfpValue.Character(string.Empty),
         'I' => VfpValue.Integer(0),
         'N' or 'F' or 'B' or 'Y' => VfpValue.Number(0m),
         'L' => VfpValue.Logical(false),

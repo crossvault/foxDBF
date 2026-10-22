@@ -59,8 +59,8 @@ public sealed partial class VfpInterpreter
             if (edit is not null && !edit.Old.ContainsKey(field))
                 edit.Old[field] = ReadFieldOnDisk(wa, field);   // capture the buffer-start (on-disk) value once.
             var v = Eval(clause.Value);
-            char type = wa.Table.Columns[idx].Type;
-            target[idx] = v.IsNull ? null : (type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
+            var col = wa.Table.Columns[idx];
+            target[idx] = v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
         }
     }
 
@@ -96,8 +96,8 @@ public sealed partial class VfpInterpreter
             if (idx < 0 || idx >= wa.Table.Columns.Count) continue;
             VfpValue v;
             try { v = stmt.Values[i].Evaluate(_row, _ctx); } catch { v = VfpValue.Null; }
-            char type = wa.Table.Columns[idx].Type;
-            ae.Fields[idx] = v.IsNull ? null : (type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
+            var col = wa.Table.Columns[idx];
+            ae.Fields[idx] = v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
         }
         (m.Buf ??= new TableBuffer()).Appends.Add(ae);
     }

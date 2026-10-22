@@ -23,10 +23,10 @@ namespace CrossVault.FoxDbf.MicroVfp;
 //  by-ref / by-value parameter passing, the runtime STATE functions and the
 //  statement tree-walk. See analysis/MICROVFP_SEMANTICS.md.
 //
-//  Char field reads are RIGHT-trimmed (trailing blanks/NULs) — this preserves the
-//  leading-justified width VFP relies on (e.g. LEN(setup.value)=6) while matching
-//  the library's trimmed convention; combined with SET EXACT ON it reproduces VFP's
-//  field-vs-field "=" without the SET EXACT OFF short-pattern over-match.
+//  A C field reads at its full declared width, leading and trailing blanks kept
+//  (LEN(field) = width), as VFP9 sees it — on disk, in the edit/append buffer and
+//  through OLDVAL/CURVAL (a V field is still right-trimmed). SET EXACT starts OFF,
+//  VFP's default, so field = field and field = literal compare as in VFP.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>A tree-walking interpreter for microVFP stored procedures over a <see cref="VfpSession"/>.</summary>
@@ -157,10 +157,10 @@ public sealed partial class VfpInterpreter
         Runtime = new RuntimeState();
         _row = new Row(this);
         _ctx = session.Context;
-        // VFP runtime defaults the SP corpus + oracle harness run under, plus the field-read policy
-        // (see header): SET DELETED ON, MACHINE collation, and — paired with RIGHT-trimmed char reads
-        // — SET EXACT ON so a field = field comparison is equality (no SET-EXACT-OFF prefix over-match).
-        _ctx.Exact = true;
+        // VFP runtime defaults the SP corpus + oracle harness run under: SET DELETED ON, MACHINE collation and
+        // SET EXACT OFF (VFP's default; with full-width C field reads, see header, field = field and
+        // field = literal compare as in VFP).
+        _ctx.Exact = false;
         _ctx.Deleted = true;
         _ctx.Encoding ??= Encoding.Latin1; // CHR()/ASC() byte-consistency for createId/newguid.
         _callStack.Add(new CallContext("(main)", Array.Empty<VfpValue>(), 0));
@@ -1221,12 +1221,13 @@ public sealed partial class VfpInterpreter
     }
 
     // The typed blank an unset appended-row field reads as / is written to disk with: the column type's real
-    // EMPTY() value — "" for character, 0 for numerics, .F. for logical, an empty date for D/T — NEVER .NULL.
-    // for a non-character column (matching what DbfWriter writes for a column the INSERT omitted, so the live
-    // pre-commit view and the committed on-disk row agree).
+    // EMPTY() value — blanks of the field's width for C, "" for V/M, 0 for numerics, .F. for logical, an empty
+    // date for D/T — NEVER .NULL. for a non-character column (matching what DbfWriter writes for a column the
+    // INSERT omitted, so the live pre-commit view and the committed on-disk row agree).
     private static object? BlankFor(DbfColumn col) => col.Type switch
     {
-        'C' or 'V' or 'M' => string.Empty,
+        'C' => new string(' ', col.Length),
+        'V' or 'M' => string.Empty,
         'I' => 0,
         'N' or 'F' or 'B' or 'Y' => 0m,
         'L' => false,
@@ -1259,10 +1260,22 @@ public sealed partial class VfpInterpreter
             // genuine .NULL. (ISNULL() true), not the blank string the raw bytes would decode to.
             if (rec[idx] is null) return null;
             var raw = rec.GetRawField(col);
-            return wa.Table.Encoding.GetString(raw).TrimEnd(' ', '\0');   // RIGHT-trim only (see header).
+            string s = wa.Table.Encoding.GetString(raw);
+            if (col.Type == 'V') return s.TrimEnd(' ', '\0');
+            // A C field at its full declared width (see header); trailing NUL padding of non-VFP tools reads as blanks.
+            int end = s.Length;
+            while (end > 0 && s[end - 1] == '\0') end--;
+            return end == s.Length ? s : string.Concat(s.AsSpan(0, end), new string(' ', s.Length - end));
         }
         return rec[idx];
     }
+
+    // A character value as a C field of col's width holds it: truncated or blank-padded to the declared width (the
+    // value a buffered REPLACE / INSERT reads back before it reaches the disk). Other column types pass through.
+    private static string FitToField(DbfColumn col, string s)
+        => col.Type != 'C' ? s
+            : s.Length >= col.Length ? s[..col.Length]
+            : s.PadRight(col.Length);
 
     private static int ColumnIndex(DbfTable t, string name)
     {
