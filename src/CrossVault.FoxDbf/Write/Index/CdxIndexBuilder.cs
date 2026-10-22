@@ -88,11 +88,12 @@ internal static class CdxIndexBuilder
             {
                 long headerOffset = (long)page * Page;
                 dirEntries.Add(new Entry(p.NameKey, (uint)headerOffset));
-                page += 2 + p.TreePageCount;               // header + pool + B-tree pages
+                // header + pool + B-tree pages; the tree's branch grouping depends on where its first page lands
+                page += 2 + CountTreePages(p.LeafCount, p.KeyLen, firstPage: page + 2);
             }
             dirEntries.Sort(EntryComparer.Instance);
             dirGeom = LeafGeometry.For(keyLen: 10, recnoBasis: basisDir, entries: dirEntries);
-            int need = CountTreePages(dirEntries, keyLen: 10, pad: 0x20, dirGeom);
+            int need = CountTreePages(PackLeaves(dirEntries, keyLen: 10, pad: 0x20, dirGeom).Count, keyLen: 10, firstPage: 2);
             if (need == dirPages) break;
             dirPages = need;
         }
@@ -187,7 +188,7 @@ internal static class CdxIndexBuilder
         public LeafGeometry Geom;
         public int KeyLen;
         public byte Pad;
-        public int TreePageCount;
+        public int LeafCount;
         public byte Options;
         public byte Signature;
         public string? SortOrder;
@@ -265,7 +266,7 @@ internal static class CdxIndexBuilder
             Geom = geom,
             KeyLen = computer.KeyLen,
             Pad = computer.Pad,
-            TreePageCount = CountTreePages(entries, computer.KeyLen, computer.Pad, geom),
+            LeafCount = PackLeaves(entries, computer.KeyLen, computer.Pad, geom).Count,
             Options = options,
             Signature = tagSig,
             SortOrder = computer.Collation.Name,
@@ -420,26 +421,86 @@ internal static class CdxIndexBuilder
     // ---- B-tree bulk loader ----------------------------------------------------
 
     /// <summary>
-    /// Count the pages a <see cref="BuildTree"/> for <paramref name="entries"/> would allocate (leaves
-    /// first, then each branch level), WITHOUT writing anything — used to size the tag directory's
-    /// pre-reserved page range up front. Mirrors the allocation order of <see cref="BuildTree"/> exactly.
+    /// Count the pages a <see cref="BuildTree"/> over <paramref name="leafCount"/> leaves would allocate when its
+    /// first page is <paramref name="firstPage"/>, WITHOUT writing anything — used to size the tag directory's
+    /// pre-reserved page range and to place the tags up front. The branch grouping (and so the node count) depends
+    /// on the page position, see <see cref="BranchLayout"/>.
     /// </summary>
-    private static int CountTreePages(List<Entry> entries, int keyLen, byte pad, LeafGeometry geom)
+    private static int CountTreePages(int leafCount, int keyLen, int firstPage)
     {
-        var leaves = PackLeaves(entries, keyLen, pad, geom);
-        int total = leaves.Count;
-        if (leaves.Count <= 1) return total; // a single leaf is also the root (no branch level)
+        int total = leafCount;
+        foreach (var level in BranchLayout(leafCount, keyLen, firstPage))
+            total += level.Count;
+        return total;
+    }
+
+    /// <summary>
+    /// The child count of every branch node, level by level from the leaf parents up to the root, that VFP9's
+    /// INDEX ON gives a tree of <paramref name="leafCount"/> leaves whose first page is <paramref name="rootPage"/>.
+    /// <para>
+    /// VFP9 grows the tree as if the sorted keys were inserted one by one: the root stays on the tag's first page,
+    /// a root split takes the next two pages (the right half on the lower one), every other new node takes the
+    /// next page, and pages are handed out in the order leaves and nodes appear. When a full branch node gets one
+    /// more child, a new node opens to its right with just that child — except when the full node sits on an ODD
+    /// page and an entry (key + recno + child pointer) is shorter than 50 bytes: then the full node also gives up
+    /// its last child (it keeps capacity-1, the new node starts with 2). Derived from VFP9 over 3357 trees
+    /// (key lengths 1-240, up to 4 branch levels, extra tags in front shifting the tree by 3 to 6 pages):
+    /// fan-outs and page numbers all reproduce exactly (e.g. key length 20 on page 5: 16/17/17…; key length 40 on
+    /// page 5: 9/9/10/10/9/10/10/9…, on page 8: 10/10/10/9/10/10/9…; key length 42: 10/10/10…).
+    /// </para>
+    /// <para>
+    /// Only the grouping is taken from this simulation: our pages stay laid out leaves first, then each branch
+    /// level, root last. Leaves are packed greedily, as VFP does.
+    /// </para>
+    /// </summary>
+    private static List<List<int>> BranchLayout(int leafCount, int keyLen, int rootPage)
+    {
+        var levels = new List<List<int>>();          // per level: child count of each node
+        if (leafCount <= 1) return levels;            // a single leaf is the root
 
         int entrySize = keyLen + 8;
-        int maxPer = Math.Max(1, (Page - StdHeader) / entrySize);
-        int level = leaves.Count;
-        while (level > 1)
+        int cap = Math.Max(2, (Page - StdHeader) / entrySize);
+        bool givesUpLast = entrySize < 50;
+        int next = rootPage + 1;
+        var lastPage = new List<int>();               // page of the rightmost node of each level
+
+        // The root leaf splits: two new leaves (left on rootPage+2, right on rootPage+1), the root becomes a branch.
+        next += 2;
+        levels.Add(new List<int> { 2 });
+        lastPage.Add(rootPage);
+
+        for (int leaf = 2; leaf < leafCount; leaf++)
         {
-            int nodes = (level + maxPer - 1) / maxPer;
-            total += nodes;
-            level = nodes;
+            next++;                                   // the new leaf's page
+            for (int h = 0; ; h++)
+            {
+                var level = levels[h];
+                if (level[^1] < cap)
+                {
+                    level[^1]++;
+                    break;
+                }
+
+                int keep = givesUpLast && (lastPage[h] & 1) == 1 ? cap - 1 : cap;
+                if (lastPage[h] == rootPage)
+                {
+                    // Root split: the root's children go to two new nodes, the root (same page) gets a level above.
+                    int right = next++;
+                    next++;                           // the left node
+                    level[^1] = keep;
+                    level.Add(cap + 1 - keep);
+                    lastPage[h] = right;
+                    levels.Add(new List<int> { 2 });
+                    lastPage.Add(rootPage);
+                    break;
+                }
+
+                level[^1] = keep;
+                level.Add(cap + 1 - keep);
+                lastPage[h] = next++;
+            }
         }
-        return total;
+        return levels;
     }
 
     /// <summary>Build the compact B-tree for <paramref name="entries"/> and return the root page offset.
@@ -488,24 +549,26 @@ internal static class CdxIndexBuilder
             .Select(l => new ChildRef((uint)(l.Index * Page), l.LastKey, l.LastRecno))
             .ToList();
 
-        while (level.Count > 1)
-            level = BuildBranchLevel(sink, alloc, level, keyLen);
+        // Group them into branch levels the way VFP9 does; the layout depends on where the tree starts, which
+        // is the first page handed out (the first leaf's).
+        foreach (var groups in BranchLayout(leaves.Count, keyLen, rootPage: leaves[0].Index))
+            level = BuildBranchLevel(sink, alloc, level, keyLen, groups);
 
         return level[0].Offset;
     }
 
-    private static List<ChildRef> BuildBranchLevel(PageSink sink, Func<int> alloc, List<ChildRef> children, int keyLen)
+    private static List<ChildRef> BuildBranchLevel(PageSink sink, Func<int> alloc, List<ChildRef> children, int keyLen,
+        List<int> groups)
     {
-        int entrySize = keyLen + 8;
-        int maxPer = (Page - StdHeader) / entrySize;
-        if (maxPer < 1) maxPer = 1;
-
-        var nodes = new List<(int index, List<ChildRef> kids)>();
-        for (int i = 0; i < children.Count; i += maxPer)
+        var nodes = new List<(int index, List<ChildRef> kids)>(groups.Count);
+        int start = 0;
+        foreach (int count in groups)
         {
-            var kids = children.GetRange(i, Math.Min(maxPer, children.Count - i));
-            nodes.Add((alloc(), kids));
+            nodes.Add((alloc(), children.GetRange(start, count)));
+            start += count;
         }
+        if (start != children.Count)
+            throw new InvalidOperationException($"CDX branch layout covers {start} of {children.Count} children.");
 
         bool isRoot = nodes.Count == 1;
         var result = new List<ChildRef>(nodes.Count);
