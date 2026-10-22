@@ -67,6 +67,7 @@ public sealed class SqlVfpNamingGroupOrderTests : IDisposable
     [InlineData("SELECT SUM(amount), SUM(amount) FROM person", "SUM_AMOUNT_A,SUM_AMOUNT_B")]
     [InlineData("SELECT COUNT(1) FROM person", "CNT_EXP_1")]
     [InlineData("SELECT MAX(amount) + 1 FROM person", "EXP_1")]
+    [InlineData("SELECT MAX(amount) - MIN(amount), SUM(amount) + COUNT(amount) FROM person", "EXP_1,EXP_2")]
     [InlineData("SELECT id AS k, id * 2 AS mixedCase FROM person", "K,MIXEDCASE")]
     [InlineData("SELECT id, id FROM person", "ID_A,ID_B")]
     [InlineData("SELECT id, name AS id FROM person", "ID_A,ID_B")]

@@ -256,6 +256,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   ao.account_number` gives `ACCOUNT_NUMBER_A` / `ACCOUNT_NUMBER_B` (was `ca_account_number` /
   `ao_account_number`), and a single-table `SELECT id, id` no longer returns two columns named `id`. ADO.NET
   lookups by name (`GetOrdinal`, `DataTable` columns) are case-insensitive and keep working for unchanged names.
+  `INTO TABLE` / `INTO CURSOR` still cut field names to 10 characters, so long result names there now become
+  e.g. `ACCOUNT_NU` / `ACCOUNT__2` (was `ca_account` / `ao_account`).
 
 ## [0.10.0] - 2026-10-22
 

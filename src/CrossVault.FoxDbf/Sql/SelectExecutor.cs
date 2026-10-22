@@ -1988,14 +1988,29 @@ internal sealed class SelectExecutor
     /// <summary>VFP9's name for an unaliased aggregate column: <c>COUNT(*)</c> → <c>CNT</c>; over a field
     /// <c>FN_FIELD</c> (qualifier dropped, <c>COUNT</c> abbreviated to <c>CNT</c>); over any other
     /// expression <c>FN_EXP_n</c> with n the column's position (<c>SUM(amount * 2)</c> in column 2 →
-    /// <c>SUM_EXP_2</c>).</summary>
+    /// <c>SUM_EXP_2</c>). A compound item the aggregate pattern only spans textually
+    /// (<c>MAX(a) - MIN(a)</c>: "argument" <c>a) - MIN(a</c>) is a plain expression, <c>EXP_n</c>.</summary>
     private static string AggregateName(string func, string? arg, int position)
     {
         string fn = func.ToUpperInvariant();
         string prefix = fn == "COUNT" ? "CNT" : fn;
         if (arg is null || arg.Trim() == "*") return prefix;
         string a = arg.Trim();
+        if (!IsParenBalanced(a)) return ExpName(position);
         return prefix + "_" + (SimpleFieldRx.IsMatch(a) ? StripAlias(a) : ExpName(position));
+    }
+
+    /// <summary>True when no prefix of <paramref name="s"/> closes more parentheses than it opens and the
+    /// whole text closes all it opens.</summary>
+    private static bool IsParenBalanced(string s)
+    {
+        int depth = 0;
+        foreach (char c in s)
+        {
+            if (c == '(') depth++;
+            else if (c == ')' && --depth < 0) return false;
+        }
+        return depth == 0;
     }
 
     /// <summary>Gives the result columns VFP9's names: every name upper-case, and a name that occurs more
