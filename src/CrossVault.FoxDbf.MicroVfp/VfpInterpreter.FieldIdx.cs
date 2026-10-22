@@ -439,7 +439,7 @@ public sealed partial class VfpInterpreter
             defs.Add(new CdxTagDefinition(
                 Path.GetFileNameWithoutExtension(idxPath).ToUpperInvariant(),
                 h.KeyExpression.Trim(), forExpr.Length > 0 ? forExpr : null,
-                descending: false, "MACHINE", h.IsUnique));
+                descending: false, h.Collation, h.IsUnique));
         }
 
         BuildTagOnDisk(path, w =>

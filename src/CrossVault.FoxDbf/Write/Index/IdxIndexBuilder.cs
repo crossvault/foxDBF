@@ -19,7 +19,8 @@ namespace CrossVault.FoxDbf.Write;
 /// 0x01, @16 KEY text, @236 FOR text) and, on every page, the node header (attribute, key count, sibling links)
 /// and every used entry (leaf: key + recno, branch: key + child offset). VFP leaves the node SLACK filled with
 /// uninitialised heap memory (non-deterministic even run-to-run); this builder zero-fills it — the reader
-/// ignores the slack, so behaviour is identical. Only the uncompressed format is written (no COMPACT .idx).
+/// ignores the slack, so behaviour is identical. A COMPACT <c>.idx</c> is written by
+/// <see cref="CdxIndexBuilder.BuildCompactIdx"/>.
 /// </remarks>
 internal static class IdxIndexBuilder
 {

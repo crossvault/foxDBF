@@ -78,6 +78,29 @@ public sealed partial class DbfWriter
     }
 
     /// <summary>
+    /// Build a COMPACT standalone <c>.idx</c> at <paramref name="idxPath"/> for KEY <paramref name="keyExpr"/>
+    /// (optional <paramref name="forExpr"/> filter) over the live table — the write side of
+    /// <c>INDEX ON eExpr TO cIdx COMPACT</c>. A compact <c>.idx</c> is a single compact tree in the format of a CDX
+    /// tag, and unlike the uncompressed <see cref="CreateStandaloneIdx"/> it stores its <paramref name="collation"/>
+    /// (MACHINE, GENERAL or SPANISH): VFP9 writes a compact <c>.idx</c> for <c>INDEX ON … TO</c> whenever
+    /// SET COLLATE is not MACHINE. Overwrites any existing file at the path. Not advertised in the DBF header.
+    /// </summary>
+    /// <exception cref="DbfWriteException">The collation cannot be reproduced for this table's code page, or the
+    /// KEY/FOR text does not fit the 512-byte expression pool.</exception>
+    public void CreateCompactIdx(string idxPath, string keyExpr, string? forExpr = null, bool unique = false,
+        string collation = "MACHINE", EvaluationContext? evalContext = null, bool includeDeleted = false)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(idxPath);
+        ArgumentNullException.ThrowIfNull(keyExpr);
+        Flush();
+        var rows = MaterializeRows();
+        var def = new CdxTagDefinition(Path.GetFileNameWithoutExtension(idxPath), keyExpr, forExpr,
+            descending: false, collation, unique);
+        CdxIndexBuilder.BuildCompactIdx(idxPath, _schema, rows, def, evalContext, includeDeleted);
+    }
+
+    /// <summary>
     /// Build (or replace) a tag <paramref name="definition"/> in the compound <c>.cdx</c> at
     /// <paramref name="cdxPath"/> — the STRUCTURAL sidecar (<paramref name="structural"/> true, the DBF
     /// header structural bit is then advertised) or a NAMED non-structural <c>.cdx</c>

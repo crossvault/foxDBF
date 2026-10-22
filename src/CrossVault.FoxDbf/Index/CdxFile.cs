@@ -135,31 +135,41 @@ public sealed class CdxFile : IDisposable
             if (hdr.KeyExpression is null)
                 continue;
 
-            var keyType = IndexKey.ResolveType(hdr.KeyExpression, _table, hdr.KeyLength);
-            bool isChar = keyType == IndexKeyType.Unknown
-                ? ResolveIsCharacterKey(hdr.KeyExpression)
-                : keyType == IndexKeyType.Character;
-
-            var tag = new CdxTag(
-                _index,
-                name,
-                hdr.KeyLength,
-                hdr.KeyExpression,
-                hdr.ForExpression,
-                hdr.Descending,
-                hdr.SortOrder,
-                hdr.Root,
-                isChar,
-                keyType,
-                hdr.IsUnique,
-                IndexKey.ResolveCharacterEncoding(_table, hdr.KeyExpression),
-                // GENERAL / SPANISH weights are per TABLE code page (also for a NOCPTRANS field, whose
-                // MACHINE bytes above are Latin-1); no table → the library default code page.
-                (_table?.Encoding ?? IndexKey.ResolveCharacterEncoding(null, null)).CodePage);
+            var tag = CreateTag(_index, _table, name, hdr);
 
             _tagNames.Add(name);
             _tags[name] = tag;
         }
+    }
+
+    /// <summary>
+    /// The <see cref="CdxTag"/> for the tag header <paramref name="hdr"/> (KEY expression known) in
+    /// <paramref name="index"/> — also the reader of a compact standalone <c>.idx</c>, whose single tree is in
+    /// the same format. <paramref name="table"/> (optional) resolves the key type and pad.
+    /// </summary>
+    internal static CdxTag CreateTag(IndexFile index, DbfTable? table, string name, CdxHeader hdr)
+    {
+        var keyType = IndexKey.ResolveType(hdr.KeyExpression, table, hdr.KeyLength);
+        bool isChar = keyType == IndexKeyType.Unknown
+            ? ResolveIsCharacterKey(table, hdr.KeyExpression)
+            : keyType == IndexKeyType.Character;
+
+        return new CdxTag(
+            index,
+            name,
+            hdr.KeyLength,
+            hdr.KeyExpression,
+            hdr.ForExpression,
+            hdr.Descending,
+            hdr.SortOrder,
+            hdr.Root,
+            isChar,
+            keyType,
+            hdr.IsUnique,
+            IndexKey.ResolveCharacterEncoding(table, hdr.KeyExpression),
+            // GENERAL / SPANISH weights are per TABLE code page (also for a NOCPTRANS field, whose
+            // MACHINE bytes above are Latin-1); no table → the library default code page.
+            (table?.Encoding ?? IndexKey.ResolveCharacterEncoding(null, null)).CodePage);
     }
 
     /// <summary>
@@ -178,18 +188,18 @@ public sealed class CdxFile : IDisposable
     /// corrupt the value of any numeric key whose transform has trailing zero bytes.
     /// </para>
     /// </summary>
-    private bool ResolveIsCharacterKey(string keyExpression)
+    private static bool ResolveIsCharacterKey(DbfTable? table, string keyExpression)
     {
         // Null-guard the expression too (defense in depth, mirroring IndexKey.ResolveType): a fail-closed
         // truncated tag carries a null KeyExpression, and Trim() on it would NRE.
-        if (_table is null || keyExpression is null)
+        if (table is null || keyExpression is null)
             return false;
 
         string field = keyExpression.Trim();
         if (field.Length == 0)
             return true;
 
-        foreach (var col in _table.Columns)
+        foreach (var col in table.Columns)
         {
             if (string.Equals(col.Name, field, StringComparison.OrdinalIgnoreCase))
                 return col.Type is 'C' or 'V';

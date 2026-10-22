@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Added
+
+- Compact standalone `.idx` files: `DbfWriter.CreateCompactIdx` writes what VFP9's `INDEX ON … TO x.idx COMPACT`
+  writes. The file is one compact tree in the CDX tag format, with the collation (MACHINE, GENERAL or SPANISH) and
+  VFP's key statistics in the header, and the nodes on the pages VFP9 puts them on. microVFP keeps the `COMPACT`
+  clause instead of dropping it. As VFP9 does, it also writes a compact `.idx` for a plain `INDEX ON … TO` while
+  `SET COLLATE` is not MACHINE; before, it wrote an uncompressed MACHINE `.idx` for both. `IdxFile` reads compact
+  files: `IdxHeader` takes the KEY/FOR text from the expression pool and has a new `Collation` property;
+  `EnumerateEntries`, the microVFP orders and `SEEK` read compact leaves and honour the collation;
+  `IdxFile.Open(path, table)` resolves the key type from the table.
+
 ### Fixed
 
 - microVFP `APPEND FROM` preserves blank numeric source fields as blank bytes instead of writing zero;
@@ -67,6 +78,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   field into a C(6) tag finds nothing, as in VFP9; relate on `LEFT(name, 6)`). The interpreter now starts under VFP's default
   SET EXACT OFF instead of forcing SET EXACT ON (also on the `VfpSession` it runs on, and for a new data
   session): `name = 'ab'` matches `'abc'` and `'abcdef'` unless the program sets SET EXACT ON.
+- microVFP `INDEX ON … TO x.idx` under a `SET COLLATE` other than MACHINE writes a compact `.idx` under that
+  collation (see Added); under a sort sequence we cannot weight (GERMAN, …) it now fails as `INDEX ON … TAG` does,
+  instead of writing an uncompressed MACHINE `.idx`.
+- BREAKING: The new `IdxFile.Open(string, DbfTable)` overload makes a call with a literal `null` second argument ambiguous;
+  write `IdxFile.Open(path, (Encoding?)null)` or `IdxFile.Open(path)`.
 - BREAKING: A character `SEEK` on a GENERAL/SPANISH tag (`CdxTag.Seek(object)` and microVFP `SEEK`) uses VFP9's SET EXACT
   OFF needle: only the head weights of the value, so the diacritics of the needle are ignored and the first key
   whose heads start with them matches (`Seek("áa")` lands on `Aa`, `Seek("Müller")` on `Muller` when that sorts
