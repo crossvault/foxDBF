@@ -510,7 +510,6 @@ public sealed partial class VfpInterpreter
 
     private void ExecScatter(ScatterStmt s)
     {
-        if (s.Kind == ScatterKind.Name) return;            // NAME/object variant flagged — microVFP has no user objects.
         var wa = Session.AreaAt(Session.CurrentArea);
         if (wa is null) return;
         var fields = ScatterFields(wa.Table, s.Fields, s.Memo);
@@ -531,7 +530,6 @@ public sealed partial class VfpInterpreter
 
     private void ExecGather(GatherStmt g)
     {
-        if (g.Kind == ScatterKind.Name) return;            // NAME/object variant flagged.
         var wa = Session.AreaAt(Session.CurrentArea);
         if (wa is null) return;
         var fields = ScatterFields(wa.Table, g.Fields, g.Memo);

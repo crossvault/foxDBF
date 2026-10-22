@@ -1427,19 +1427,21 @@ public static class PrgParser
 
         // ---- P2 table/record movers + whole-table I/O ----
 
-        /// <summary><c>GATHER FROM aArray | MEMVAR | NAME oObj [FIELDS cList] [MEMO]</c>. The MEMVAR/NAME
-        /// forms may omit FROM (<c>GATHER MEMVAR</c>); the array form always carries FROM.</summary>
+        /// <summary><c>GATHER FROM aArray | MEMVAR [FIELDS cList] [MEMO]</c>. MEMVAR may omit FROM
+        /// (<c>GATHER MEMVAR</c>); the array form always carries FROM. <c>GATHER NAME oObj</c> is not modelled
+        /// (error 36 when executed).</summary>
         private static PrgStatement BuildGather(string text)
         {
             string rest = PrgScan.AfterFirstWord(text);   // after GATHER
             var (head, segs) = Carve(rest, "FROM", "FIELDS", "MEMO");
             string srcSpec = SegBody(segs, "FROM") ?? head;
+            if (IsNameSpec(srcSpec)) return Unparsed("GATHER", rest);   // GATHER NAME oObj — not modelled.
             var (kind, name) = ParseScatterSpec(srcSpec);
             return new GatherStmt(kind, name, FieldsOf(segs), HasKw(segs, "MEMO"));
         }
 
-        /// <summary><c>SCATTER TO aArray | MEMVAR [BLANK] | NAME oObj [FIELDS cList] [MEMO]</c>. The array
-        /// form carries TO; MEMVAR/NAME may stand alone.</summary>
+        /// <summary><c>SCATTER TO aArray | MEMVAR [BLANK] [FIELDS cList] [MEMO]</c>. The array form carries TO;
+        /// MEMVAR may stand alone. <c>SCATTER NAME oObj</c> is not modelled (error 36 when executed).</summary>
         private static PrgStatement BuildScatter(string text)
         {
             string rest = PrgScan.AfterFirstWord(text);   // after SCATTER
@@ -1453,19 +1455,23 @@ public static class PrgParser
             }
             else
             {
+                if (IsNameSpec(head)) return Unparsed("SCATTER", rest);   // SCATTER NAME oObj — not modelled.
                 (kind, name) = ParseScatterSpec(head);
             }
             return new ScatterStmt(kind, name, FieldsOf(segs), HasKw(segs, "MEMO"), HasKw(segs, "BLANK"));
         }
 
-        /// <summary>Resolve a GATHER/SCATTER source/target spec (<c>MEMVAR</c> / <c>NAME oObj</c> / an array
-        /// name) to its kind + name.</summary>
+        /// <summary>The <c>NAME oObj</c> (record object) form of a GATHER/SCATTER spec. microVFP has no record
+        /// objects, so it runs as an unparsed clause (error 36) instead of silently doing nothing.</summary>
+        private static bool IsNameSpec(string spec) => PrgScan.FirstWord(spec.Trim()) == "NAME";
+
+        /// <summary>Resolve a GATHER/SCATTER source/target spec (<c>MEMVAR</c> / an array name) to its kind +
+        /// name.</summary>
         private static (ScatterKind Kind, string? Name) ParseScatterSpec(string spec)
         {
             spec = spec.Trim();
             string fw = PrgScan.FirstWord(spec);
             if (fw == "MEMVAR") return (ScatterKind.Memvar, null);
-            if (fw == "NAME") return (ScatterKind.Name, FirstToken(PrgScan.AfterFirstWord(spec)));
             if (spec.Length == 0) return (ScatterKind.Memvar, null);
             return (ScatterKind.Array, FirstToken(spec));
         }

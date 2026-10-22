@@ -263,6 +263,9 @@ internal sealed class FunctionNode : AstNode
     {
         _name = name;
         _upper = VfpFunctionNames.EvaluationName(name.ToUpperInvariant());
+        // ICAS is VFP9's abbreviation of ICASE. ICASE is a lazy special form, so it is named here rather than
+        // resolved after its arguments were evaluated (VfpRuntime's unknown-function path does that for others).
+        if (_upper == "ICAS") _upper = "ICASE";
         _args = args;
     }
 
@@ -367,7 +370,7 @@ internal sealed class FunctionNode : AstNode
 
     public override VfpTypeInfo Infer(ISchema schema)
     {
-        string n = _upper;
+        string n = VfpFunctionAbbreviations.Canonical(_upper);   // SUBS(…) is typed like SUBSTR(…).
         switch (n)
         {
             case "UPPER": case "LOWER": case "ALLTRIM":

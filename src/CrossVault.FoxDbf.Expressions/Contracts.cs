@@ -42,7 +42,9 @@ public interface IVfpFunctionHost
     bool TryInvoke(string upperName, VfpValue[] args, EvaluationContext ctx, out VfpValue result);
 
     /// <summary>Called for a function that neither <see cref="TryInvoke"/> nor the engine implements, also when
-    /// an argument is <c>.NULL.</c>. Return the call's value or throw the host's error; the default returns
+    /// an argument is <c>.NULL.</c>. An abbreviation of a VFP function (<c>SUBS</c>) never arrives here: the
+    /// engine calls the function it names, and reports a function nobody implements under its full name.
+    /// Return the call's value or throw the host's error; the default returns
     /// <c>.NULL.</c> (the engine's behaviour without a host). microVFP raises VFP error 1 here.</summary>
     VfpValue UnknownFunction(string upperName, VfpValue[] args) => VfpValue.Null;
 }

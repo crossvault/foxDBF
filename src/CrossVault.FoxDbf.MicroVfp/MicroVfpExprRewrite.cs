@@ -35,6 +35,13 @@ internal static class MicroVfpExprRewrite
 {
     private static bool IsIdentChar(char c) => VfpIdentifier.IsPart(c);
 
+    /// <summary>The identifier <paramref name="ident"/> calls <paramref name="fn"/>: its name or VFP9's
+    /// abbreviation of it (<c>AFIE</c> is AFIELDS, <c>ISBL</c> is ISBLANK; see VfpFunctionAbbreviations).</summary>
+    private static bool Names(string ident, string fn)
+        => ident.Equals(fn, StringComparison.OrdinalIgnoreCase)
+           || (ident.Length >= 4 && ident.Length < fn.Length && fn.StartsWith(ident, StringComparison.OrdinalIgnoreCase)
+               && VfpFunctionAbbreviations.TryExpand(ident.ToUpperInvariant(), out var full) && full == fn);
+
     /// <summary>Apply both array rewrites to <paramref name="s"/>; a no-op for text with neither a
     /// subscript bracket nor an ALEN/AERROR call.</summary>
     public static string Normalize(string s)
@@ -72,7 +79,7 @@ internal static class MicroVfpExprRewrite
     /// falls back to value-based blankness when the name is not actually a field (e.g. a memvar).</summary>
     private static string QuoteIsBlankFieldArg(string s)
     {
-        if (s.IndexOf("ISBLANK", StringComparison.OrdinalIgnoreCase) < 0) return s;
+        if (s.IndexOf("ISBL", StringComparison.OrdinalIgnoreCase) < 0) return s;   // ISBLANK or its abbreviation.
         var sb = new StringBuilder(s.Length + 8);
         int i = 0;
         while (i < s.Length)
@@ -92,7 +99,7 @@ internal static class MicroVfpExprRewrite
                 string ident = s.Substring(start, i - start);
                 int p = i;
                 while (p < s.Length && char.IsWhiteSpace(s[p])) p++;
-                if (ident.Equals("ISBLANK", StringComparison.OrdinalIgnoreCase) && p < s.Length && s[p] == '(')
+                if (Names(ident, "ISBLANK") && p < s.Length && s[p] == '(')
                 {
                     int close = MatchParen(s, p);
                     if (close > p)
@@ -171,7 +178,7 @@ internal static class MicroVfpExprRewrite
                 while (i < s.Length && IsIdentChar(s[i])) i++;
                 string ident = s.Substring(start, i - start);
                 sb.Append(ident);
-                if (ident.Equals(fn, StringComparison.OrdinalIgnoreCase))
+                if (Names(ident, fn))
                     i = EmitQuotedFirstArg(s, i, sb);
                 continue;
             }
@@ -206,7 +213,7 @@ internal static class MicroVfpExprRewrite
                 while (i < s.Length && IsIdentChar(s[i])) i++;
                 string ident = s.Substring(start, i - start);
                 sb.Append(ident);
-                if (ident.Equals(fn, StringComparison.OrdinalIgnoreCase))
+                if (Names(ident, fn))
                     i = EmitQuotedLeadingArgs(s, i, sb, 2);
                 continue;
             }
@@ -262,7 +269,7 @@ internal static class MicroVfpExprRewrite
     /// evaluated expressions. String-literal aware; nested parens/strings respected in the arg split.</summary>
     private static string QuoteLookupArgs(string s)
     {
-        int upper = s.IndexOf("LOOKUP", StringComparison.OrdinalIgnoreCase);
+        int upper = s.IndexOf("LOOK", StringComparison.OrdinalIgnoreCase);   // LOOKUP or its abbreviation.
         if (upper < 0) return s;
 
         var sb = new StringBuilder(s.Length + 8);
@@ -284,7 +291,7 @@ internal static class MicroVfpExprRewrite
                 string ident = s.Substring(start, i - start);
                 int p = i;
                 while (p < s.Length && char.IsWhiteSpace(s[p])) p++;
-                if (ident.Equals("LOOKUP", StringComparison.OrdinalIgnoreCase) && p < s.Length && s[p] == '(')
+                if (Names(ident, "LOOKUP") && p < s.Length && s[p] == '(')
                 {
                     int close = MatchParen(s, p);
                     if (close > p)

@@ -56,7 +56,7 @@ public sealed class MicroVfpUnknownFunctionTests : IDisposable
     [InlineData("x = EVALUATE('NoSuchFn(1)')", "nosuchfn")]
     [InlineData("lc = 'NoSuchFn'\nx = &lc.(1)", "nosuchfn")]
     [InlineData("x = 5\ny = x(1)", "x")]                             // a scalar is not an array: a call
-    [InlineData("x = SUBS('abc', 2)", "subs")]                       // 4-letter abbreviations are not modelled
+    [InlineData("x = SUB('abc', 2)", "sub")]                         // 3 letters are not an abbreviation
     [InlineData("x = BLANK()", "blank")]                             // not a VFP9 function either
     public void UnknownFunction_Raises1(string source, string name)
     {

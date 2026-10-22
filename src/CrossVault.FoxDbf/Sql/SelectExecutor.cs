@@ -1117,7 +1117,8 @@ internal sealed class SelectExecutor
         try { expr = VfpExpression.Parse(text); }
         catch { return false; }      // unparseable here ⇒ let the post-join path report it
 
-        if (expr.ContainsFunction(static (name, _) => IsUnpushableFunction(name)))
+        // An abbreviation (RECC, DELE, EVAL, SECO …) is the function it names.
+        if (expr.ContainsFunction(static (name, _) => IsUnpushableFunction(VfpFunctionAbbreviations.Canonical(name))))
             return false;
         if (hosted && expr.ContainsFunction(static (name, _) => !VfpRuntime.EngineFunctionNames.Contains(name)))
             return false;

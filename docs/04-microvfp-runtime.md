@@ -147,7 +147,7 @@ interp.ReleaseDataSession(s2);                 // ASESSIONS()/AUSED() enumerate 
   with per-area `CONTINUE` state), `SET FILTER TO` (a per-work-area record-visibility predicate honoured
   by every navigation and scan — `GO TOP`/`BOTTOM`, `SKIP`, `LOCATE`/`CONTINUE`, `SCAN`, `SUM` — composed
   with `SET DELETED`/`SET KEY`; a direct `GOTO`/`RECNO()`/`RECCOUNT()` bypasses it, matching VFP; read back
-  with `FILTER()`/`SET("FILTER")`), `REPLACE`/`DELETE`/`RECALL`/`INSERT`, `GATHER`/`SCATTER`,
+  with `FILTER()`/`SET("FILTER")`), `REPLACE`/`DELETE`/`RECALL`/`INSERT`, `GATHER`/`SCATTER` (arrays and memvars),
   `APPEND FROM`/`COPY TO` (`.dbf`), `COPY MEMO … TO … [ADDITIVE]`, `PACK`, `SUM`/`TOTAL`,
   `COUNT [scope] [FOR] [WHILE] TO var` (honouring `SET DELETED`/`SET FILTER`/`SET KEY`),
   `USE … ORDER [TAG] name [OF cdx] [ASCENDING|DESCENDING]`, `CLOSE TABLES`/`DATABASES`/`ALL`,
@@ -193,6 +193,13 @@ interp.ReleaseDataSession(s2);                 // ASESSIONS()/AUSED() enumerate 
 
 Every function below runs as real VFP semantics, not a stub — see
 [Deviations from VFP](#deviations-from-vfp) for the handful that are intentionally simplified.
+
+Function names may be abbreviated as in VFP9: `SUBS()` is `SUBSTR()`, `RECC()` is `RECCOUNT()`. An
+abbreviation has at least 4 letters; when it fits several functions the older one wins (`SUBS` is `SUBSTR`,
+not `SUBSTRC`; `MESS` is `MESSAGE`, not `MESSAGEBOX`), some later functions need 10 letters (`GETWORDCOU`)
+and some cannot be abbreviated (`JUSTSTEM`, `FORCEEXT`, `SUBSTRC`). The table is read from the VFP9
+compiler; an abbreviation of a function microVFP does not implement raises error 1 under the full name
+(`CREA()` reports `createobject.prg`).
 
 **String**
 
@@ -361,7 +368,7 @@ differences below are deliberate, verified simplifications, not bugs to be worke
   | Situation | Error |
   |---|---|
   | unknown command verb (incl. 4-letter abbreviations such as `REPL`, and VFP verbs microVFP does not model, e.g. `UPDATE`-SQL, `QUIT`, `DEFINE CLASS`) | 16 "Unrecognized command verb." |
-  | a modelled verb with a clause list microVFP cannot parse (`COPY garbage`, `CLOSE nonsense`) | 36 "Command contains unrecognized phrase/keyword." |
+  | a modelled verb with a clause list microVFP cannot parse (`COPY garbage`, `CLOSE nonsense`), and `SCATTER NAME`/`GATHER NAME` (no record objects; they used to do nothing) | 36 "Command contains unrecognized phrase/keyword." |
   | `DO name` of a procedure that is not loaded | 1 "File 'name.prg' does not exist." |
   | an expression the expression engine cannot parse (used to evaluate to `.NULL.`) | 10 "Syntax error." |
   | an embedded `SELECT`/`INSERT`/`CREATE` the SQL parser cannot parse | the parser's error (10 when it carries no number) |
@@ -384,9 +391,8 @@ differences below are deliberate, verified simplifications, not bugs to be worke
   `CATCH TO` object raises 1734 "Property M is not found." (a property with a subscript, `oErr.Message(1)`,
   is just the property), on another defined name 1924 "X is not an object.", on an unknown name 1923
   "Object X is not found.". `AND`/`OR` short-circuit as in VFP9, so `.F. AND NoSuchFn()` stays `.F.`; `TYPE()`
-  of a failing call is `"U"`. Two forms VFP9 accepts are not modelled and therefore raise: 4-letter function
-  abbreviations (`SUBS()`, `RECC()`, `UPPE()`) and `CREATEOBJECT()`. The real stored-procedure corpus calls
-  no unknown function.
+  of a failing call is `"U"`. `CREATEOBJECT()`, which VFP9 accepts, is not modelled and therefore raises.
+  The real stored-procedure corpus calls no unknown function.
 - **Embedded `SELECT`, `INDEX ON` and `SET FILTER TO` evaluate with the interpreter** (since 0.11), so an
   unknown function raises error 1 there too:
   - In an embedded `SELECT` (field list, `WHERE`, `JOIN … ON`, `HAVING`, subqueries) a UDF, a memvar array
@@ -405,6 +411,12 @@ differences below are deliberate, verified simplifications, not bugs to be worke
   - `INDEX ON` refuses a UDF, an array or a microVFP-only function (for example `TRANSFORM()`) in the key or
     `FOR` expression with an error (VFP9 builds such an index): the index engine evaluates keys without the
     interpreter, at build time and whenever a write updates the index, so it would key every record `.NULL.`.
+- **Abbreviated function names resolve at run time, after procedures.** VFP9 resolves `SUBS()` when it
+  compiles, so the built-in wins even over a procedure named `SUBST`, and it stores the full name: `KEY()`
+  after `INDEX ON UPPE(nm)` is `UPPER(NM)`, `FILTER()` after `SET FILTER TO SUBS(…)` shows `SUBSTR(…)`.
+  microVFP resolves an abbreviation only when no procedure, array or function of that name exists, and
+  `KEY()`/`FILTER()` return the expression as written. VFP9 rejects an array named like a function
+  abbreviation (`DIMENSION uppe(2)`, error 1652); microVFP lets the array win.
 - **`FILE()` does not search `SET PATH`.** microVFP has no `SET PATH`; `FILE()` looks only at the given
   path, relative names resolving against the session data directory. Its optional `nFlags` is accepted and
   ignored.

@@ -342,21 +342,22 @@ internal sealed record RollbackStmt : PrgStatement;
 
 // ── P2 table/record movers + whole-table I/O ─────────────────────────────────
 
-/// <summary>The source/destination class of a GATHER / SCATTER: a memory ARRAY, the same-named
-/// MEMVARs, or a NAME object (the object variant is FLAGGED — microVFP has no user objects).</summary>
-internal enum ScatterKind { Array, Memvar, Name }
+/// <summary>The source/destination class of a GATHER / SCATTER: a memory ARRAY or the same-named MEMVARs.
+/// The NAME (object) form is not modelled — microVFP has no record objects — and parses to an
+/// <see cref="UnknownCommand"/> that raises error 36 when executed.</summary>
+internal enum ScatterKind { Array, Memvar }
 
-/// <summary><c>GATHER FROM aArray | MEMVAR | NAME oObj [FIELDS cList] [MEMO]</c> — REPLACE the current
-/// record's fields from the array (positional), the same-named memvars, or a NAME object. <see cref="Name"/>
-/// is the array / object name (null for MEMVAR); <see cref="Memo"/> includes memo fields.</summary>
+/// <summary><c>GATHER FROM aArray | MEMVAR [FIELDS cList] [MEMO]</c> — REPLACE the current record's fields
+/// from the array (positional) or the same-named memvars. <see cref="Name"/> is the array name (null for
+/// MEMVAR); <see cref="Memo"/> includes memo fields.</summary>
 internal sealed record GatherStmt(
     ScatterKind Kind,
     string? Name,
     IReadOnlyList<string> Fields,
     bool Memo) : PrgStatement;
 
-/// <summary><c>SCATTER TO aArray | MEMVAR [BLANK] | NAME oObj [FIELDS cList] [MEMO]</c> — read the current
-/// record's fields into a fresh 1-D array (one element per field), the same-named memvars, or a NAME object.
+/// <summary><c>SCATTER TO aArray | MEMVAR [BLANK] [FIELDS cList] [MEMO]</c> — read the current record's
+/// fields into a fresh 1-D array (one element per field) or the same-named memvars.
 /// <see cref="Blank"/> produces type-appropriate EMPTY() values instead of the record's data.</summary>
 internal sealed record ScatterStmt(
     ScatterKind Kind,

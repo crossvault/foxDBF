@@ -110,8 +110,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `EVALUATE()` and a macro; `EVALUATE()` now passes on any VFP runtime error raised while evaluating (text it
   cannot parse still yields `.NULL.`). A method call on the `CATCH TO` object raises 1734 "Property M is not
   found." (a property called with a subscript, `oErr.Message(1)`, is the property, as in VFP9), on a defined
-  non-object name 1924, on an unknown name 1923. Not modelled and therefore raising now: 4-letter function
-  abbreviations (`SUBS()`, `RECC()` — VFP accepts them) and `CREATEOBJECT()`. `TYPE()` of such a call is
+  non-object name 1924, on an unknown name 1923. Not modelled and therefore raising now: `CREATEOBJECT()`
+  (also abbreviated, `CREA()`). `TYPE()` of such a call is
   `"U"`; `TYPE()` of a built-in call now reports its result type (`TYPE("FILE('x')")` is `"L"`; it was
   `"U"`). Stored procedures and RI triggers that microVFP runs for the ADO.NET enforced write model raise
   the error too; a DBC `RULE` calling an unknown function was already reported as a violation and still is,
@@ -143,9 +143,24 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `llRetVal = llRetVal .AND. riupdate(...)` the cascade no longer runs after an earlier one failed.
 - microVFP `CLOSE TABLES`, `CLOSE DATABASES` and `CLOSE ALL` close every table of the current data session
   (they did nothing); the session's database container stays attached.
+- **BREAKING — microVFP `SCATTER NAME` and `GATHER NAME` raise error 36** "Command contains unrecognized
+  phrase/keyword." (catchable). microVFP has no record objects, and both commands used to do nothing, so the
+  object stayed undefined and `GATHER NAME` wrote nothing. `SCATTER TO`/`MEMVAR` and `GATHER FROM`/`MEMVAR`
+  are unchanged.
 
 ### Added
 
+- Abbreviated function names, as VFP9 accepts them: `SUBS()` is `SUBSTR()`, `RECC()` is `RECCOUNT()`,
+  `UPPE()`, `TRAN()`, `ALLT()`, `ICAS()` and so on, in microVFP, SQL, filters, index expressions and the
+  compiled delegates. The rule was read from the VFP9 compiler and an internal test checks the whole table
+  against it: at least 4 letters; when a prefix fits several functions the older one wins (`SUBS` is
+  `SUBSTR`, not `SUBSTRC`; `MESS` is `MESSAGE`, not `MESSAGEBOX`; `STRT` is `STRTRAN`, not `STRTOFILE`);
+  some later functions need 10 letters (`GETWORDCOU`) or cannot be abbreviated at all (`JUSTSTEM`,
+  `FORCEEXT`, `SUBSTRC`, `LEFTC`). Three letters (`SUB()`) and a name longer than the function (`SUBSTRX()`)
+  are calls of a user function, as before. An abbreviation of a function the engine does not implement is
+  reported under the full name (`CREA()` raises error 1 "File 'createobject.prg' does not exist."; without a
+  microVFP host it is `.NULL.`). The array-by-reference functions (`AFIE()`, `ALIN()`, `AERR()`, …),
+  `ISBL()` and `LOOK()` get their array or field by name like the full spelling.
 - microVFP `TRY … CATCH [TO oErr] [WHEN lExpr] … FINALLY … ENDTRY` and `THROW [eExpr]` with VFP9 semantics,
   verified against the VFP9 runtime. Before, TRY was not modelled and both the TRY and the CATCH block ran.
   A TRY wins over `ON ERROR`, also for errors raised in called procedures; without a matching CATCH the

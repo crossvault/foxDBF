@@ -375,7 +375,7 @@ internal static class VfpRuntime
         // Default .NULL. propagation for everything else — but only for a name the engine knows: an unknown
         // name with a .NULL. argument still reaches the host's unknown-function hook (see NullArgument).
         for (int i = 0; i < args.Length; i++)
-            if (args[i].IsNull) return NullArgument(name, args, row);
+            if (args[i].IsNull) return NullArgument(name, args, ctx, row);
 
         switch (name)
         {
@@ -470,7 +470,7 @@ internal static class VfpRuntime
                 // early at the host hook above — at its prior size is what preserves the MaxCallDepth
                 // recursion headroom (CallFunction sits on EVERY nested UDF call). Same rationale as the
                 // interpreter's TryInvokeFileIo split. Genuinely unknown names end in UnknownFunction.
-                return CallStringExtras(name, args, row);
+                return CallStringExtras(name, args, ctx, row);
         }
     }
 
@@ -480,7 +480,7 @@ internal static class VfpRuntime
     /// one char == one byte, so each C-variant is byte-identical to its base function (verified against the
     /// VFP9 runtime); they exist purely for VFP9 name compatibility (FLAGGED: real double-byte behaviour is
     /// untested). A genuinely unknown name goes to <see cref="UnknownFunction"/>.</summary>
-    private static VfpValue CallStringExtras(string name, VfpValue[] args, IRowContext row)
+    private static VfpValue CallStringExtras(string name, VfpValue[] args, EvaluationContext ctx, IRowContext row)
     {
         switch (name)
         {
@@ -512,7 +512,7 @@ internal static class VfpRuntime
             // COUNT, which is EXACT for a fixed-pitch font (VFP: TXTWIDTH(s,'Courier New',10) == LEN(s)) and a
             // FLAGGED approximation for the proportional desktop font (that value is GUI-/machine-bound).
             case "TXTWIDTH": return VfpValue.Integer(Arg(args, 0).AsString.Length);
-            default: return UnknownFunction(name, args, row);
+            default: return UnknownFunction(name, args, ctx, row);
         }
     }
 
@@ -540,14 +540,21 @@ internal static class VfpRuntime
     // Out of CallFunction's frame on purpose (MaxCallDepth headroom, see its default arm): the .NULL.-argument
     // tail. A known name propagates .NULL.; an unknown one is reported like any other unknown call.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static VfpValue NullArgument(string name, VfpValue[] args, IRowContext row)
-        => EngineFunctionNames.Contains(name) ? VfpValue.Null : UnknownFunction(name, args, row);
+    private static VfpValue NullArgument(string name, VfpValue[] args, EvaluationContext ctx, IRowContext row)
+        => EngineFunctionNames.Contains(name) ? VfpValue.Null : UnknownFunction(name, args, ctx, row);
 
-    /// <summary>A name neither the host nor the engine implements. A host (microVFP) decides — it raises VFP's
-    /// error 1; without one (the SQL / ADO.NET / index path) the call evaluates to <c>.NULL.</c> as before.</summary>
+    /// <summary>A name neither the host nor the engine implements. An abbreviation of a VFP function
+    /// (<c>SUBS</c>, <c>RECC</c>, see <see cref="VfpFunctionAbbreviations"/>) is dispatched once more under the
+    /// full name, so an abbreviation of a function nobody implements is reported under that full name. Anything
+    /// else goes to the host (microVFP), which raises VFP's error 1; without one (the SQL / ADO.NET / index path)
+    /// the call evaluates to <c>.NULL.</c> as before.</summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static VfpValue UnknownFunction(string name, VfpValue[] args, IRowContext row)
-        => row is IVfpFunctionHost host ? host.UnknownFunction(name, args) : VfpValue.Null;
+    private static VfpValue UnknownFunction(string name, VfpValue[] args, EvaluationContext ctx, IRowContext row)
+    {
+        // Never re-expands: no full name is itself an abbreviation (a test pins this).
+        if (VfpFunctionAbbreviations.TryExpand(name, out var full)) return CallFunction(full, args, ctx, row);
+        return row is IVfpFunctionHost host ? host.UnknownFunction(name, args) : VfpValue.Null;
+    }
 
     private static VfpValue Arg(VfpValue[] a, int i) => i < a.Length ? a[i] : VfpValue.Null;
     private static int IntArg(VfpValue[] a, int i) => i < a.Length ? (int)a[i].AsDouble : 0;
