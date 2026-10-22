@@ -367,10 +367,17 @@ internal static class CdxIndexBuilder
     /// </summary>
     internal static TagKeyComputer CreateKeyComputer(DbfTable schema, CdxTagDefinition def, EvaluationContext? evalContext)
     {
-        var collation = VfpCollations.ByName(def.Collation);
+        // The stored keys are weighted in the TABLE code page (VFP9: CP850 GENERAL expands Ä to AE, CP1252 does
+        // not). An unknown sequence cannot be reproduced at all: refuse rather than write MACHINE bytes under a
+        // foreign sort-sequence name (incremental maintenance then invalidates the CDX instead of corrupting it).
+        if (VfpCollations.Resolve(def.Collation, schema.Encoding.CodePage, out var collation) == CollationSupport.Unsupported)
+            throw new DbfWriteException(
+                $"Collating sequence '{def.Collation}' is not supported for CDX keys (MACHINE, GENERAL and SPANISH are).");
         var ctx = new EvaluationContext
         {
-            Collation = collation,
+            // KEY/FOR comparisons run on the decoded text (VFP: in the current code page), so they use the
+            // code-page-neutral collation of that name; only the stored key bytes follow the table code page.
+            Collation = VfpCollations.ByName(def.Collation),
             Exact = evalContext?.Exact ?? false,
             Ansi = evalContext?.Ansi ?? false,
             Culture = evalContext?.Culture,
@@ -750,11 +757,11 @@ internal static class CdxIndexBuilder
             // Space-pad (0x20) the NATURAL collated key up to the (already collation-expanded) keyLen.
             // MACHINE stores the raw TABLE code-page bytes (VFP9: CP850 'Peñarol' = 50 65 A4 ...).
             // For GENERAL the natural key is the head+tail weight run, which for accented / ligature
-            // data is LONGER than the field width — keyLen is 2× the base width precisely so it is not
-            // truncated here. The Math.Min is only a hard safety bound for a pathological over-long key.
+            // data is LONGER than the field width — keyLen is 2× the base width so it rarely is truncated;
+            // when heads+tails still overflow, the key is cut and loses its trailing 0x00 tails as in VFP9.
             var natural = value.IsNull
                 ? Array.Empty<byte>()
-                : IndexKey.EncodeCharacterKey(value.AsString.AsSpan(), collation, characterEncoding);
+                : IndexKey.EncodeCharacterKey(value.AsString.AsSpan(), collation, characterEncoding, keyLen);
             var key = new byte[keyLen];
             for (int i = 0; i < keyLen; i++) key[i] = pad;
             int copy = Math.Min(natural.Length, keyLen);

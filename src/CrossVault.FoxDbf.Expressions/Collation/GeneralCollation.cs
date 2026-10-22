@@ -4,17 +4,24 @@ using System.Buffers;
 namespace CrossVault.FoxDbf.Expressions;
 
 /// <summary>
-/// VFP <c>GENERAL</c> collation (the Western / CP1252 sort sequence). The two-pass key
-/// is built from the <see cref="GeneralWeights1252"/> table ported from CodeBase
-/// <c>COLL4ARR.C</c>:
+/// VFP's table-driven collations: <c>GENERAL</c> (the Western sort sequence, code pages 1252 and 850) and
+/// <c>SPANISH</c> (1252 and 850). The two-pass key is built from a per-code-page weight table
+/// (<see cref="GeneralWeights1252"/> and the CP850 table, ported from CodeBase <c>COLL4ARR.C</c>, plus their
+/// VFP9-verified variants):
 /// </summary>
 /// <remarks>
 /// <list type="number">
 ///   <item>a <b>head</b> (primary) byte per character — the case- AND accent-folded
 ///   sort weight, with ligatures expanded to two letters (<c>Œ→OE</c>, <c>Æ→AE</c>,
-///   <c>Þ→TH</c>, <c>ß→SS</c>); then</item>
+///   <c>Þ→TH</c>, <c>ß→SS</c>; CP850 GENERAL also <c>Ä→AE</c>, <c>Ö→OE</c>, <c>Ü→UE</c>); then</item>
 ///   <item>a <b>tail</b> region: the diacritic weight of every character that has one.</item>
 /// </list>
+/// <para>
+/// Each character is weighted by its byte in the collation's <see cref="CodePage"/> — the TABLE code page of
+/// the index — so the same text collates differently in a CP850 and a CP1252 table, exactly as in VFP9.
+/// <see cref="Instance"/> is CP1252 GENERAL; <see cref="VfpCollations.ByName(string?, int)"/> picks the
+/// variant for a table code page.
+/// </para>
 /// <para>
 /// VFP trims the trailing 0x00 tail bytes and the host space-pads (0x20) the key field
 /// to the tag key length, so <see cref="GetCollatedKey"/> returns the NATURAL key (heads
@@ -25,13 +32,32 @@ namespace CrossVault.FoxDbf.Expressions;
 /// </remarks>
 public sealed class GeneralCollation : IVfpCollation
 {
-    /// <summary>The shared singleton (the weight table is immutable).</summary>
-    public static readonly GeneralCollation Instance = new();
+    /// <summary>The shared CP1252 GENERAL singleton (the weight table is immutable).</summary>
+    public static readonly GeneralCollation Instance = new("GENERAL", CollationTable.General1252);
 
-    private GeneralCollation() { }
+    /// <summary>GENERAL over CP850 table bytes.</summary>
+    internal static readonly GeneralCollation Cp850 = new("GENERAL", CollationTable.General850);
+
+    /// <summary>SPANISH over CP1252 table bytes.</summary>
+    internal static readonly GeneralCollation Spanish1252 = new("SPANISH", CollationTable.Spanish1252);
+
+    /// <summary>SPANISH over CP850 table bytes.</summary>
+    internal static readonly GeneralCollation Spanish850 = new("SPANISH", CollationTable.Spanish850);
+
+    private readonly string _name;
+    private readonly CollationTable _table;
+
+    private GeneralCollation(string name, CollationTable table)
+    {
+        _name = name;
+        _table = table;
+    }
 
     /// <inheritdoc/>
-    public string Name => "GENERAL";
+    public string Name => _name;
+
+    /// <summary>The code page whose bytes this collation's weight table is indexed by (1252 or 850).</summary>
+    public int CodePage => _table.CodePage;
 
     /// <summary>
     /// Builds the natural GENERAL key for <paramref name="s"/>: the head pass then the
@@ -91,22 +117,33 @@ public sealed class GeneralCollation : IVfpCollation
     /// <summary>
     /// Shared two-pass key builder: writes the head (primary) weights into
     /// <paramref name="heads"/> and the diacritic (tail) weights into <paramref name="tails"/>,
-    /// expanding ligatures (Œ→OE, Æ→AE, Þ→TH, ß→SS), trimming trailing source spaces and
-    /// trailing 0x00 tail bytes. Buffers must each hold at least <c>s.Length * 2</c> bytes.
-    /// The logical key is <c>heads[..hc]</c> followed by <c>tails[..tc]</c>.
+    /// expanding ligatures (Œ→OE, Æ→AE, Þ→TH, ß→SS), folding SPANISH contractions (ch, ll) into one
+    /// head, trimming trailing source spaces and trailing 0x00 tail bytes. Buffers must each hold at
+    /// least <c>s.Length * 2</c> bytes. The logical key is <c>heads[..hc]</c> followed by <c>tails[..tc]</c>.
     /// </summary>
-    private static void BuildKey(ReadOnlySpan<char> s, Span<byte> heads, Span<byte> tails, out int hc, out int tc)
+    private void BuildKey(ReadOnlySpan<char> s, Span<byte> heads, Span<byte> tails, out int hc, out int tc)
     {
         int len = s.Length;
         while (len > 0 && s[len - 1] == ' ') len--;
 
-        var head = GeneralWeights1252.Head;
-        var tail = GeneralWeights1252.Tail;
+        var table = _table;
+        var head = table.Head;
+        var tail = table.Tail;
+        var toByte = table.CharToByte;
+        var contractions = table.Contractions;
         hc = 0; tc = 0;
 
         for (int i = 0; i < len; i++)
         {
-            byte idx = Cp1252.ToByte(s[i]);
+            byte idx = toByte[s[i]];
+            if (contractions.Length != 0 && i + 1 < len
+                && TryContract(contractions, idx, toByte[s[i + 1]], out byte contracted))
+            {
+                heads[hc++] = contracted;   // one letter, no diacritic tail
+                i++;
+                continue;
+            }
+
             byte h = head[idx];
             if (h != GeneralWeights1252.Expand)
             {
@@ -116,11 +153,12 @@ public sealed class GeneralCollation : IVfpCollation
             }
             else
             {
-                byte[] pair = GeneralWeights1252.Expansions[tail[idx]];
+                byte[] pair = table.Expansions[tail[idx]];
                 for (int j = 0; j < pair.Length; j++)
                 {
                     byte cc = pair[j];
                     heads[hc++] = head[cc];
+                    if (!table.ExpansionTails) continue;
                     byte t = tail[cc];
                     if (t != GeneralWeights1252.NoTail) tails[tc++] = t;
                 }
@@ -128,6 +166,24 @@ public sealed class GeneralCollation : IVfpCollation
         }
 
         while (tc > 0 && tails[tc - 1] == 0) tc--;
+    }
+
+    /// <summary>Matches the byte pair (<paramref name="a"/>, <paramref name="b"/>) against the lower-case
+    /// ASCII contractions, folding the case of ASCII letters only.</summary>
+    private static bool TryContract((byte First, byte Second, byte Head)[] contractions, byte a, byte b, out byte head)
+    {
+        byte la = a is >= (byte)'A' and <= (byte)'Z' ? (byte)(a | 0x20) : a;
+        byte lb = b is >= (byte)'A' and <= (byte)'Z' ? (byte)(b | 0x20) : b;
+        foreach (var (first, second, h) in contractions)
+        {
+            if (la == first && lb == second)
+            {
+                head = h;
+                return true;
+            }
+        }
+        head = 0;
+        return false;
     }
 
     /// <summary>Unsigned byte-order compare of two logical keys, each given as a head run

@@ -35,6 +35,19 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   same encoding, so VFP9 finds rows in our CDX and we find rows in VFP's (an indexed `WHERE name = 'Peñarol'`
   on a VFP-built CP850 CDX used to return no rows). CDX files for non-CP1252 tables that an earlier version of
   this library wrote hold CP1252 key bytes: REINDEX them.
+- GENERAL CDX keys are weighted in the TABLE's code page, as VFP9 does. A CP850 table uses VFP's CP850 GENERAL
+  table (ported from CodeBase `COLL4ARR.C`, with VFP9's `þ`/`Þ` → `TH`): umlauts expand to vowel+E (`'Äpfel'`
+  → `A E P F E L`, not `A` + accent) and symbols, box drawing and currency signs collapse to one weight, so VFP9
+  finds rows in our CP850 GENERAL CDX and we find rows in VFP's. CP1252 GENERAL is unchanged except that the
+  five undefined CP1252 bytes (0x81, 0x8D, 0x8F, 0x90, 0x9D) now weigh like VFP9 (0x10) instead of as `?`. A
+  GENERAL key whose heads and tails run past the key length is cut and then loses its trailing 0x00 tail bytes,
+  as in VFP9. Rebuild GENERAL CDX files on CP850 tables written by an earlier version.
+- SPANISH is supported for CP1252 and CP850 tables (CDX keys byte-identical to VFP9: `ñ`, `ch` and `ll` sort as
+  letters of their own). Before, a SPANISH tag was built, sought and maintained as MACHINE.
+- A tag under a collating sequence the library cannot reproduce (e.g. GERMAN) is no longer maintained with
+  MACHINE keys: an insert/update invalidates the structural CDX (as for an un-derivable KEY), `CdxTag.Seek`
+  returns not-found, microVFP `SEEK` raises an error, and Rushmore does not narrow on it. Rushmore also narrows a
+  GENERAL/SPANISH tag only when the context collation is the tag's own (code-page) collation.
 
 ### Changed
 
@@ -43,6 +56,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   JOIN in the contributor's benchmark; #1, thanks @rubenrovira). The full WHERE is still evaluated after the
   join, RIGHT/FULL chains are never pushed, and only deterministic conjuncts that read a driving-table field
   are pushed.
+- BREAKING: `DbfWriter.CreateTag` / REINDEX with an unsupported collating sequence (anything but MACHINE, GENERAL and
+  SPANISH) throws `DbfWriteException` instead of silently building a MACHINE tag.
+- New overloads `VfpCollations.ByName(name, codePage)` and `VfpCollations.FromSortSequence(name, codePage)`
+  resolve the code-page-specific collation; `GeneralCollation.CodePage` reports it. The one-argument overloads
+  stay CP1252 and now also resolve `SPANISH`. microVFP `SET COLLATE TO "SPANISH"` is accepted.
 - BREAKING: A field name, tag name, KEY/FOR expression or backlink path that the table's code page cannot represent
   now throws (`DbfSchemaException` / `DbfWriteException`) instead of being written with `?`. Name length
   limits count encoded bytes, and a CDX tag name longer than 10 bytes now throws instead of being clipped

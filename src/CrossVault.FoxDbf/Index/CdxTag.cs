@@ -72,6 +72,21 @@ public sealed class CdxTag
     internal System.Text.Encoding CharacterEncoding { get; }
 
     private readonly IVfpCollation _collation;
+    private readonly CollationSupport _collationSupport;
+
+    /// <summary>
+    /// The collation that produced this tag's CHARACTER keys: <see cref="Collation"/> resolved for the TABLE code
+    /// page (VFP9 weights GENERAL / SPANISH per code page). MACHINE for an unsupported sort sequence.
+    /// </summary>
+    internal IVfpCollation KeyCollation => _collation;
+
+    /// <summary>
+    /// True when <see cref="KeyCollation"/> reproduces VFP9's stored keys byte-for-byte (MACHINE; GENERAL / SPANISH
+    /// on CP1252 or CP850). False for GENERAL / SPANISH on another code page (CP1252 weights stand in — right for
+    /// ASCII only) and for an unknown sort sequence: a range over such keys is no proven superset, so Rushmore
+    /// does not narrow on the tag.
+    /// </summary>
+    internal bool IsKeyCollationExact => _collationSupport == CollationSupport.Exact;
 
     /// <summary>Sentinel meaning "no matching record" for <see cref="Seek(object)"/> — <see langword="null"/>.</summary>
     public static readonly uint? NotFound = null;
@@ -88,7 +103,8 @@ public sealed class CdxTag
         bool isCharacterKey,
         IndexKeyType keyType,
         bool isUnique = false,
-        System.Text.Encoding? characterEncoding = null)
+        System.Text.Encoding? characterEncoding = null,
+        int tableCodePage = 1252)
     {
         _index = index;
         Name = name;
@@ -102,16 +118,24 @@ public sealed class CdxTag
         IsCharacterKey = isCharacterKey;
         KeyType = keyType;
         CharacterEncoding = characterEncoding ?? IndexKey.ResolveCharacterEncoding(null, null);
-        _collation = VfpCollations.FromSortSequence(collation);
+        _collationSupport = VfpCollations.Resolve(collation, tableCodePage, out _collation);
     }
 
     /// <summary>
     /// The NATURAL (unpadded) stored bytes of the character value <paramref name="s"/> in this tag: the
-    /// raw <see cref="CharacterEncoding"/> bytes under MACHINE, the collation weight key otherwise —
-    /// exactly what the CDX builder wrote, so it is the needle for SEEK / Rushmore / SET KEY.
+    /// raw <see cref="CharacterEncoding"/> bytes under MACHINE, the collation weight key otherwise (cut to
+    /// <see cref="KeyLength"/> like the stored key) — exactly what the CDX builder wrote, so it is the needle for
+    /// SEEK / Rushmore / SET KEY.
     /// </summary>
+    /// <exception cref="NotSupportedException">The tag's sort sequence is unknown (e.g. GERMAN): no needle can
+    /// match its stored keys, so this refuses instead of silently seeking MACHINE bytes.</exception>
     internal byte[] EncodeCharacterKey(string s)
-        => IndexKey.EncodeCharacterKey(s.AsSpan(), _collation, CharacterEncoding);
+    {
+        if (_collationSupport == CollationSupport.Unsupported)
+            throw new NotSupportedException(
+                $"Index tag '{Name}' uses collating sequence '{Collation}', which is not supported for SEEK (MACHINE, GENERAL and SPANISH are).");
+        return IndexKey.EncodeCharacterKey(s.AsSpan(), _collation, CharacterEncoding, KeyLength);
+    }
 
     /// <summary>
     /// Decodes raw key bytes into an <see cref="IndexKey"/> using this tag's
@@ -202,12 +226,13 @@ public sealed class CdxTag
     /// <summary>
     /// Encodes <paramref name="value"/> to key bytes via this tag's
     /// <see cref="KeyType"/> transform, then seeks it (see <see cref="Seek(ReadOnlySpan{byte})"/>).
-    /// Returns <see cref="NotFound"/> for an absent value or an unencodable type. Never throws.
+    /// Returns <see cref="NotFound"/> for an absent value, an unencodable type or a character key under an
+    /// unsupported collating sequence. Never throws.
     /// </summary>
     public uint? Seek(object value)
     {
         if (KeyType == IndexKeyType.Character && value is string s)
-            return Seek(EncodeCharacterKey(s).AsSpan());
+            return _collationSupport == CollationSupport.Unsupported ? NotFound : Seek(EncodeCharacterKey(s).AsSpan());
 
         var keyBytes = IndexKey.Encode(value, KeyType);
         return keyBytes is null ? NotFound : Seek(keyBytes.AsSpan());

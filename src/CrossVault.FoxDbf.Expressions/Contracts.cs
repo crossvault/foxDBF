@@ -74,8 +74,9 @@ public interface IVfpCollation
 }
 
 // The built-in collations and the VfpCollations factory now live in the
-// Collation/ folder: Collation/MachineCollation.cs, Collation/GeneralCollation.cs,
-// Collation/GeneralWeights1252.cs and Collation/VfpCollations.cs.
+// Collation/ folder: Collation/MachineCollation.cs, Collation/GeneralCollation.cs (GENERAL + SPANISH),
+// Collation/CollationTable.cs, Collation/GeneralWeights1252.cs, Collation/GeneralWeights850.cs and
+// Collation/VfpCollations.cs.
 
 /// <summary>
 /// Ambient evaluation settings: <c>SET EXACT</c> (default OFF, the VFP default),

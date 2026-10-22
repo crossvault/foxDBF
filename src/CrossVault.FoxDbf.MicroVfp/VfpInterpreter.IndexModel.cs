@@ -613,7 +613,7 @@ public sealed partial class VfpInterpreter
     // ─────────────────────────── SET COLLATE / SET KEY (microVFP P1 gap #1) ───────────────────────────
 
     /// <summary>SET COLLATE TO cSeq — set the session collation baked into the next INDEX tag. Only
-    /// MACHINE + GENERAL are supported; any other sequence is a catchable error (never a silent fallback).
+    /// MACHINE, GENERAL and SPANISH are supported; any other sequence is a catchable error (never a silent fallback).
     /// <c>SET COLLATE TO</c> (no arg) resets to MACHINE. Read back by <c>SET("COLLATE")</c>.</summary>
     private void SetCollate(string arg)
     {
@@ -626,8 +626,9 @@ public sealed partial class VfpInterpreter
         {
             "MACHINE" => VfpCollations.Machine,
             "GENERAL" => VfpCollations.General,
+            "SPANISH" => VfpCollations.ByName("SPANISH"),
             _ => throw new MicroVfpRuntimeException(
-                $"SET COLLATE TO {seq}: collating sequence not supported (only MACHINE and GENERAL)."),
+                $"SET COLLATE TO {seq}: collating sequence not supported (only MACHINE, GENERAL and SPANISH)."),
         };
     }
 

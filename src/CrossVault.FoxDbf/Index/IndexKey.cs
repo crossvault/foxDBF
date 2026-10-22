@@ -299,6 +299,23 @@ public readonly struct IndexKey
         return bytes;
     }
 
+    /// <summary>
+    /// <see cref="EncodeCharacterKey(ReadOnlySpan{char}, IVfpCollation, Encoding)"/> as stored in a tag whose keys
+    /// are <paramref name="keyLength"/> bytes. A weight key longer than that is cut to the key length and THEN loses
+    /// its trailing 0x00 tail bytes (VFP9: a C(8) GENERAL key whose heads+tails run past 16 bytes stores
+    /// <c>... 00 00 02</c> + blanks, not <c>... 00 00 02 00 00 00</c>). Weight heads are never 0x00, so only tail
+    /// bytes are trimmed. MACHINE keys are returned unchanged (a 0x00 there is data).
+    /// </summary>
+    internal static byte[] EncodeCharacterKey(ReadOnlySpan<char> s, IVfpCollation collation, Encoding encoding, int keyLength)
+    {
+        var key = EncodeCharacterKey(s, collation, encoding);
+        if (key.Length <= keyLength || IsMachineCollation(collation))
+            return key;
+        int n = Math.Max(0, keyLength);
+        while (n > 0 && key[n - 1] == 0) n--;
+        return key.AsSpan(0, n).ToArray();
+    }
+
     /// <summary>True for the identity (MACHINE) collation, whose keys are raw code-page bytes.</summary>
     internal static bool IsMachineCollation(IVfpCollation collation)
         => string.Equals(collation.Name, VfpCollations.Machine.Name, StringComparison.OrdinalIgnoreCase);

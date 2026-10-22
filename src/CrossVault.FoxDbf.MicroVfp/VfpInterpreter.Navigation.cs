@@ -514,13 +514,27 @@ public sealed partial class VfpInterpreter
         string text = value.AsString ?? string.Empty;
         if (src.Idx is not null)
             return src.IdxCharacterEncoding.GetBytes(text);
-        return src.CdxTag!.EncodeCharacterKey(text);
+        return EncodeTagCharacterKey(src.CdxTag!, text);
     }
 
     /// <summary>The natural (unpadded) byte needle used by interpreter character seeks on a CDX tag:
     /// exactly the bytes the CDX builder stored for that value (see <see cref="CdxTag.EncodeCharacterKey"/>).</summary>
     private static byte[] NaturalCharacterSeekNeedle(CdxTag tag, VfpValue key)
-        => tag.EncodeCharacterKey(key.AsString ?? string.Empty);
+        => EncodeTagCharacterKey(tag, key.AsString ?? string.Empty);
+
+    /// <summary><see cref="CdxTag.EncodeCharacterKey"/>, surfacing an unsupported collating sequence (a tag built
+    /// by VFP under e.g. GERMAN) as a catchable runtime error instead of a silent miss.</summary>
+    private static byte[] EncodeTagCharacterKey(CdxTag tag, string text)
+    {
+        try
+        {
+            return tag.EncodeCharacterKey(text);
+        }
+        catch (NotSupportedException ex)
+        {
+            throw new MicroVfpRuntimeException(ex.Message);
+        }
+    }
 
     /// <summary>Whether one stored CHARACTER key falls in the active SET KEY range, compared on collated
     /// key bytes. Single-value: SET EXACT ON ⇒ full byte-equality against the padded bound; SET EXACT OFF ⇒

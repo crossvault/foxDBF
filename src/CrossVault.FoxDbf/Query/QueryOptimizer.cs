@@ -66,7 +66,7 @@ public static class QueryOptimizer
         try
         {
             var tokens = Tokenize(filter ?? string.Empty);
-            var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation?.Name, optimize: ctx.Optimize, policy: policy, entrySource: entrySource, onIndexEntryExamined: onIndexEntryExamined);
+            var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation, optimize: ctx.Optimize, policy: policy, entrySource: entrySource, onIndexEntryExamined: onIndexEntryExamined);
             analysis = parser.ParseTop();
         }
         catch
@@ -176,7 +176,7 @@ public static class QueryOptimizer
             try
             {
                 var tokens = Tokenize(filter ?? string.Empty);
-                var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation?.Name, optimize: ctx.Optimize, policy: policy, entrySource: entrySource, onIndexEntryExamined: onIndexEntryExamined);
+                var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation, optimize: ctx.Optimize, policy: policy, entrySource: entrySource, onIndexEntryExamined: onIndexEntryExamined);
                 analysis = parser.ParseTop();
             }
             catch
@@ -293,7 +293,7 @@ public static class QueryOptimizer
             // skips the index-entry scan — the optimizability verdict is unaffected. (planOnly skips
             // the candidate scan, so entrySource is accepted for symmetry but never consulted here.)
             var tokens = Tokenize(filter ?? string.Empty);
-            var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation?.Name, planOnly: true, optimize: ctx.Optimize, policy: policy, entrySource: entrySource);
+            var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation, planOnly: true, optimize: ctx.Optimize, policy: policy, entrySource: entrySource);
             var analysis = parser.ParseTop();
             var leaves = parser.Leaves;
 
@@ -590,7 +590,7 @@ public static class QueryOptimizer
         private readonly List<Token> _t;
         private readonly CdxFile? _cdx;
         private readonly int _rc;
-        private readonly string _collation; // the ACTIVE (context) collation name, e.g. MACHINE / GENERAL
+        private readonly IVfpCollation _collation; // the ACTIVE (context) collation, e.g. MACHINE / GENERAL
         private readonly bool _planOnly;    // EXPLAIN mode: classify leaves but SKIP the index-entry scan
         private readonly bool _optimize;    // SET OPTIMIZE: false → consult no index (plain full scan)
         private readonly IOptimizerPolicy? _policy; // opt-in COST seam (Highlike); null → default Core behaviour
@@ -605,10 +605,10 @@ public static class QueryOptimizer
         /// </summary>
         public readonly List<ConditionPlan> Leaves = new();
 
-        public BoolParser(List<Token> tokens, CdxFile? cdx, int recordCount, string? collation = null, bool planOnly = false, bool optimize = true, IOptimizerPolicy? policy = null, Func<CdxTag, IEnumerable<IndexEntry>>? entrySource = null, Action<CdxTag>? onIndexEntryExamined = null)
+        public BoolParser(List<Token> tokens, CdxFile? cdx, int recordCount, IVfpCollation? collation = null, bool planOnly = false, bool optimize = true, IOptimizerPolicy? policy = null, Func<CdxTag, IEnumerable<IndexEntry>>? entrySource = null, Action<CdxTag>? onIndexEntryExamined = null)
         {
             _t = tokens; _cdx = cdx; _rc = recordCount; _planOnly = planOnly; _optimize = optimize; _policy = policy; _entrySource = entrySource; _onExamine = onIndexEntryExamined;
-            _collation = string.IsNullOrWhiteSpace(collation) ? "MACHINE" : collation.Trim();
+            _collation = collation ?? VfpCollations.Machine;
         }
 
         /// <summary>
@@ -1080,7 +1080,7 @@ public static class QueryOptimizer
                 if (!tag.IsCharacterKey) return PlanReason.UnsupportedKeyType;
                 // The tag's stored collation must equal the active collation, or a range over its
                 // collation-ordered keys would not be a superset of the context-collation match set.
-                if (!CollationMatches(tag.Collation, _collation)) return PlanReason.UnsupportedKeyType;
+                if (!CollationMatches(tag, _collation)) return PlanReason.UnsupportedKeyType;
             }
 
             // A FOR-filtered tag indexes only rows that passed FOR — a strict SUBSET, unsafe.
@@ -1122,10 +1122,16 @@ public static class QueryOptimizer
             => span.Count == 1 && span[0].Type == TokType.Str ? span[0].Str : null;
 
         /// <summary>The tag's stored sort sequence (empty ⇒ MACHINE) equals the active collation.</summary>
-        private static bool CollationMatches(string? tagCollation, string activeCollation)
+        private static bool CollationMatches(CdxTag tag, IVfpCollation active)
         {
-            string tc = string.IsNullOrWhiteSpace(tagCollation) ? "MACHINE" : tagCollation.Trim();
-            return string.Equals(tc, activeCollation, StringComparison.OrdinalIgnoreCase);
+            string tc = string.IsNullOrWhiteSpace(tag.Collation) ? "MACHINE" : tag.Collation.Trim();
+            if (!string.Equals(tc, active.Name, StringComparison.OrdinalIgnoreCase)) return false;
+            if (IndexKey.IsMachineCollation(active)) return true;
+            // A weighted tag narrows only when its stored keys come from the SAME weight function the residual
+            // compares with: GENERAL in a CP850 table weights Ä as AE, the CP1252 GENERAL of the context does
+            // not, so a range over the CP850 keys is no superset of the CP1252 match set. Approximate tables
+            // (GENERAL on an unported code page) never prove a superset either.
+            return tag.IsKeyCollationExact && ReferenceEquals(tag.KeyCollation, active);
         }
 
         /// <summary>True when the KEY expression contains a word-boundaried <c>NOT</c> (or <c>.NOT.</c>).</summary>
