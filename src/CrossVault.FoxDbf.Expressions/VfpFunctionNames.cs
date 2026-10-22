@@ -69,6 +69,17 @@ internal static class VfpFunctionNames
 
     private static readonly Dictionary<string, string> Map = Build();
 
+    /// <summary>The function an upper-case <paramref name="upperName"/> calls. VFP's decompiler prints FIELD(),
+    /// FILE() and MESSAGE() as FIELDS(), FILES(), MESSAGES() (one internal function each), so an index text
+    /// VFP — or we — stored with the plural means the singular function.</summary>
+    public static string EvaluationName(string upperName) => upperName switch
+    {
+        "FIELDS" => "FIELD",
+        "FILES" => "FILE",
+        "MESSAGES" => "MESSAGE",
+        _ => upperName,
+    };
+
     /// <summary>The spelling VFP9 stores for a call to <paramref name="name"/>.</summary>
     public static string Canonical(string name)
         => Map.TryGetValue(name.ToUpperInvariant(), out var canonical) ? canonical : name.ToLowerInvariant();

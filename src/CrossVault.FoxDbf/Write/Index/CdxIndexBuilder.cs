@@ -208,16 +208,23 @@ internal static class CdxIndexBuilder
         bool hasFor = !string.IsNullOrWhiteSpace(def.ForExpression);
         string forExpr = hasFor ? def.ForExpression! : string.Empty;
 
+        // The KEY/FOR text is stored as VFP's INDEX ON stores it: DECOMPILED (`UPPER( name )` → `UPPER(name)`,
+        // `RECN()` → `RECNO()`), unless the tag keeps the text it already had. The keys are computed from the
+        // STORED text — what incremental maintenance (and VFP after a reopen) evaluates — so a bulk build and
+        // a later per-row edit can never disagree (an abbreviated `!DELE()` now works in both).
+        if (!def.StoreExpressionsVerbatim)
+        {
+            keyExpr = VfpExpressionText.Canonicalize(keyExpr);
+            if (hasFor) forExpr = VfpExpressionText.Canonicalize(forExpr);
+            def = def with { KeyExpression = keyExpr, ForExpression = hasFor ? forExpr : def.ForExpression };
+        }
+
         // Tag name and KEY/FOR text are stored in the TABLE's code page, as VFP9 does ('ó' of razónsoc is
-        // 0xF3 in a CP1252 table, 0xA2 in a CP850 one) — never as '?'. The KEY/FOR text is VFP's DECOMPILED
-        // form (`UPPER( name )` → `UPPER(name)`); the keys themselves still come from the text as given.
+        // 0xF3 in a CP1252 table, 0xA2 in a CP850 one) — never as '?'.
         var textEncoding = schema.Encoding;
         byte[] nameKey = MakeNameKey(def.Name, textEncoding);
-        string StoredText(string text) => def.StoreExpressionsVerbatim ? text : VfpExpressionText.Canonicalize(text);
-        byte[] keyText = CodePageText.Encode(StoredText(keyExpr), textEncoding,
-            "CDX tag KEY expression", m => new DbfWriteException(m));
-        byte[] forText = CodePageText.Encode(StoredText(forExpr), textEncoding,
-            "CDX tag FOR expression", m => new DbfWriteException(m));
+        byte[] keyText = CodePageText.Encode(keyExpr, textEncoding, "CDX tag KEY expression", m => new DbfWriteException(m));
+        byte[] forText = CodePageText.Encode(forExpr, textEncoding, "CDX tag FOR expression", m => new DbfWriteException(m));
         if (keyText.Length + forText.Length + 2 > Page)
             throw new DbfWriteException("CDX tag KEY + FOR expressions exceed the 512-byte expression pool.");
 

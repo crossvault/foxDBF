@@ -238,7 +238,7 @@ internal sealed class FunctionNode : AstNode
     public FunctionNode(string name, AstNode[] args)
     {
         _name = name;
-        _upper = name.ToUpperInvariant();
+        _upper = VfpFunctionNames.EvaluationName(name.ToUpperInvariant());
         _args = args;
     }
 

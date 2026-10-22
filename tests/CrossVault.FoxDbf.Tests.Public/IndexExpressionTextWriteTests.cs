@@ -83,6 +83,41 @@ public sealed class IndexExpressionTextWriteTests : IDisposable
         Assert.Equal("MOD(RECNO(),3)=0", Encoding.ASCII.GetString(header, 236, 220).TrimEnd('\0'));
     }
 
+    /// <summary>Keys come from the STORED text, which incremental maintenance re-reads: a bulk build and
+    /// per-row maintenance agree even for abbreviated names (<c>SUBS</c>, <c>RECN</c>, <c>DELE</c>) that only
+    /// the decompiled text spells out.</summary>
+    [Fact]
+    public void BulkBuildAndMaintenance_EvaluateTheSameStoredText()
+    {
+        string dbf = NewTable();
+        using (var w = DbfWriter.Open(dbf))
+            w.CreateTag(new CdxTagDefinition("TABBR", "SUBS(name, 2, 2) + cat", "RECN() % 2 = 1 .AND. !DELE()"));
+        Assert.Equal(("SUBSTR(name,2,2)+cat", "MOD(RECNO(),2)=1.AND..NOT.DELETED()"), TagText(dbf, "TABBR"));
+
+        using (var w = DbfWriter.Open(dbf))
+            for (int i = 40; i < 60; i++)
+                w.AppendRecord("N" + i.ToString("D2"), "C" + (i % 4));
+
+        (int Recno, string Key)[] maintained = Entries(dbf, "TABBR");
+        using (var w = DbfWriter.Open(dbf))
+            w.Reindex();
+        (int Recno, string Key)[] rebuilt = Entries(dbf, "TABBR");
+
+        Assert.Equal(30, rebuilt.Length);                        // every odd recno of 60
+        Assert.Equal(rebuilt, maintained);
+        Assert.Equal("00C0", rebuilt[0].Key);                    // SUBSTR evaluated, not .NULL.
+    }
+
+    private static (int Recno, string Key)[] Entries(string dbf, string tag)
+    {
+        using var table = DbfTable.Open(dbf);
+        using var cdx = CdxFile.Open(Path.ChangeExtension(dbf, ".cdx"), table);
+        var list = new System.Collections.Generic.List<(int, string)>();
+        foreach (var e in cdx.Tag(tag)!.EnumerateEntries())
+            list.Add(((int)e.RecordNumber, Encoding.ASCII.GetString(e.Key).TrimEnd()));
+        return list.ToArray();
+    }
+
     /// <summary>The optimizer matches a typed condition against a tag whose stored KEY is in VFP's spelling
     /// (<c>.AND.</c>, <c>"…"</c>, <c>#</c>, <c>=&gt;</c>) — as every VFP-built index stores it.</summary>
     [Fact]

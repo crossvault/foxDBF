@@ -156,7 +156,10 @@ public sealed class VfpExpressionTextTests
     [InlineData("n45 > 2 ** 0.5", "n45>1")]
     [InlineData("n45 > 2.0 ** 2", "n45>4.0")]
     public void Canonicalize_ReproducesTheTextVfp9Stores(string typed, string stored)
-        => Assert.Equal(stored, VfpExpressionText.Canonicalize(typed));
+    {
+        Assert.Equal(stored, VfpExpressionText.Canonicalize(typed));
+        Assert.Equal(stored, VfpExpressionText.Canonicalize(stored));   // VFP's own text survives a REINDEX
+    }
 
     [Theory]
     [InlineData("n45*(2+3)", "n45*5")]

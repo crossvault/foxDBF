@@ -43,6 +43,11 @@ internal static class IdxIndexBuilder
         string keyExpr, string? forExpr, bool unique,
         EvaluationContext? evalContext = null, bool includeDeleted = false)
     {
+        // VFP stores the DECOMPILED text (`MOD(RECNO(), 3) = 0` → `MOD(RECNO(),3)=0`); the keys come from that
+        // stored text too, as anything re-reading the index evaluates it.
+        keyExpr = VfpExpressionText.Canonicalize(keyExpr);
+        if (!string.IsNullOrWhiteSpace(forExpr)) forExpr = VfpExpressionText.Canonicalize(forExpr);
+
         // KEY/FOR text lives in the TABLE's code page (as VFP writes it) — never substituted, never clipped.
         byte[] keyText = EncodeExpression(keyExpr, schema.Encoding, "KEY");
         byte[] forText = EncodeExpression(forExpr ?? string.Empty, schema.Encoding, "FOR");
@@ -306,11 +311,10 @@ internal static class IdxIndexBuilder
         forExpr.CopyTo(page, 236);                                        // @236..455
     }
 
-    /// <summary>Encode an IDX KEY/FOR expression in the table code page; it must fit its 220-byte slot with a NUL.
-    /// VFP stores the decompiled text (<c>MOD(RECNO(), 3) = 0</c> → <c>MOD(RECNO(),3)=0</c>), so do we.</summary>
+    /// <summary>Encode an IDX KEY/FOR expression in the table code page; it must fit its 220-byte slot with a NUL.</summary>
     private static byte[] EncodeExpression(string text, Encoding encoding, string what)
     {
-        byte[] bytes = CodePageText.Encode(VfpExpressionText.Canonicalize(text), encoding, $"IDX {what} expression", m => new DbfWriteException(m));
+        byte[] bytes = CodePageText.Encode(text, encoding, $"IDX {what} expression", m => new DbfWriteException(m));
         if (bytes.Length > 219)
             throw new DbfWriteException($"IDX {what} expression needs {bytes.Length} bytes; the header slot holds 219.");
         return bytes;
