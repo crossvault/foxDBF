@@ -65,6 +65,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- BREAKING: `DbfWriter.Create` (and every CREATE TABLE / ALTER path built on it) stores field names upper-cased in
+  the table's code page, as VFP9 does (`razónsoc` → `RAZÓNSOC`, `œuvre` → `ŒUVRE`, `ƒ` stays), so
+  `DbfColumn.Name` of a created table now reads back upper-case. Field descriptors are otherwise byte-identical
+  to VFP9's: the binary flag 0x04 is set automatically on I, B, Y, T, Q and W fields (with NULL 0x06, AUTOINC
+  0x0C), and a Currency field records its 4 decimals.
 - JOIN queries apply WHERE conjuncts that read only the driving table to that table before the join runs, so
   a selective WHERE no longer pays one inner-side lookup per driving row (≈283 s → ≈7 s on a 593k-row LEFT
   JOIN in the contributor's benchmark; #1, thanks @rubenrovira). The full WHERE is still evaluated after the

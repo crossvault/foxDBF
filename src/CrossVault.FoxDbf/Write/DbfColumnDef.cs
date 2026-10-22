@@ -65,7 +65,8 @@ public sealed record DbfColumnDef
         // so `new DbfColumnDef("QTY", 'I')` just works (VFP: CREATE TABLE t (id I) needs no width).
         // Variable-width types (C/N/F/V/Q) keep the given length (0 → a schema error at create time).
         Length = length > 0 ? length : DefaultFixedWidth(type);
-        Decimal = decimalCount;
+        // Currency always carries 4 implied decimals; VFP9 records them in the descriptor (decimal byte 4).
+        Decimal = decimalCount == 0 && type is 'Y' or 'y' ? 4 : decimalCount;
         Nullable = nullable;
         Binary = binary;
         AutoIncrement = autoIncrement;

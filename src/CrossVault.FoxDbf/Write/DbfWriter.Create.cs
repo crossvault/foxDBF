@@ -78,7 +78,9 @@ public sealed partial class DbfWriter
             if (c.Name.Length > 10)
                 throw new DbfSchemaException(
                     $"Column name '{c.Name}' exceeds the 10-character DBF field-name limit.");
-            nameBytes[i] = CodePageText.Encode(c.Name, nameEncoding, "Column name", m => new DbfSchemaException(m));
+            // VFP stores field names upper-cased in the table code page (razónSoc → RAZÓNSOC, œuvre → ŒUVRE).
+            nameBytes[i] = CodePageText.Encode(CodePageText.ToUpperInCodePage(c.Name, nameEncoding), nameEncoding,
+                "Column name", m => new DbfSchemaException(m));
             if (nameBytes[i].Length > 10)
                 throw new DbfSchemaException(
                     $"Column name '{c.Name}' needs {nameBytes[i].Length} bytes in code page {nameEncoding.CodePage}; " +
@@ -157,7 +159,9 @@ public sealed partial class DbfWriter
 
             byte flags = 0;
             if (c.Nullable) flags |= 0x02;
-            if (c.Binary) flags |= 0x04;
+            // 0x04 (binary, no code-page translation): requested NOCPTRANS, and automatically every type VFP9
+            // stores in binary form — I, B, Y, T, Q, W (probe 2026-10-22; C/N/F/D/L/M/G/V stay 0).
+            if (c.Binary || char.ToUpperInvariant(c.Type) is 'I' or 'B' or 'Y' or 'T' or 'Q' or 'W') flags |= 0x04;
             if (c.AutoIncrement is not null) flags |= 0x08;
             buffer[descPos + 18] = flags;
 
