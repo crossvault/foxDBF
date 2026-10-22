@@ -244,8 +244,22 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - `ORDER BY` on a select alias (`SELECT id AS k FROM person ORDER BY k DESC`) left the rows unsorted outside
   aggregate queries; it now sorts by that column. A source field of the same name still wins over the alias,
   as in VFP9 (`SELECT name AS id, id AS name … ORDER BY id` sorts by the field `id`).
+- `HAVING` could not reference a select alias (`SELECT id AS k, COUNT(*) … GROUP BY k HAVING k > 3` returned
+  no rows; so did `COUNT(*) AS n … HAVING n > 1`). HAVING now sees the select aliases, aggregate aliases
+  included; a source field of the same name wins. A compound HAVING (`… HAVING COUNT(*) > 1 AND k > 0`, `OR`)
+  is evaluated instead of throwing `NotSupportedException`, and aggregates inside a function
+  (`HAVING BETWEEN(COUNT(*), 1, 2)`) are computed per group. A HAVING in a query without GROUP BY or
+  aggregates (`SELECT id AS k FROM person HAVING k > 4`) was ignored; it now filters the rows, as in VFP9.
 
 ### Changed
+
+- `GROUP BY`, `DISTINCT` and `UNION` results without `ORDER BY` come back in VFP9's order instead of the order
+  the rows were first seen in (checked against VFP9). GROUP BY returns the groups sorted by the GROUP BY key
+  in GROUP BY list order, also when the key is not selected (`SELECT id % 2 AS k, COUNT(*) … GROUP BY 1` gives
+  `0, 1`, was `1, 0`). DISTINCT and every `UNION` step without ALL sort by the whole row in column order; a
+  `UNION ALL` step appends its rows unsorted. Sorting uses the session collation (`SET COLLATE`); .NULL. comes
+  first and .F. before .T. An `ORDER BY` re-sorts that order stably, so rows with equal ORDER BY keys stay in
+  group-key or row order, as in VFP9. DISTINCT now runs before ORDER BY.
 
 - BREAKING: SQL result columns are named as VFP9 names them (checked against VFP9). Names are upper case (also
   user aliases and DBC long field names: `customer_name` → `CUSTOMER_NAME`). An unaliased expression is `EXP_n`

@@ -240,15 +240,17 @@ public sealed class SqlExecutorFixTests : IDisposable
     }
 
     // ======================================================================================
-    //  FIX 7 — a compound HAVING is rejected cleanly (not silently mis-evaluated)
+    //  FIX 7 — a compound HAVING (AND / OR over aggregates) is evaluated as one expression, as VFP9
     // ======================================================================================
 
-    [Fact]
-    public void Compound_Having_Throws_NotSupported()
+    [Theory]
+    [InlineData("SELECT city, COUNT(*) FROM person GROUP BY city HAVING COUNT(*) > 2 AND SUM(amount) < 800", "Berlin:4")]
+    [InlineData("SELECT city, COUNT(*) FROM person GROUP BY city HAVING COUNT(*) > 3 OR MAX(amount) = 300", "Berlin:4 Munich:3")]
+    public void Compound_Having_Is_Evaluated(string sql, string expected)
     {
         using var s = PersonSession();
-        var ex = Assert.Throws<NotSupportedException>(() =>
-            s.Execute("SELECT city, COUNT(*) FROM person GROUP BY city HAVING COUNT(*) > 1 AND SUM(amount) > 100"));
-        Assert.Contains("Phase 2", ex.Message, StringComparison.OrdinalIgnoreCase);
+        var rows = SqlTestSupport.Materialize(s.Execute(sql)!);
+        Assert.Equal(expected, string.Join(" ", rows.Select(r =>
+            ((string)r[0]!).TrimEnd() + ":" + SqlTestSupport.Norm(r[1])!.ToString())));
     }
 }

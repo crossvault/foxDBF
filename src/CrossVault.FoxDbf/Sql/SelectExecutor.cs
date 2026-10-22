@@ -409,22 +409,11 @@ internal sealed class SelectExecutor
         else
         {
             var groupBy = ResolveGroupBy(sel, order, _ => table.Columns.Select(c => c.Name));
-            pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, rows.ConvertAll(r => r.Ctx));
+            pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, order, rows.ConvertAll(r => r.Ctx));
         }
 
-        // (4) ORDER BY (collation-aware via ctx).
-        if (sel.OrderBy.Count > 0)
-            pairs = ApplyOrderBy(pairs, sel.OrderBy, order, aggregate, ctx);
-
-        // (5) DISTINCT (collation-aware dedup).
-        if (sel.Distinct)
-            pairs = Distinct(pairs, ctx);
-
-        // (6) TOP n — VFP keeps ALL rows whose full ORDER BY key ties the nth row's key.
-        if (sel.Top is int top)
-            pairs = ApplyTop(pairs, top, sel.OrderBy, order, aggregate, ctx);
-
-        return Materialize(columns, pairs);
+        // (4) HAVING without grouping, DISTINCT, ORDER BY, TOP.
+        return Materialize(columns, PostProcess(pairs, sel, order, aggregate, ctx));
     }
 
     /// <summary>
@@ -971,19 +960,10 @@ internal sealed class SelectExecutor
                     .Where(s => it.StarAlias is null || string.Equals(it.StarAlias, s.Alias, StringComparison.OrdinalIgnoreCase))
                     .SelectMany(s => s.Columns.Select(c => s.Alias + "." + c.Name)));
                 var rcs = composites.ConvertAll(c => Bind(new CompositeRowContext(src, c, _outer)));
-                pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, rcs);
+                pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, order, rcs);
             }
 
-            if (sel.OrderBy.Count > 0)
-                pairs = ApplyOrderBy(pairs, sel.OrderBy, order, aggregate, ctx);
-
-            if (sel.Distinct)
-                pairs = Distinct(pairs, ctx);
-
-            if (sel.Top is int top)
-                pairs = ApplyTop(pairs, top, sel.OrderBy, order, aggregate, ctx);
-
-            return Materialize(columns, pairs);
+            return Materialize(columns, PostProcess(pairs, sel, order, aggregate, ctx));
         }
         finally
         {
@@ -1459,36 +1439,99 @@ internal sealed class SelectExecutor
     // ---- aggregates / GROUP BY / HAVING (source-agnostic) ---------------------------------
 
     private static List<(object?[] row, IRowContext rep)> Aggregate(
-        EvaluationContext ctx, SelectStatement sel, IReadOnlyList<IRowContext> rows)
+        EvaluationContext ctx, SelectStatement sel, OrderScope scope, IReadOnlyList<IRowContext> rows)
     {
-        // group by the tuple of GROUP BY expression values (normalized), preserving first-seen order.
-        var groups = new List<(List<object?> Key, List<IRowContext> Members)>();
+        // Group by the tuple of GROUP BY expression values (normalized). VFP9 returns the groups SORTED by
+        // that tuple in GROUP BY list order (collation-aware, .NULL. first) even without ORDER BY: a stable
+        // sort on the key, then each run of equal keys is one group (members keep their source order).
+        var groups = new List<List<IRowContext>>();
         if (sel.GroupBy.Count == 0)
         {
-            groups.Add((new List<object?>(), rows.ToList())); // whole-table aggregate: exactly one group.
+            groups.Add(rows.ToList()); // whole-table aggregate: exactly one group.
         }
         else
         {
+            var keyed = new List<(object?[] Key, IRowContext Row)>(rows.Count);
             foreach (var r in rows)
             {
-                var key = sel.GroupBy.Select(g => Norm(ToClr(g.Evaluate(r, ctx)))).ToList();
-                int idx = groups.FindIndex(x => KeyEq(x.Key, key, ctx));
-                if (idx < 0) { groups.Add((key, new List<IRowContext> { r })); }
-                else groups[idx].Members.Add(r);
+                var key = new object?[sel.GroupBy.Count];
+                for (int g = 0; g < key.Length; g++) key[g] = Norm(ToClr(sel.GroupBy[g].Evaluate(r, ctx)));
+                keyed.Add((key, r));
+            }
+            var byKey = Comparer<object?[]>.Create((a, b) => CompareRow(a, b, ctx));
+            object?[]? current = null;
+            foreach (var (key, r) in keyed.OrderBy(x => x.Key, byKey))
+            {
+                if (current is null || CompareRow(current, key, ctx) != 0)
+                {
+                    groups.Add(new List<IRowContext>());
+                    current = key;
+                }
+                groups[^1].Add(r);
             }
         }
 
+        var aliases = AliasColumns(scope);
         var result = new List<(object?[] row, IRowContext rep)>();
-        foreach (var (_, members) in groups)
+        foreach (var members in groups)
         {
             // A whole-table aggregate over an EMPTY set still emits one row (COUNT→0, SUM→0,
             // AVG/MIN/MAX→null). NEVER index members[0] unconditionally — use a synthetic context.
             IRowContext rep = members.Count > 0 ? members[0] : EmptyRowContext.Instance;
-            if (sel.Having is not null && !EvalHaving(sel.Having, members, rep, ctx)) continue;
             var row = sel.Items.Select(it => ProjectAggregateItem(it, members, rep, ctx)).ToArray();
+            if (sel.Having is not null
+                && !EvalHaving(sel.Having, members, AliasRow(rep, row, aliases, scope.IsSourceField), ctx))
+                continue;
             result.Add((row, rep));
         }
         return result;
+    }
+
+    /// <summary>The steps after projection / grouping, in VFP9's order: a HAVING in an ungrouped query
+    /// filters the projected rows (a WHERE that also sees the select aliases); DISTINCT dedups and sorts
+    /// by the full row; ORDER BY re-sorts stably (rows tied on the ORDER BY key keep their group-key /
+    /// DISTINCT order, as VFP9 returns them); TOP n last.</summary>
+    private static List<(object?[] row, IRowContext rep)> PostProcess(
+        List<(object?[] row, IRowContext rep)> pairs, SelectStatement sel, OrderScope scope, bool aggregate,
+        EvaluationContext ctx)
+    {
+        if (!aggregate && sel.Having is { } having)
+        {
+            var aliases = AliasColumns(scope);
+            pairs = pairs.FindAll(p =>
+            {
+                var v = having.Evaluate(AliasRow(p.rep, p.row, aliases, scope.IsSourceField), ctx);
+                return v.Type == VfpType.Logical && v.AsLogical;
+            });
+        }
+
+        if (sel.Distinct)
+            pairs = Distinct(pairs, ctx);
+
+        if (sel.OrderBy.Count > 0)
+            pairs = ApplyOrderBy(pairs, sel.OrderBy, scope, aggregate, ctx);
+
+        // TOP n — VFP keeps ALL rows whose full ORDER BY key ties the nth row's key.
+        if (sel.Top is int top)
+            pairs = ApplyTop(pairs, top, sel.OrderBy, scope, aggregate, ctx);
+
+        return pairs;
+    }
+
+    /// <summary>Select-list alias → 0-based output column (the first item carrying it wins), accounting for
+    /// <c>*</c> widths. Generated names (<c>CNT</c>, <c>EXP_1</c>) are no aliases: VFP9 rejects them in
+    /// HAVING (1806).</summary>
+    private static Dictionary<string, int> AliasColumns(OrderScope scope)
+    {
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int col = 0;
+        foreach (var it in scope.Items)
+        {
+            if (it.IsStar) { col += scope.StarWidth(it); continue; }
+            if (it.Alias is not null) map.TryAdd(it.Alias.Trim(), col);
+            col++;
+        }
+        return map;
     }
 
     private static object? ProjectAggregateItem(SelectItem it, List<IRowContext> members, IRowContext rep, EvaluationContext ctx)
@@ -1510,8 +1553,14 @@ internal sealed class SelectExecutor
 
     private static object? EvaluateAggregateExpression(
         VfpExpression expression, List<IRowContext> members, IRowContext rep, EvaluationContext ctx)
+        => Norm(ToClr(EvaluateWithAggregates(expression, members, rep, ctx)));
+
+    /// <summary>Evaluates <paramref name="expression"/> against <paramref name="rep"/>, computing every SQL
+    /// aggregate call in it over <paramref name="members"/>.</summary>
+    private static VfpValue EvaluateWithAggregates(
+        VfpExpression expression, List<IRowContext> members, IRowContext rep, EvaluationContext ctx)
     {
-        var value = expression.EvaluateWithFunctionResolver(rep, ctx,
+        return expression.EvaluateWithFunctionResolver(rep, ctx,
             (string upperName, IReadOnlyList<ExpressionArgument> arguments, out VfpValue result) =>
             {
                 if (!IsSqlAggregateCall(upperName, arguments.Count))
@@ -1523,7 +1572,6 @@ internal sealed class SelectExecutor
                 result = VfpValue.FromClr(ComputeAggregate(upperName, arguments[0], members, ctx));
                 return true;
             });
-        return Norm(ToClr(value));
     }
 
     private static object? ComputeAggregate(
@@ -1543,57 +1591,20 @@ internal sealed class SelectExecutor
         }
     }
 
-    private static bool EvalHaving(VfpExpression having, List<IRowContext> members, IRowContext rep, EvaluationContext ctx)
+    /// <summary>Evaluates a HAVING over one group as a single expression: aggregate calls are computed over
+    /// the group's <paramref name="members"/>, and <paramref name="row"/> (the group's representative
+    /// with its projected output row) resolves the select aliases — <c>HAVING k &gt; 3</c>,
+    /// <c>HAVING n &gt; 1</c> for <c>COUNT(*) AS n</c>, compound <c>AND</c>/<c>OR</c> and functions over
+    /// both, as in VFP9. <c>=</c> follows the WHERE path's SQL semantics (the context carries
+    /// <see cref="EvaluationContext.SqlSemantics"/>); a <c>.NULL.</c> result rejects the group.</summary>
+    private static bool EvalHaving(VfpExpression having, List<IRowContext> members, IRowContext row, EvaluationContext ctx)
     {
-        // A compound HAVING (top-level AND/OR) is not handled by the single-comparison split below;
-        // surface it cleanly instead of silently mis-evaluating one side.
-        if (HasTopLevelBoolean(having.Text))
-            throw new NotSupportedException("Compound HAVING is not supported yet — Phase 2.");
-
-        var m = HavingCmpRx.Match(having.Text);
-        if (!m.Success)
-        {
-            var v = members.Count == 0 ? VfpValue.Logical(false) : having.Evaluate(rep, ctx);
-            return v.Type == VfpType.Logical && v.AsLogical;
-        }
-
-        VfpValue Side(string s)
-        {
-            var parsed = SafeParse(s);
-            if (parsed is not null && ContainsAggregate(parsed))
-                return VfpValue.FromClr(EvaluateAggregateExpression(parsed, members, rep, ctx));
-            return VfpExpression.Parse(s).Evaluate(rep, ctx);
-        }
-
-        var lv = Side(m.Groups["l"].Value);
-        var rv = Side(m.Groups["r"].Value);
-        string op = m.Groups["op"].Value;
-
-        // '=' / '<>' follow SQL/ANSI '=' semantics (same as the WHERE path); for strings '==' is the padded
-        // comparison and the ordering operators line the operands up like '=' (SET ANSI), as on the WHERE path;
-        // other types use the collation-aware VFP comparison.
-        if (op is "=" or "<>" or "!=")
-        {
-            bool eq = ValueEqSql(lv, rv, ctx);
-            return op == "=" ? eq : !eq;
-        }
-        int c = lv.Type == VfpType.Character && rv.Type == VfpType.Character
-            ? VfpRuntime.CompareStrings(lv.AsString, rv.AsString,
-                op == "==" || ctx.Ansi ? StringCompareMode.Pad : StringCompareMode.Shorter, ctx)
-            : CompareVfp(lv, rv, ctx);
-        return op switch
-        {
-            "==" => c == 0,
-            "<" => c < 0,
-            "<=" => c <= 0,
-            ">" => c > 0,
-            ">=" => c >= 0,
-            _ => false,
-        };
+        var v = EvaluateWithAggregates(having, members, row, ctx);
+        return v.Type == VfpType.Logical && v.AsLogical;
     }
 
     /// <summary>SQL <c>=</c> equality (governed by SET ANSI when SqlSemantics is on) used by the
-    /// HAVING path, mirroring the WHERE path's runtime operator. Strings route through the canonical
+    /// subquery predicates, mirroring the WHERE path's runtime operator. Strings route through the canonical
     /// <see cref="VfpRuntime.StrEqSql"/>; other types use the collation-aware VFP comparison.</summary>
     private static bool ValueEqSql(VfpValue a, VfpValue b, EvaluationContext ctx)
     {
@@ -1658,13 +1669,17 @@ internal sealed class SelectExecutor
         return ordered!.ToList();
     }
 
+    /// <summary>DISTINCT as VFP9 does it: the rows come back SORTED by the full row in column order
+    /// (collation-aware, .NULL. first) even without ORDER BY, and of rows that collate equal the first in
+    /// source order is kept (a stable sort, then the first row of each equal run).</summary>
     private static List<(object?[] row, IRowContext rep)> Distinct(
         List<(object?[] row, IRowContext rep)> pairs, EvaluationContext ctx)
     {
-        var seen = new List<(object?[] row, IRowContext rep)>();
-        foreach (var p in pairs)
-            if (!seen.Any(s => RowEq(s.row, p.row, ctx))) seen.Add(p);
-        return seen;
+        var byRow = Comparer<object?[]>.Create((a, b) => CompareRow(a, b, ctx));
+        var kept = new List<(object?[] row, IRowContext rep)>();
+        foreach (var p in pairs.OrderBy(x => x.row, byRow))
+            if (kept.Count == 0 || CompareRow(kept[^1].row, p.row, ctx) != 0) kept.Add(p);
+        return kept;
     }
 
     /// <summary>TOP n that honours ORDER BY ties: keeps the first <paramref name="top"/> rows PLUS any
@@ -2152,11 +2167,6 @@ internal sealed class SelectExecutor
         return false;
     }
 
-    private static VfpExpression? SafeParse(string s)
-    {
-        try { return VfpExpression.Parse(s); } catch { return null; }
-    }
-
     private static VfpTypeInfo SafeInfer(string arg, ISchema schema)
     {
         try { return VfpExpression.Parse(arg).InferType(schema); }
@@ -2244,34 +2254,43 @@ internal sealed class SelectExecutor
         return a.AsNumber.CompareTo(b.AsNumber);
     }
 
-    private static bool KeyEq(List<object?> a, List<object?> b, EvaluationContext ctx)
+    /// <summary>Orders two result rows / GROUP BY key tuples cell by cell (see <see cref="CompareCell"/>);
+    /// 0 means they are one DISTINCT row / one group.</summary>
+    private static int CompareRow(object?[] a, object?[] b, EvaluationContext ctx)
     {
-        if (a.Count != b.Count) return false;
-        for (int i = 0; i < a.Count; i++)
-            if (!CellEq(a[i], b[i], ctx)) return false;
-        return true;
+        int n = Math.Min(a.Length, b.Length);
+        for (int i = 0; i < n; i++)
+        {
+            int c = CompareCell(a[i], b[i], ctx);
+            if (c != 0) return c;
+        }
+        return a.Length.CompareTo(b.Length);
     }
 
-    private static bool RowEq(object?[] a, object?[] b, EvaluationContext ctx)
-    {
-        if (a.Length != b.Length) return false;
-        for (int i = 0; i < a.Length; i++)
-            if (!CellEq(a[i], b[i], ctx)) return false;
-        return true;
-    }
-
-    private static bool CellEq(object? a, object? b, EvaluationContext ctx)
+    /// <summary>VFP's sort order of two cells: .NULL. first; strings by the session collation (under
+    /// GENERAL 'Berlin' and 'BERLIN' collate equal — one group, one DISTINCT row; under MACHINE ordinal);
+    /// numbers, dates (a Date equals the midnight DateTime) and logicals (.F. first) by value. Cells of
+    /// unrelated types (no VFP column mixes them) order by a fixed type rank so the order stays total.</summary>
+    private static int CompareCell(object? a, object? b, EvaluationContext ctx)
     {
         a = Norm(a); b = Norm(b);
-        if (a is null || b is null) return a is null && b is null;
-        if (a is decimal da && b is decimal db) return da == db;
-        if (a is DateOnly oa && b is DateOnly ob) return oa == ob;
-        if (a is DateTime ta && b is DateTime tb) return ta == tb;
-        // String GROUP BY key / DISTINCT dedup must honour the session collation: under GENERAL
-        // 'Berlin' and 'BERLIN' collate equal (one group, one DISTINCT row); under MACHINE ordinal.
-        if (a is string sa && b is string sb) return ctx.Collation.Compare(sa.AsSpan(), sb.AsSpan()) == 0;
-        if (a is bool ba && b is bool bb) return ba == bb;
-        return Equals(a, b);
+        if (a is null || b is null) return a is null ? (b is null ? 0 : -1) : 1;
+        switch (a, b)
+        {
+            case (string sa, string sb): return ctx.Collation.Compare(sa.AsSpan(), sb.AsSpan());
+            case (decimal da, decimal db): return da.CompareTo(db);
+            case (bool ba, bool bb): return ba.CompareTo(bb);
+            case (DateOnly or DateTime, DateOnly or DateTime): return AsDateTime(a).CompareTo(AsDateTime(b));
+            case (byte[] xa, byte[] xb): return xa.AsSpan().SequenceCompareTo(xb);
+        }
+        int ra = Rank(a), rb = Rank(b);
+        return ra != rb ? ra.CompareTo(rb) : string.CompareOrdinal(a.ToString(), b.ToString());
+
+        static DateTime AsDateTime(object o) => o is DateOnly d ? d.ToDateTime(TimeOnly.MinValue) : (DateTime)o;
+        static int Rank(object o) => o switch
+        {
+            bool => 0, decimal => 1, DateOnly or DateTime => 2, string => 3, byte[] => 4, _ => 5,
+        };
     }
 
     // ---- type mapping ---------------------------------------------------------------------
@@ -2389,6 +2408,42 @@ internal sealed class SelectExecutor
         }
 
         public VfpValue UnknownFunction(string upperName, VfpValue[] args) => _host.UnknownFunction(upperName, args);
+    }
+
+    /// <summary>The HAVING row over <paramref name="rep"/>: an <see cref="AliasRowContext"/>, still answered by
+    /// the microVFP host when the representative row is a hosted one (a UDF in HAVING runs).</summary>
+    private static IRowContext AliasRow(IRowContext rep, object?[] row, Dictionary<string, int> aliases, Func<string, bool> isSourceField)
+    {
+        var alias = new AliasRowContext(rep, row, aliases, isSourceField);
+        return rep is IVfpFunctionHost host ? new HostedRow(alias, host) : alias;
+    }
+
+    /// <summary>The row context a HAVING sees: a bare name that is a select-list alias (and no field of the
+    /// query's sources — a source field of the same name wins, as in VFP9) reads that column of the
+    /// projected output row; everything else resolves against the representative source row.</summary>
+    private sealed class AliasRowContext : IRowContext
+    {
+        private readonly IRowContext _rep;
+        private readonly object?[] _row;
+        private readonly Dictionary<string, int> _aliases;
+        private readonly Func<string, bool> _isSourceField;
+
+        public AliasRowContext(IRowContext rep, object?[] row, Dictionary<string, int> aliases, Func<string, bool> isSourceField)
+        {
+            _rep = rep; _row = row; _aliases = aliases; _isSourceField = isSourceField;
+        }
+
+        public int RecNo => _rep.RecNo;
+        public int RecCount => _rep.RecCount;
+        public bool Deleted => _rep.Deleted;
+
+        public object? GetField(string name)
+        {
+            if (_aliases.Count > 0 && !name.Contains('.') && _aliases.TryGetValue(name, out int col)
+                && col < _row.Length && !_isSourceField(name))
+                return _row[col];
+            return _rep.GetField(name);
+        }
     }
 
     /// <summary>An empty row context (all fields <see langword="null"/>) used as the representative
