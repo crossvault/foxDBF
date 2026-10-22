@@ -213,7 +213,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   an error for it instead of returning no rows.
 - microVFP: `EVALUATE()` raises errors (a malformed expression, an unknown alias) instead of returning
   `.NULL.`; `alias.field` naming no open work area raises error 13 and an unknown field of an open alias
-  error 12; a field read at EOF/BOF returns the blank value (0, empty string, .F.) instead of `.NULL.`.
+  error 12; a field read at EOF returns the blank value (0, empty string, .F.) instead of `.NULL.`.
 
 ### Known limitations
 

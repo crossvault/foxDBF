@@ -1283,7 +1283,7 @@ public sealed partial class VfpInterpreter
         if (idx < 0) return null;
         var m = Meta(wa.Area);
         int rc = wa.Table.RecordCount;
-        // At EOF/BOF VFP9 reads the BLANK record — 0 / "" / .F., not .NULL. (oracle: TN_EOF_PROJ).
+        // At EOF VFP9 reads the BLANK record — 0 / "" / .F., not .NULL. (oracle: TN_EOF_PROJ).
         if (m.RecNo < 1 || m.RecNo > rc) return BlankFor(wa.Table.Columns[idx]);
 
         DbfRecord rec;
