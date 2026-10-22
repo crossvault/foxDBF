@@ -55,7 +55,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   buffered edit or appended row, through `OLDVAL()`/`CURVAL()`, memory variable copies, `SCATTER` (`SCATTER …
   BLANK` gives blanks of the field width) and `TOTAL`. `name == 'abc'` is false for a C(10) (`name ==
   PADR('abc', 10)` or `ALLTRIM(name) == 'abc'`), `REPLACE name WITH name + 'x'` leaves the field unchanged, and a
-  field value used as a `SEEK` needle carries its trailing blanks. The interpreter now starts under VFP's default
+  field value used as a `SEEK` needle or `SET RELATION` key carries its trailing blanks (a relation from a C(10)
+  field into a C(6) tag finds nothing, as in VFP9; relate on `LEFT(name, 6)`). The interpreter now starts under VFP's default
   SET EXACT OFF instead of forcing SET EXACT ON (also on the `VfpSession` it runs on, and for a new data
   session): `name = 'ab'` matches `'abc'` and `'abcdef'` unless the program sets SET EXACT ON.
 - BREAKING: A character `SEEK` on a GENERAL/SPANISH tag (`CdxTag.Seek(object)` and microVFP `SEEK`) uses VFP9's SET EXACT

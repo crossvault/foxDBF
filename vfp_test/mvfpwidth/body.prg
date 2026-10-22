@@ -107,6 +107,42 @@ FOR lnE = 1 TO 2
   =FPUTS(lnH, 'S' + lcE + '.comp3=' + TRANSFORM(FOUND()) + '/' + TRANSFORM(RECNO()) + '/' + TRANSFORM(LEN(lcK)))
 ENDFOR
 SET ORDER TO
+* --- SET RELATION from the C(10) field into a C(6) tag (fwc: 'abcdef', 'abc', 'ab')
+SELECT 0
+USE fwc EXCLUSIVE
+INDEX ON k TAG k
+SELECT fw
+SET RELATION TO name INTO fwc
+FOR lnE = 1 TO 2
+  IF lnE = 1
+    SET EXACT OFF
+  ELSE
+    SET EXACT ON
+  ENDIF
+  lcE = IIF(lnE = 1, 'OFF', 'ON')
+  FOR lnI = 1 TO 6
+    GO lnI
+    =FPUTS(lnH, 'L' + lcE + '.R' + TRANSFORM(lnI) + '=' + TRANSFORM(RECNO('fwc')) + '/' + TRANSFORM(EOF('fwc')))
+  ENDFOR
+ENDFOR
+SET RELATION TO
+SET RELATION TO LEFT(name, 6) INTO fwc
+FOR lnE = 1 TO 2
+  IF lnE = 1
+    SET EXACT OFF
+  ELSE
+    SET EXACT ON
+  ENDIF
+  lcE = IIF(lnE = 1, 'OFF', 'ON')
+  FOR lnI = 1 TO 6
+    GO lnI
+    =FPUTS(lnH, 'M' + lcE + '.R' + TRANSFORM(lnI) + '=' + TRANSFORM(RECNO('fwc')) + '/' + TRANSFORM(EOF('fwc')))
+  ENDFOR
+ENDFOR
+SET RELATION TO
+SELECT fwc
+USE
+SELECT fw
 SET EXACT OFF
 * --- TOTAL
 TOTAL ON name TO fwtot FIELDS n

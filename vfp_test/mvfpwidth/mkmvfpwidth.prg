@@ -1,8 +1,9 @@
 * Golden master for microVFP character-field reads at full declared width (run by hand in VFP9, then commit
-* fwseed.dbf + mvfpwidth.txt): fwseed.dbf holds a C(10)/C(6)/C(10) table with leading/trailing-blank, longer, shorter
+* fwseed.dbf + fwc.dbf + mvfpwidth.txt): fwseed.dbf holds a C(10)/C(6)/C(10) table with leading/trailing-blank, longer, shorter
 * and empty values; body.prg, run on a copy (fw.dbf), logs under SET EXACT OFF and ON LEN(), field == / = literal,
 * field = field of equal and different widths, EMPTY/INLIST/BETWEEN/$, memvar copies, COUNT/LOCATE FOR, SEEK/KEYMATCH
-* needles (literal, padded, longer than the key, a field value, a compound key), TOTAL ON, SCATTER, REPLACE (longer /
+* needles (literal, padded, longer than the key, a field value, a compound key), SET RELATION from the C(10) field
+* into a C(6) tag (fwc.dbf), TOTAL ON, SCATTER, REPLACE (longer /
 * shorter / self-concatenating values), buffered edits with OLDVAL/CURVAL and buffered / unbuffered APPEND BLANK.
 * MicroVfpFullWidthGoldenTests runs the same body.prg through the interpreter and compares line by line.
 SET TALK OFF
@@ -19,6 +20,11 @@ INSERT INTO fwseed VALUES ('', '', '', 4)
 INSERT INTO fwseed VALUES ('ab', 'abcdef', 'ab', 5)
 INSERT INTO fwseed VALUES ('abc', 'abc', 'abc', 6)
 USE
+CREATE TABLE fwc FREE (k C(6))
+INSERT INTO fwc VALUES ('abcdef')
+INSERT INTO fwc VALUES ('abc')
+INSERT INTO fwc VALUES ('ab')
+USE
 COPY FILE fwseed.dbf TO fw.dbf
 lnH = FCREATE('mvfpwidth.txt')
 ON ERROR =FPUTS(lnH, 'ERR=' + MESSAGE() + ' L' + TRANSFORM(LINENO()))
@@ -28,6 +34,7 @@ ON ERROR
 CLOSE TABLES ALL
 ERASE fw.dbf
 ERASE fw.cdx
+ERASE fwc.cdx
 ERASE fwtot.dbf
 ERASE body.fxp
 QUIT

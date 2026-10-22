@@ -8,7 +8,8 @@ namespace CrossVault.FoxDbf.Tests;
 /// microVFP reads a character field at its full declared width, as VFP9 does: <c>vfp_test/mvfpwidth/body.prg</c> runs
 /// through the interpreter and must log exactly what VFP9 logged for it (<c>mvfpwidth.txt</c>, produced by
 /// <c>mkmvfpwidth.prg</c>) — <c>LEN(name)</c> = 10 on every row, <c>name == 'abc'</c> false, field = field of different
-/// widths, COUNT/LOCATE/SEEK/KEYMATCH under SET EXACT OFF and ON, TOTAL ON, SCATTER, REPLACE truncating a longer value
+/// widths, COUNT/LOCATE/SEEK/KEYMATCH under SET EXACT OFF and ON, SET RELATION from the C(10) field into a C(6) tag
+/// (the untrimmed parent key never matches; <c>LEFT(name, 6)</c> does), TOTAL ON, SCATTER, REPLACE truncating a longer value
 /// (<c>REPLACE name WITH name + 'q'</c> changes nothing), OLDVAL/CURVAL and buffered / unbuffered APPEND BLANK.
 /// </summary>
 public sealed class MicroVfpFullWidthGoldenTests
@@ -21,6 +22,7 @@ public sealed class MicroVfpFullWidthGoldenTests
         using var dir = new MicroVfpTestSupport.TempDir("mvfpwidth");
         string outPath = dir.File("out.txt");
         File.Copy(Fixtures.VfpTest(Path.Combine("mvfpwidth", "fwseed.dbf")), dir.File("fw.dbf"));
+        File.Copy(Fixtures.VfpTest(Path.Combine("mvfpwidth", "fwc.dbf")), dir.File("fwc.dbf"));
 
         using (var session = new VfpSession())
         {
