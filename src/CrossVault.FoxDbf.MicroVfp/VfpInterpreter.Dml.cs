@@ -15,7 +15,52 @@ namespace CrossVault.FoxDbf.MicroVfp;
 /// <summary>microVFP DML + whole-table/record commands — REPLACE/APPEND/INSERT/DELETE/GATHER/SCATTER and PACK/COPY/TOTAL/RENAME/...</summary>
 public sealed partial class VfpInterpreter
 {
+    /// <summary>Every route below (direct append, buffered, CANDIDATE, RI, the SQL DML fallback) fills a DBC
+    /// member's omitted columns from their field DEFAULTs, as VFP9 does: the session's
+    /// <see cref="VfpSession.DbcDefaultEvaluator"/> is this interpreter for the statement's duration. The
+    /// previous evaluator is restored afterwards, so an INSERT inside a DEFAULT's UDF nests.</summary>
     private void ExecInsert(InsertStmt ins)
+    {
+        var previous = Session.DbcDefaultEvaluator;
+        Session.DbcDefaultEvaluator = _dbcDefaultEvaluator ??= EvalDbcDefault;
+        try { ExecInsertCore(ins); }
+        finally { Session.DbcDefaultEvaluator = previous; }
+    }
+
+    private Func<string, IReadOnlyList<string>, object?[]>? _dbcDefaultEvaluator;
+
+    /// <summary>The DBC field DEFAULTs of one row inserted into <paramref name="table"/>, evaluated in field
+    /// order with the target as the current work area, as VFP9 does (probed: <c>ALIAS()</c> inside a DEFAULT
+    /// UDF is the target's) — opened in a free area for the evaluation when it is not open, closed again
+    /// after. The previous current area is restored. Unlike <see cref="EvalExpression"/> an error propagates
+    /// (VFP raises it and writes no row); a UDF runs from the loaded stored procedures.</summary>
+    private object?[] EvalDbcDefault(string table, IReadOnlyList<string> expressions)
+    {
+        int saved = Session.CurrentArea;
+        int opened = 0;
+        try
+        {
+            var wa = Session.FindAreaByAlias(table);
+            if (wa is null)
+            {
+                try { Session.Use(table, inArea: 0); wa = Session.FindAreaByAlias(table); opened = wa?.Area ?? 0; }
+                catch { wa = null; }
+            }
+            if (wa is not null) Session.SelectArea(wa.Area);
+
+            var values = new object?[expressions.Count];
+            for (int i = 0; i < values.Length; i++)
+                values[i] = ParseExpressionCached(MicroVfpExprRewrite.Normalize(expressions[i])).Evaluate(_row, _ctx).ToClr();
+            return values;
+        }
+        finally
+        {
+            if (opened > 0 && Session.AreaAt(opened) is not null) { Session.CloseArea(opened); _meta.Remove(opened); }
+            Session.SelectArea(saved);
+        }
+    }
+
+    private void ExecInsertCore(InsertStmt ins)
     {
         // An INSERT the SQL parser cannot represent used to fall through every path below into a swallowed
         // Session.Execute — the row silently never landed. Raise the parser's error instead (catchable).

@@ -277,11 +277,20 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   VFP9 read e.g. an omitted nullable memo as `.NULL.` instead of `''`. Omitted columns now follow `SET NULL` as
   in VFP9: under `SET NULL OFF` (the default) they are written blank with the null bit clear; under
   `SET NULL ON` a NULL-able one is `.NULL.` and a NOT NULL one rejects the row with error 1581 "does not accept
-  null values" (except an AUTOINC column, and a DBC field with a DEFAULT, which is written blank because this
-  path does not evaluate DBC defaults yet). `INSERT … FROM MEMVAR` treats a field
+  null values" (except an AUTOINC column, and a DBC field with a DEFAULT: microVFP fills it from the DEFAULT,
+  see below; the raw SQL / ADO.NET path writes it blank). `INSERT … FROM MEMVAR` treats a field
   without a memvar the same way, and the fields a short `INSERT … FROM ARRAY` row does not reach are always
   blank. microVFP's `SET NULL` applies. A `.NULL.` Varchar/Varbinary, and one an INSERT leaves blank, is now
   stored as VFP9 stores it (0x20 padding, length byte 0, varlen bit set) instead of zero bytes.
+- A microVFP `INSERT` into a table of the open database left the columns it omits blank instead of filling
+  them from their field DEFAULT (`DBGETPROP(…, 'Field', 'DefaultValue')`). It now evaluates the DEFAULTs as
+  VFP9 does, under `SET NULL OFF` and `ON` alike: once per row, after the VALUES, with the target table as the
+  current work area (so a stored-procedure DEFAULT such as TasTrade's `newid()` reads the right `ALIAS()`),
+  for `INSERT … VALUES`, `INSERT … FROM MEMVAR` and a buffered `INSERT` (whose DEFAULTs show in the buffer
+  before `TABLEUPDATE()`). A short `INSERT … FROM ARRAY` row still leaves the fields it does not reach blank, as
+  in VFP9. This includes stored procedures called through the ADO.NET provider. A plain ADO.NET command
+  without `EnforceRules=on` still takes the raw path and does not evaluate DEFAULTs. Inside a DEFAULT,
+  `RECCOUNT()` does not yet count the new row (VFP9's does).
 
 ## [0.10.0] - 2026-10-22
 

@@ -52,69 +52,91 @@ internal sealed class DmlExecutor
         if (st.SourceKind == InsertSourceKind.Array) return InsertFromArray(st);
         if (st.SourceKind == InsertSourceKind.Memvar) return InsertFromMemvar(st);
 
-        using var target = _session.OpenWritableTarget(st.Table);
-        AppendInsertValuesRow(_session, target.Writer, st);
+        var target = _session.OpenWritableTarget(st.Table);
+        try
+        {
+            var columns = target.Writer.Schema.Columns;
+            var values = EvaluateValues(_session, st);
+            if (st.Columns is null) { AppendAllColumns(target.Writer, columns, values); return SqlResult.Dml(1); }
+            var map = MapValues(st, columns, values);
+            FillDbcDefaults(_session, st.Table, ref target, map);
+            target.Writer.AppendRecord(map, OmittedColumnsBlankMask(_session, st.Table, columns, map, honourSetNull: true));
+        }
+        finally { target.Dispose(); }
         return SqlResult.Dml(1);
     }
 
     /// <summary>
-    /// Evaluate an <c>INSERT … VALUES</c> row and append it through <paramref name="writer"/> — the shared
-    /// core of the single-row VALUES insert, extracted so the microVFP interpreter's direct-append fast path
-    /// (Batch 4) appends through its OWN cached writer with byte-identical value semantics AND identical error
-    /// numbers/text (err 12 for an unknown column, the column/value count mismatch) as this ADO.NET path. The
-    /// caller owns the writer's lifetime (this neither opens nor disposes it); the ADO.NET path passes the
-    /// <see cref="VfpSession.OpenWritableTarget"/> writer, the interpreter passes its persistent cached writer.
-    /// Values are evaluated against <see cref="ConstantRow.Instance"/> (a bare field reference throws — VALUES
-    /// are constant) through <paramref name="session"/>'s SQL evaluation context, exactly as before.
+    /// Evaluate an <c>INSERT … VALUES</c> row and append it through <paramref name="writer"/> — the microVFP
+    /// interpreter's direct-append fast path (Batch 4), which appends through its OWN cached writer with
+    /// byte-identical value semantics AND identical error numbers/text (err 12 for an unknown column, the
+    /// column/value count mismatch) as <see cref="Insert"/>. The caller owns the writer's lifetime (this
+    /// neither opens nor disposes it). The target's work area stays open on this path, so the DBC DEFAULTs
+    /// of omitted columns evaluate in place (see <see cref="FillDbcDefaults"/>).
     /// </summary>
     internal static void AppendInsertValuesRow(VfpSession session, DbfWriter writer, InsertStatement st)
     {
-        var ctx = session.SqlContext();
         var columns = writer.Schema.Columns;
+        var values = EvaluateValues(session, st);
+        if (st.Columns is null) { AppendAllColumns(writer, columns, values); return; }
+        var map = MapValues(st, columns, values);
+        if (PendingDbcDefaults(session, st.Table, columns, map) is { } pending)
+            pending.Fill(columns, map, session.DbcDefaultEvaluator!(st.Table, pending.Expressions));
+        writer.AppendRecord(map, OmittedColumnsBlankMask(session, st.Table, columns, map, honourSetNull: true));
+    }
 
-        // Evaluate every VALUES expression to a CONSTANT: ConstantRow has no row, so a bare field
-        // reference throws, while constant functions (DATE() / STR() …) evaluate fine.
+    /// <summary>Evaluate every VALUES expression to a CONSTANT against <see cref="ConstantRow.Instance"/>
+    /// through <paramref name="session"/>'s SQL evaluation context: a bare field reference throws, while
+    /// constant functions (DATE() / STR() …) evaluate fine.</summary>
+    private static object?[] EvaluateValues(VfpSession session, InsertStatement st)
+    {
+        var ctx = session.SqlContext();
         var values = new object?[st.Values.Count];
         for (int i = 0; i < st.Values.Count; i++)
             values[i] = SelectExecutor.ToClr(st.Values[i].Evaluate(ConstantRow.Instance, ctx));
+        return values;
+    }
 
-        if (st.Columns is { } cols)
-        {
-            // Explicit column list: map name → value (omitted columns follow SET NULL); validate count.
-            if (cols.Count != values.Length)
-                throw new FoxDbfSqlException(
-                    $"INSERT column/value count mismatch: {cols.Count} column(s) but {values.Length} value(s).");
+    /// <summary>An explicit column list's name → value map (omitted columns follow DEFAULT / SET NULL),
+    /// validating the count and every name.</summary>
+    private static Dictionary<string, object?> MapValues(InsertStatement st, IReadOnlyList<DbfColumn> columns, object?[] values)
+    {
+        var cols = st.Columns!;
+        if (cols.Count != values.Length)
+            throw new FoxDbfSqlException(
+                $"INSERT column/value count mismatch: {cols.Count} column(s) but {values.Length} value(s).");
 
-            var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < cols.Count; i++)
-            {
-                if (IndexOfColumn(columns, cols[i]) < 0)
-                    // VFP treats an unknown name in the INSERT column-list as an undefined VARIABLE, not an
-                    // SQL column: err 12 "Variable '...' is not found." (oracle-pinned against the VFP9
-                    // runtime, project-review 5.3). Typed so the interpreter's ErrorNumberOf carries the
-                    // exact number WITHOUT the last-resort "does not exist" text heuristic (which would
-                    // mis-map it to err 1 "File does not exist").
-                    throw new FoxDbfSqlException($"Column '{cols[i]}' does not exist in table '{st.Table}'.")
-                        { VfpErrorNumber = 12 };
-                map[cols[i]] = values[i];
-            }
-            writer.AppendRecord(map, OmittedColumnsBlankMask(session, st.Table, columns, map, honourSetNull: true));
-        }
-        else
+        var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < cols.Count; i++)
         {
-            // No column list: values map to the physical field order; VFP requires one per field.
-            if (values.Length != columns.Count)
-                throw new FoxDbfSqlException(
-                    $"INSERT value count {values.Length} does not match the table's {columns.Count} column(s) (no column list given).");
-            writer.AppendRecord(values);
+            if (IndexOfColumn(columns, cols[i]) < 0)
+                // VFP treats an unknown name in the INSERT column-list as an undefined VARIABLE, not an
+                // SQL column: err 12 "Variable '...' is not found." (oracle-pinned against the VFP9
+                // runtime, project-review 5.3). Typed so the interpreter's ErrorNumberOf carries the
+                // exact number WITHOUT the last-resort "does not exist" text heuristic (which would
+                // mis-map it to err 1 "File does not exist").
+                throw new FoxDbfSqlException($"Column '{cols[i]}' does not exist in table '{st.Table}'.")
+                    { VfpErrorNumber = 12 };
+            map[cols[i]] = values[i];
         }
+        return map;
+    }
+
+    /// <summary>No column list: values map to the physical field order; VFP requires one per field.</summary>
+    private static void AppendAllColumns(DbfWriter writer, IReadOnlyList<DbfColumn> columns, object?[] values)
+    {
+        if (values.Length != columns.Count)
+            throw new FoxDbfSqlException(
+                $"INSERT value count {values.Length} does not match the table's {columns.Count} column(s) (no column list given).");
+        writer.AppendRecord(values);
     }
 
     // ---- INSERT ... FROM ARRAY | FROM MEMVAR ----------------------------------------------
 
     /// <summary><c>INSERT INTO tbl FROM ARRAY arr</c>: one appended row per array row (a 1-D array is a single
     /// row), each mapped to the table's fields by POSITION — excess array columns ignored, fields the row does
-    /// not reach left blank (VFP-pinned). Returns the appended-row count as _TALLY.</summary>
+    /// not reach left blank, even a DBC field with a DEFAULT (VFP-pinned). Returns the appended-row count as
+    /// _TALLY.</summary>
     private SqlResult InsertFromArray(InsertStatement st)
     {
         var bridge = _session.MemoryBridge
@@ -141,22 +163,26 @@ internal sealed class DmlExecutor
     }
 
     /// <summary><c>INSERT INTO tbl FROM MEMVAR</c>: a single row whose fields map by NAME from the same-named
-    /// <c>m.&lt;field&gt;</c> memvars; a field with no matching memvar is an omitted column — blank under
-    /// <c>SET NULL OFF</c>, <c>.NULL.</c> / error 1581 under <c>SET NULL ON</c> (VFP-pinned).</summary>
+    /// <c>m.&lt;field&gt;</c> memvars; a field with no matching memvar is an omitted column — its DBC DEFAULT
+    /// under the microVFP interpreter, else blank under <c>SET NULL OFF</c>, <c>.NULL.</c> / error 1581 under
+    /// <c>SET NULL ON</c> (VFP-pinned).</summary>
     private SqlResult InsertFromMemvar(InsertStatement st)
     {
         var bridge = _session.MemoryBridge
             ?? throw new FoxDbfSqlException(
                 "INSERT … FROM MEMVAR requires the microVFP memory store; none is bound to this session.");
 
-        using var target = _session.OpenWritableTarget(st.Table);
-        var writer = target.Writer;
-        var columns = writer.Schema.Columns;
-
-        var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var col in columns)
-            if (bridge.TryReadMemvar(col.Name, out var v)) map[col.Name] = v;
-        writer.AppendRecord(map, OmittedColumnsBlankMask(_session, st.Table, columns, map, honourSetNull: true));
+        var target = _session.OpenWritableTarget(st.Table);
+        try
+        {
+            var columns = target.Writer.Schema.Columns;
+            var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var col in columns)
+                if (bridge.TryReadMemvar(col.Name, out var v)) map[col.Name] = v;
+            FillDbcDefaults(_session, st.Table, ref target, map);
+            target.Writer.AppendRecord(map, OmittedColumnsBlankMask(_session, st.Table, columns, map, honourSetNull: true));
+        }
+        finally { target.Dispose(); }
         return SqlResult.Dml(1);
     }
 
@@ -172,8 +198,9 @@ internal sealed class DmlExecutor
     /// with its null bit clear.</description></item>
     /// <item><description><c>SET NULL ON</c>: an omitted NULL-able column is <c>.NULL.</c>; an omitted
     /// NOT NULL column raises error 1581 before anything is written — except an AUTOINC column (the writer
-    /// assigns it) and a DBC member's column with a DEFAULT, which VFP fills from the default. The default
-    /// itself is not evaluated here, so that column is written blank.</description></item>
+    /// assigns it) and a DBC member's column with a DEFAULT. Under the microVFP interpreter
+    /// <see cref="FillDbcDefaults"/> has already filled such a column, so it is not omitted here; on the raw
+    /// SQL / ADO.NET path, which does not evaluate DEFAULTs, it is written blank.</description></item>
     /// </list>
     /// </summary>
     private static bool[] OmittedColumnsBlankMask(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
@@ -195,9 +222,7 @@ internal sealed class DmlExecutor
             if (col.IsNullable || col.IsAutoIncrement) continue;
 
             if (!rulesRead) { rules = TableRules(session, table); rulesRead = true; }
-            var fieldRules = rules is null ? null
-                : field < rules.Fields.Count && rules.Fields.Count == CountUserColumns(columns) ? rules.Fields[field]
-                : rules.Field(col.Name);
+            var fieldRules = rules is null ? null : FieldRules(rules, columns, col, field);
             if (!string.IsNullOrEmpty(fieldRules?.DefaultValue)) { blank[i] = true; continue; }
 
             throw new FoxDbfSqlException($"Field {col.Name.ToUpperInvariant()} does not accept null values.")
@@ -209,10 +234,94 @@ internal sealed class DmlExecutor
     /// <summary>The DBC rules of <paramref name="table"/> when it is a member of the session's open database,
     /// else <see langword="null"/> (a free table).</summary>
     private static DbcTableRules? TableRules(VfpSession session, string table)
+        => session.Database is { } database && database.TryGetTableRules(table, out var rules) ? rules : null;
+
+    /// <summary>The DBC Field record of <paramref name="col"/>, the <paramref name="field"/>-th non-system
+    /// column: by position when the DBC lists one Field per column (a long field name need not match the
+    /// truncated .dbf name), else by name.</summary>
+    private static DbcFieldRules? FieldRules(DbcTableRules rules, IReadOnlyList<DbfColumn> columns, DbfColumn col, int field)
+        => field < rules.Fields.Count && rules.Fields.Count == CountUserColumns(columns)
+            ? rules.Fields[field]
+            : rules.Field(col.Name);
+
+    /// <summary>
+    /// Fill the columns an INSERT row omits (not keys of <paramref name="map"/>) from their DBC field
+    /// <c>DEFAULT</c>, whatever <c>SET NULL</c> says, as VFP9 does (oracle: SqlInsertOmittedColumnsVfp9OracleTests;
+    /// <c>C C(3) NOT NULL DEFAULT 'zz'</c> and <c>N N(4) NULL DEFAULT 7</c> come out <c>'zz'</c> / 7 under
+    /// <c>SET NULL OFF</c> and <c>ON</c>). The DEFAULTs run once per row, in field order, after the VALUES,
+    /// through the session's <see cref="VfpSession.DbcDefaultEvaluator"/> — only the microVFP interpreter sets
+    /// it, so the raw SQL / ADO.NET path leaves the row as given. VFP evaluates them with the target table as
+    /// the current work area (a UDF such as <c>newid()</c> / <c>createid()</c> reads <c>ALIAS()</c> and
+    /// <c>RECCOUNT()</c>), and <paramref name="target"/> has released that area for the write, so the write is
+    /// closed while they run (restoring the area) and reopened after. <c>RECCOUNT()</c> therefore does not yet
+    /// count the new row, where VFP's does. A DEFAULT that errors propagates and nothing is written.
+    /// </summary>
+    private static void FillDbcDefaults(VfpSession session, string table, ref VfpSession.WritableTarget target,
+        Dictionary<string, object?> map)
     {
-        if (session.Database is not { } database) return null;
-        try { return database.GetTableRules(table); }
-        catch (DbfFileNotFoundException) { return null; }
+        var columns = target.Writer.Schema.Columns;
+        if (PendingDbcDefaults(session, table, columns, map) is not { } pending) return;
+        target.Dispose();
+        var values = session.DbcDefaultEvaluator!(table, pending.Expressions);
+        target = session.OpenWritableTarget(table);
+        pending.Fill(columns, map, values);
+    }
+
+    /// <summary>The omitted columns of <paramref name="map"/>'s row that have a DBC DEFAULT, when the session
+    /// evaluates DEFAULTs (<see cref="VfpSession.DbcDefaultEvaluator"/> set) and <paramref name="table"/> is a
+    /// member of its open database; else <see langword="null"/>. VFP9 walks the fields in order and, under
+    /// <c>SET NULL ON</c>, stops at the first omitted NOT NULL field without a DEFAULT (error 1581, raised by
+    /// <see cref="OmittedColumnsBlankMask"/>), so the DEFAULTs after it never run (probed with a counting UDF).</summary>
+    private static PendingDefaults? PendingDbcDefaults(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
+        Dictionary<string, object?> map)
+    {
+        if (session.DbcDefaultEvaluator is null || DbcDefaultExpressions(session, table, columns) is not { } defaults)
+            return null;
+        bool nullOn = session.Context.NullSetting;
+        List<int>? indexes = null;
+        List<string>? expressions = null;
+        for (int i = 0; i < columns.Count; i++)
+        {
+            var col = columns[i];
+            if (col.IsSystem || map.ContainsKey(col.Name)) continue;
+            if (defaults[i] is not { } expression)
+            {
+                if (nullOn && !col.IsNullable && !col.IsAutoIncrement) break;
+                continue;
+            }
+            (indexes ??= new List<int>()).Add(i);
+            (expressions ??= new List<string>()).Add(expression);
+        }
+        return indexes is null ? null : new PendingDefaults(indexes, expressions!);
+    }
+
+    /// <summary>The omitted columns (by position in the writer's schema) whose DEFAULT expressions are to be
+    /// evaluated, in field order.</summary>
+    private sealed record PendingDefaults(List<int> Indexes, List<string> Expressions)
+    {
+        public void Fill(IReadOnlyList<DbfColumn> columns, Dictionary<string, object?> map, IReadOnlyList<object?> values)
+        {
+            for (int k = 0; k < Indexes.Count; k++) map[columns[Indexes[k]].Name] = values[k];
+        }
+    }
+
+    /// <summary>The DBC field <c>DEFAULT</c> expression of each of <paramref name="columns"/> (null where it has
+    /// none), or <see langword="null"/> when <paramref name="table"/> is not a member of the session's open
+    /// database or no field has a DEFAULT.</summary>
+    internal static string?[]? DbcDefaultExpressions(VfpSession session, string table, IReadOnlyList<DbfColumn> columns)
+    {
+        if (TableRules(session, table) is not { } rules) return null;
+        string?[]? defaults = null;
+        int field = -1;
+        for (int i = 0; i < columns.Count; i++)
+        {
+            var col = columns[i];
+            if (col.IsSystem) continue;
+            field++;
+            if (FieldRules(rules, columns, col, field)?.DefaultValue is { Length: > 0 } expression)
+                (defaults ??= new string?[columns.Count])[i] = expression;
+        }
+        return defaults;
     }
 
     private static int CountUserColumns(IReadOnlyList<DbfColumn> columns)

@@ -116,6 +116,17 @@ public sealed class VfpSession : IDisposable
     internal IVfpMemoryBridge? MemoryBridge { get; set; }
 
     /// <summary>
+    /// Evaluates the DBC field <c>DEFAULT</c> expressions of one INSERT row (arguments: the target table and
+    /// the expressions in field order) to the CLR values the INSERT writes, with the target as the current
+    /// work area, or throws an expression's error. Set by the microVFP interpreter only while it executes an
+    /// <c>INSERT</c>, so the SQL DML executor fills a DBC member's omitted columns from their DEFAULTs as VFP9
+    /// does (a DEFAULT may call a stored-procedure UDF, which only the interpreter can run).
+    /// <see langword="null"/> on the raw SQL / ADO.NET path, which writes omitted columns as stored (the
+    /// opt-in ADO.NET <c>EnforceRules</c> model evaluates the DEFAULTs itself).
+    /// </summary>
+    internal Func<string, IReadOnlyList<string>, object?[]>? DbcDefaultEvaluator { get; set; }
+
+    /// <summary>
     /// The optional query ACCELERATOR (e.g. the Highlike engine) that SELECT / DML candidate-set
     /// discovery routes through instead of the plain <see cref="QueryOptimizer"/>. When <see langword="null"/>
     /// (the default) the Core optimizer runs. An accelerator must return the SAME record set the Core

@@ -64,6 +64,16 @@ public sealed partial class DbfDatabase
         return rules;
     }
 
+    /// <summary><see cref="GetTableRules"/> without the exception for a name that is not a member table (a
+    /// free table or cursor written while a database is open), for callers on a per-row path.</summary>
+    internal bool TryGetTableRules(string table, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out DbcTableRules? rules)
+    {
+        rules = null;
+        if (_disposed || table is null || !_byName.ContainsKey(table)) return false;
+        rules = GetTableRules(table);
+        return true;
+    }
+
     /// <summary>Decode one table node's Table + per-field <c>PROPERTY</c> blobs into a <see cref="DbcTableRules"/>.</summary>
     private DbcTableRules DecodeTableRules(TableNode node)
     {

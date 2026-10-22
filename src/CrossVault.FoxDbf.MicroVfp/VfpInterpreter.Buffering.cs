@@ -99,6 +99,21 @@ public sealed partial class VfpInterpreter
             var col = wa.Table.Columns[idx];
             ae.Fields[idx] = v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
         }
+        // A DBC member's omitted column takes its field DEFAULT now, once: VFP9 shows it in the buffered row
+        // before TABLEUPDATE, which does not evaluate it again (probed).
+        if (stmt.SourceKind == InsertSourceKind.Values
+            && DmlExecutor.DbcDefaultExpressions(Session, stmt.Table, wa.Table.Columns) is { } defaults)
+        {
+            var indexes = new List<int>();
+            var expressions = new List<string>();
+            for (int i = 0; i < defaults.Length; i++)
+                if (defaults[i] is { } expression && !ae.Fields.ContainsKey(i)) { indexes.Add(i); expressions.Add(expression); }
+            if (indexes.Count > 0)
+            {
+                var values = EvalDbcDefault(stmt.Table, expressions);
+                for (int k = 0; k < indexes.Count; k++) ae.Fields[indexes[k]] = values[k];
+            }
+        }
         (m.Buf ??= new TableBuffer()).Appends.Add(ae);
     }
 
