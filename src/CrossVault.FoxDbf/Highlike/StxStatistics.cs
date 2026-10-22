@@ -354,15 +354,9 @@ public sealed class StxStatistics
         => !string.IsNullOrEmpty(current) && !string.IsNullOrEmpty(stored)
            && !string.Equals(current, stored, StringComparison.Ordinal);
 
-    // ---- key normalisation (mirrors Core QueryOptimizer.NormKey: drop whitespace, upper-case) ----
+    // ---- key normalisation: the SAME form the Core optimizer matches tag keys in ----
 
-    internal static string NormKey(string key)
-    {
-        var sb = new StringBuilder(key.Length);
-        foreach (char c in key)
-            if (!char.IsWhiteSpace(c)) sb.Append(char.ToUpperInvariant(c));
-        return sb.ToString();
-    }
+    internal static string NormKey(string key) => CrossVault.FoxDbf.Query.QueryOptimizer.KeyMatchForm(key);
 
     // ---- JSON DTOs + options (System.Text.Json, in-box only) ----
 

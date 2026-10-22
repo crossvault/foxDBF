@@ -404,7 +404,7 @@ public sealed class CdxTagDdlTests
             {
                 Assert.Equal(new[] { "TA", "TB", "TC" }, TagNamesSorted(after));
                 var tc = after.Tag("TC")!;
-                Assert.Equal("A", tc.KeyExpression.Trim());
+                Assert.Equal("a", tc.KeyExpression.Trim());   // VFP stores the decompiled KEY: field names lower-case
 
                 // The old C-order is gone; TC now enumerates in A order (== the A tag TA), and seeks A values.
                 Assert.Equal(Recnos(after.Tag("TA")!), Recnos(tc));
@@ -442,7 +442,7 @@ public sealed class CdxTagDdlTests
 
             var tone = after.Tag("TONE");
             Assert.NotNull(tone);
-            Assert.Equal("A", tone!.KeyExpression.Trim());
+            Assert.Equal("a", tone!.KeyExpression.Trim());   // VFP stores the decompiled KEY: field names lower-case
             Assert.Equal(new[] { 2, 4, 1, 6, 3, 5 }, Recnos(tone));
             Assert.Equal((uint)4, tone.Seek((object)"A2"));
             Assert.Null(tone.Seek((object)"C1"));

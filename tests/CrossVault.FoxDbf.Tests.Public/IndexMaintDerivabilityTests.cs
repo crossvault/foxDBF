@@ -36,7 +36,7 @@ public sealed class IndexMaintDerivabilityTests
         // Patch ONLY the tag's KEY-expression text in the .cdx from the real column "NAME" to a same-byte-length
         // name "ZZZZ" that does NOT exist in the schema — leaving the stored key LENGTH (10) untouched. This
         // reproduces the reviewer's coincidence: an unresolvable KEY whose derived length matches on disk.
-        PatchKeyExpression(cdx, "NAME", "ZZZZ");
+        PatchKeyExpression(cdx, "name", "zzzz");   // stored decompiled: field names lower-case
 
         bool reindexNeeded;
         int recordCount;

@@ -55,7 +55,9 @@ public sealed partial class DbfWriter
         var tags = ReadExistingTagDefinitions();
         if (tags.Count == 0)
             return;
-        RebuildStructuralCdx(tags, evalContext, includeDeleted);
+        // VFP's REINDEX (and PACK) re-store every tag's KEY/FOR as decompiled text (`!DELETED()` →
+        // `.NOT.DELETED()`, verified against the VFP9 runtime), unlike a sibling-preserving rebuild.
+        RebuildStructuralCdx(tags.ConvertAll(t => t with { StoreExpressionsVerbatim = false }), evalContext, includeDeleted);
     }
 
     /// <summary>
@@ -202,7 +204,7 @@ public sealed partial class DbfWriter
             var hdr = index.ReadCdxHeader(headerOffset);
             string? forExpr = hdr.HasFor && hdr.ForExpression.Length > 0 ? hdr.ForExpression : null;
             byOffset.Add((headerOffset, new CdxTagDefinition(name, hdr.KeyExpression, forExpr,
-                hdr.Descending, hdr.SortOrder, hdr.IsUnique)));
+                hdr.Descending, hdr.SortOrder, hdr.IsUnique) { StoreExpressionsVerbatim = true }));
         }
         byOffset.Sort((a, b) => a.Offset.CompareTo(b.Offset));   // creation (header-layout) order.
         foreach (var (_, def) in byOffset) result.Add(def);
@@ -269,7 +271,8 @@ public sealed partial class DbfWriter
                 var hdr = index.ReadCdxHeader(headerOffset);
                 string? forExpr = hdr.HasFor && hdr.ForExpression.Length > 0 ? hdr.ForExpression : null;
                 byOffset.Add((headerOffset, new CdxTagDefinition(
-                    name, hdr.KeyExpression, forExpr, hdr.Descending, hdr.SortOrder, hdr.IsUnique)));
+                    name, hdr.KeyExpression, forExpr, hdr.Descending, hdr.SortOrder, hdr.IsUnique)
+                    { StoreExpressionsVerbatim = true }));   // keep the text on disk (Reindex opts out)
             }
             byOffset.Sort((a, b) => a.Offset.CompareTo(b.Offset));
             foreach (var (_, def) in byOffset) result.Add(def);

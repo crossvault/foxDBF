@@ -209,11 +209,15 @@ internal static class CdxIndexBuilder
         string forExpr = hasFor ? def.ForExpression! : string.Empty;
 
         // Tag name and KEY/FOR text are stored in the TABLE's code page, as VFP9 does ('ó' of razónsoc is
-        // 0xF3 in a CP1252 table, 0xA2 in a CP850 one) — never as '?'.
+        // 0xF3 in a CP1252 table, 0xA2 in a CP850 one) — never as '?'. The KEY/FOR text is VFP's DECOMPILED
+        // form (`UPPER( name )` → `UPPER(name)`); the keys themselves still come from the text as given.
         var textEncoding = schema.Encoding;
         byte[] nameKey = MakeNameKey(def.Name, textEncoding);
-        byte[] keyText = CodePageText.Encode(keyExpr, textEncoding, "CDX tag KEY expression", m => new DbfWriteException(m));
-        byte[] forText = CodePageText.Encode(forExpr, textEncoding, "CDX tag FOR expression", m => new DbfWriteException(m));
+        string StoredText(string text) => def.StoreExpressionsVerbatim ? text : VfpExpressionText.Canonicalize(text);
+        byte[] keyText = CodePageText.Encode(StoredText(keyExpr), textEncoding,
+            "CDX tag KEY expression", m => new DbfWriteException(m));
+        byte[] forText = CodePageText.Encode(StoredText(forExpr), textEncoding,
+            "CDX tag FOR expression", m => new DbfWriteException(m));
         if (keyText.Length + forText.Length + 2 > Page)
             throw new DbfWriteException("CDX tag KEY + FOR expressions exceed the 512-byte expression pool.");
 

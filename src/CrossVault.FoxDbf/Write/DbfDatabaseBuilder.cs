@@ -221,11 +221,14 @@ public static class DbfDatabaseBuilder
         // Order matters: VFP lays the tag B-trees down in CREATION order (OBJECTNAME first, then
         // OBJECTTYPE — verified against vfp_test/dbctest/ref.DCX, where OBJECTNAME's tree sits at the
         // earlier page). The tag DIRECTORY is name-sorted independently, so DBC reads are unaffected;
-        // this order only pins the physical page layout to be byte-identical to VFP9.
+        // this order only pins the physical page layout to be byte-identical to VFP9. CREATE DATABASE stores
+        // these texts as typed — not decompiled like INDEX ON would (`!DELETED()`, not `.NOT.DELETED()`).
         var tags = new[]
         {
-            new CdxTagDefinition("OBJECTNAME", "str(parentid)+objecttype+lower(objectname)", "!DELETED()"),
-            new CdxTagDefinition("OBJECTTYPE", "str(parentid)+objecttype", "!DELETED()"),
+            new CdxTagDefinition("OBJECTNAME", "str(parentid)+objecttype+lower(objectname)", "!DELETED()")
+                { StoreExpressionsVerbatim = true },
+            new CdxTagDefinition("OBJECTTYPE", "str(parentid)+objecttype", "!DELETED()")
+                { StoreExpressionsVerbatim = true },
         };
 
         using var table = DbfTable.Open(dbcPath);

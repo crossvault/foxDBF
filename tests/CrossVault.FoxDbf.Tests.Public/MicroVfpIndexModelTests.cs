@@ -282,7 +282,9 @@ public sealed class MicroVfpIndexModelTests
         Assert.True(b.Bool("UNIQUE(3)"));                        // u unique.
         Assert.False(b.Bool("UNIQUE(1)"));
 
-        Assert.Equal("CITY = 'BERLIN'", b.Str("FOR(4)").Trim());   // FOR() is ALL-CAPS (s4g266), un-masked.
+        // FOR() is ALL-CAPS (s4g266), un-masked — of the DECOMPILED text VFP stores (`city="berlin"`); VFP9
+        // answers CITY="BERLIN" here (verified: FOR "name = 'a b'" reads back as NAME="A B").
+        Assert.Equal("CITY=\"BERLIN\"", b.Str("FOR(4)").Trim());
         Assert.Equal(string.Empty, b.Str("FOR(1)").Trim());     // no FOR filter on idtag.
 
         Assert.False(b.Bool("CANDIDATE(1)"));                    // free-table INDEX ⇒ no candidate/primary.

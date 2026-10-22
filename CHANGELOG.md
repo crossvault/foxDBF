@@ -32,6 +32,19 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   whose heads start with them matches (`Seek("áa")` lands on `Aa`, `Seek("Müller")` on `Muller` when that sorts
   first), exactly as VFP9's `SEEK`. The raw-byte `CdxTag.Seek(bytes, exact: true)` compares the rest of the key
   against the tag's pad (0x00 for a weighted tag) instead of blanks.
+- Index KEY/FOR text is stored as VFP9 stores it. VFP does not keep what was typed: `INDEX ON` writes the
+  decompiled expression into the `.idx` header and the CDX tag (`MOD(RECNO(), 3) = 0` → `MOD(RECNO(),3)=0`,
+  `UPPER( Name )` → `UPPER(name)`, `NOT lg AND x <> 'a'` → `.NOT.lg.AND.x#"a"`, `RECN()` → `RECNO()`,
+  `n * (2 + 3)` → `n*5`, `>=` → `=>`). `CreateTag`, `CreateTagIn`, `CreateStandaloneIdx` and `Reindex` now do
+  the same; tags that are only carried along (a sibling while another tag is added or deleted) keep their
+  text, and a new database's `.dcx` keeps VFP's typed texts. Texts outside the reproduced subset (numbers
+  beyond 15 significant digits, `{01/02/2000}` dates, …) are stored as given.
+- Expressions written by VFP could not be read back: `n>3.AND.n<10` (the `3.` swallowed the dot of
+  `.AND.`), `=>` / `=<`, currency literals (`$12.5000`), hexadecimal literals (`0x1F`), `alias->field` and
+  single-digit strict dates (`{^2000-1-2}`) now parse.
+- Rushmore and the Highlike statistics matched a condition against a tag's KEY by its exact spelling, so a
+  VFP-built tag stored as `IIF(.NOT.EMPTY(name),…)` or with `"…"`, `#`, `=>` was not used for a condition
+  typed `IIF(NOT EMPTY(NAME),…)`, `'…'`, `<>`, `>=`.
 
 ## [0.10.0] - 2026-10-22
 

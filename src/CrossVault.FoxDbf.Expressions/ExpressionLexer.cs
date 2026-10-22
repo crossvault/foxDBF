@@ -20,7 +20,7 @@ internal readonly struct Token
 {
     public TokenType Type { get; }
     public int Pos { get; }
-    public string Text { get; }       // identifier text (original case)
+    public string Text { get; }       // identifier text (original case); number/date literal source text
     public VfpValue Value { get; }     // literal payload
 
     public Token(TokenType type, int pos, string text = "", VfpValue value = default)
@@ -61,7 +61,18 @@ internal sealed class ExpressionLexer
                 case '/': tokens.Add(new(TokenType.Slash, start)); i++; continue;
                 case '%': tokens.Add(new(TokenType.Percent, start)); i++; continue;
                 case '^': tokens.Add(new(TokenType.Caret, start)); i++; continue;
-                case '$': tokens.Add(new(TokenType.Dollar, start)); i++; continue;
+                case '$':
+                    // In operand position `$12.5` is a CURRENCY literal (VFP stores it so in a CDX/IDX
+                    // KEY/FOR text, e.g. `n45=$12.5000`); after an operand it is the substring operator.
+                    if (!EndsOperand(tokens) && StartsNumber(s, i + 1))
+                    {
+                        i++;
+                        Token number = ReadNumber(s, ref i);
+                        tokens.Add(new(TokenType.Number, start, "$" + number.Text,
+                            VfpValue.Currency(Math.Round(number.Value.AsNumber, 4, MidpointRounding.AwayFromZero))));
+                        continue;
+                    }
+                    tokens.Add(new(TokenType.Dollar, start)); i++; continue;
                 case '#': tokens.Add(new(TokenType.Ne, start)); i++; continue;
                 case '*':
                     if (i + 1 < s.Length && s[i + 1] == '*') { tokens.Add(new(TokenType.Caret, start)); i += 2; }
@@ -69,6 +80,9 @@ internal sealed class ExpressionLexer
                     continue;
                 case '=':
                     if (i + 1 < s.Length && s[i + 1] == '=') { tokens.Add(new(TokenType.ExactEq, start)); i += 2; }
+                    // `=>` / `=<` are VFP spellings of >= / <=; VFP itself stores >= as `=>` in index headers.
+                    else if (i + 1 < s.Length && s[i + 1] == '>') { tokens.Add(new(TokenType.Ge, start)); i += 2; }
+                    else if (i + 1 < s.Length && s[i + 1] == '<') { tokens.Add(new(TokenType.Le, start)); i += 2; }
                     else { tokens.Add(new(TokenType.Eq, start)); i++; }
                     continue;
                 case '!':
@@ -148,11 +162,35 @@ internal sealed class ExpressionLexer
         return new(TokenType.String, start, "", VfpValue.Character(content));
     }
 
+    /// <summary>True when the last token ends an operand (so a following <c>$</c> is the operator).</summary>
+    private static bool EndsOperand(List<Token> tokens)
+    {
+        if (tokens.Count == 0) return false;
+        return tokens[^1].Type is TokenType.Number or TokenType.String or TokenType.DateLit
+            or TokenType.DateTimeLit or TokenType.True or TokenType.False or TokenType.NullLit
+            or TokenType.Identifier or TokenType.RParen;
+    }
+
+    private static bool StartsNumber(ReadOnlySpan<char> s, int i)
+        => i < s.Length && (char.IsAsciiDigit(s[i])
+            || (s[i] == '.' && i + 1 < s.Length && char.IsAsciiDigit(s[i + 1])));
+
     private static Token ReadNumber(ReadOnlySpan<char> s, ref int i)
     {
         int start = i;
+        // 0x1F: hexadecimal integer (VFP stores it as its decimal value, `31`).
+        if (s[i] == '0' && i + 2 < s.Length && (s[i + 1] == 'x' || s[i + 1] == 'X') && char.IsAsciiHexDigit(s[i + 2]))
+        {
+            i += 2;
+            while (i < s.Length && char.IsAsciiHexDigit(s[i])) i++;
+            var hex = s.Slice(start + 2, i - start - 2);
+            if (hex.Length > 15 || !long.TryParse(hex, NumberStyles.AllowHexSpecifier, Inv, out long h))
+                throw new ExpressionException($"Invalid numeric literal '{s.Slice(start, i - start).ToString()}'.", start);
+            return new(TokenType.Number, start, s.Slice(start, i - start).ToString(), VfpValue.Number((decimal)h));
+        }
         while (i < s.Length && char.IsAsciiDigit(s[i])) i++;
-        if (i < s.Length && s[i] == '.')
+        // `3.AND.x`: the '.' opens a dotted operator, it is not this number's decimal point.
+        if (i < s.Length && s[i] == '.' && !IsDottedOperatorAhead(s, i))
         {
             i++;
             while (i < s.Length && char.IsAsciiDigit(s[i])) i++;
@@ -176,7 +214,7 @@ internal sealed class ExpressionLexer
             val = VfpValue.Number(db);
         else
             throw new ExpressionException($"Invalid numeric literal '{span.ToString()}'.", start);
-        return new(TokenType.Number, start, "", val);
+        return new(TokenType.Number, start, span.ToString(), val);
     }
 
     private static Token ReadIdentifier(ReadOnlySpan<char> s, ref int i)
@@ -188,15 +226,24 @@ internal sealed class ExpressionLexer
         // A '.' followed by a letter/underscore that is NOT a dotted operator/literal
         // (.AND. .OR. .NOT. .T. .F. .Y. .N. .NULL., each closed by a trailing '.')
         // is treated as a name qualifier and folded into a single identifier token.
-        while (i < s.Length && s[i] == '.' && i + 1 < s.Length &&
-               (VfpIdentifier.IsStart(s[i + 1])) &&
-               !IsDottedOperatorAhead(s, i))
+        // The xBase `alias->field` arrow is the same qualifier; it is folded to '.' (as VFP stores it).
+        bool arrow = false;
+        while (i + 1 < s.Length)
         {
-            i++; // the '.'
+            if (s[i] == '.' && VfpIdentifier.IsStart(s[i + 1]) && !IsDottedOperatorAhead(s, i))
+                i++; // the '.'
+            else if (s[i] == '-' && s[i + 1] == '>' && i + 2 < s.Length && VfpIdentifier.IsStart(s[i + 2]))
+            {
+                arrow = true;
+                i += 2; // the '->'
+            }
+            else
+                break;
             while (i < s.Length && (VfpIdentifier.IsPart(s[i]))) i++;
         }
 
         string text = s.Slice(start, i - start).ToString();
+        if (arrow) text = text.Replace("->", ".", StringComparison.Ordinal);
         return text.ToUpperInvariant() switch
         {
             "AND" => new(TokenType.And, start),
@@ -271,7 +318,7 @@ internal sealed class ExpressionLexer
         string str = inner.Trim();
         if (str.StartsWith('^')) str = str.Substring(1).Trim();
         if (str.Length == 0 || str is "/" or "//" or "..")
-            return new(TokenType.DateLit, pos, "", VfpValue.Date(default));
+            return new(TokenType.DateLit, pos, inner, VfpValue.Date(default));
 
         string datePart = str;
         string? timePart = null;
@@ -282,18 +329,18 @@ internal sealed class ExpressionLexer
             timePart = str.Substring(sp + 1).Trim();
         }
 
-        string[] dateFormats = { "yyyy-MM-dd", "yyyy/MM/dd", "MM/dd/yyyy", "M/d/yyyy" };
+        string[] dateFormats = { "yyyy-MM-dd", "yyyy/MM/dd", "yyyy-M-d", "yyyy/M/d", "MM/dd/yyyy", "M/d/yyyy" };
         if (!DateTime.TryParseExact(datePart, dateFormats, Inv, DateTimeStyles.None, out var d))
             throw new ExpressionException($"Invalid date literal '{{{inner}}}'.", pos);
 
         if (timePart is null || timePart.Length == 0)
-            return new(TokenType.DateLit, pos, "", VfpValue.Date(DateOnly.FromDateTime(d)));
+            return new(TokenType.DateLit, pos, inner, VfpValue.Date(DateOnly.FromDateTime(d)));
 
         string[] timeFormats = { "HH:mm:ss", "H:mm:ss", "HH:mm", "h:mm:ss tt", "hh:mm:ss tt" };
         if (!DateTime.TryParseExact(timePart, timeFormats, Inv, DateTimeStyles.None, out var t))
             throw new ExpressionException($"Invalid datetime literal '{{{inner}}}'.", pos);
 
         var dt = new DateTime(d.Year, d.Month, d.Day, t.Hour, t.Minute, t.Second, DateTimeKind.Unspecified);
-        return new(TokenType.DateTimeLit, pos, "", VfpValue.DateTime(dt));
+        return new(TokenType.DateTimeLit, pos, inner, VfpValue.DateTime(dt));
     }
 }

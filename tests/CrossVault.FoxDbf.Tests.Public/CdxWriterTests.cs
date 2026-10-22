@@ -866,7 +866,8 @@ public sealed class CdxWriterTests
         {
             string dbf = Path.Combine(dir, "overflow.dbf");
             string cdx = Path.ChangeExtension(dbf, ".cdx");
-            string forExpression = ".T." + new string(' ', 504); // NAME + NUL + FOR + NUL = 513
+            // Stored decompiled (blanks would vanish): name + NUL + name="x…x" + NUL = 4 + 1 + 507 + 1 = 513.
+            string forExpression = "NAME=\"" + new string('x', 500) + "\"";
             using var writer = DbfWriter.Create(dbf, [new DbfColumnDef("NAME", 'C', 8)]);
             writer.AppendRecord(["ALPHA"]);
 

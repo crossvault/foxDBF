@@ -306,10 +306,11 @@ internal static class IdxIndexBuilder
         forExpr.CopyTo(page, 236);                                        // @236..455
     }
 
-    /// <summary>Encode an IDX KEY/FOR expression in the table code page; it must fit its 220-byte slot with a NUL.</summary>
+    /// <summary>Encode an IDX KEY/FOR expression in the table code page; it must fit its 220-byte slot with a NUL.
+    /// VFP stores the decompiled text (<c>MOD(RECNO(), 3) = 0</c> → <c>MOD(RECNO(),3)=0</c>), so do we.</summary>
     private static byte[] EncodeExpression(string text, Encoding encoding, string what)
     {
-        byte[] bytes = CodePageText.Encode(text, encoding, $"IDX {what} expression", m => new DbfWriteException(m));
+        byte[] bytes = CodePageText.Encode(VfpExpressionText.Canonicalize(text), encoding, $"IDX {what} expression", m => new DbfWriteException(m));
         if (bytes.Length > 219)
             throw new DbfWriteException($"IDX {what} expression needs {bytes.Length} bytes; the header slot holds 219.");
         return bytes;

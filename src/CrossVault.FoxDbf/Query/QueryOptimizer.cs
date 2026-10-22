@@ -585,6 +585,11 @@ public static class QueryOptimizer
     /// CHARACTER keys via a collation-transformed superset. Anything else becomes a
     /// non-optimizable (all-records) leaf — always correct.
     /// </summary>
+    /// <summary>The form a tag KEY expression is matched in by the optimizer (and by Highlike's statistics):
+    /// blank- and case-insensitive, and insensitive to the spellings VFP's decompiler rewrites
+    /// (<c>NOT</c>/<c>!</c>/<c>.NOT.</c>, <c>'x'</c>/<c>"x"</c>, <c>&lt;&gt;</c>/<c>#</c>, <c>&gt;=</c>/<c>=&gt;</c>).</summary>
+    internal static string KeyMatchForm(string key) => BoolParser.NormKey(key);
+
     private sealed class BoolParser
     {
         private readonly List<Token> _t;
@@ -833,7 +838,7 @@ public static class QueryOptimizer
             // the deferred bound and applied later (in ParseAnd / Force), AFTER a same-tag low+high pair
             // has had the chance to fuse into one window — so a wide one-sided bound the cost planner
             // would drop is still merged into the tight window and driven.
-            var (reason, tag) = ClassifyTag(NormText(keySpan), ordered: true, conditionText: text, applyCost: false);
+            var (reason, tag) = ClassifyTag(KeyMatchText(keySpan), ordered: true, conditionText: text, applyCost: false);
             if (reason == PlanReason.Optimized && tag is not null)
             {
                 bool prefersScan = _policy?.PreferFullScan(tag, text) == true;
@@ -875,7 +880,7 @@ public static class QueryOptimizer
         {
             // Correctness-only classification; the cost verdict is carried on the deferred bound and
             // applied after fusion (see Ordered) so a same-tag low+high char pair fuses into one window.
-            var (reason, tag) = ClassifyTag(NormText(keySpan), ordered: false, conditionText: text, applyCost: false);
+            var (reason, tag) = ClassifyTag(KeyMatchText(keySpan), ordered: false, conditionText: text, applyCost: false);
             if (reason == PlanReason.Optimized && tag is not null)
             {
                 // A seekable char comparison becomes a DEFERRED collated-byte window so a same-tag
@@ -912,7 +917,7 @@ public static class QueryOptimizer
                     double? lo = AsConst(args[1]), hi = AsConst(args[2]);
                     if (lo is not null && hi is not null)
                     {
-                        var (reason, tag) = ClassifyTag(NormText(args[0]), ordered: true, conditionText: text);
+                        var (reason, tag) = ClassifyTag(KeyMatchText(args[0]), ordered: true, conditionText: text);
                         if (reason == PlanReason.Optimized && tag is not null)
                         {
                             double l = lo.Value, h = hi.Value;
@@ -941,7 +946,7 @@ public static class QueryOptimizer
                     }
                     if (ok)
                     {
-                        var (reason, tag) = ClassifyTag(NormText(args[0]), ordered: true, conditionText: text);
+                        var (reason, tag) = ClassifyTag(KeyMatchText(args[0]), ordered: true, conditionText: text);
                         if (reason == PlanReason.Optimized && tag is not null)
                         {
                             // A set of discrete values is NOT one contiguous run — keep the full index
@@ -1168,11 +1173,41 @@ public static class QueryOptimizer
             return sb.ToString();
         }
 
-        private static string NormKey(string key)
+        /// <summary>A tag KEY in the form a condition's key side is matched in (<see cref="KeyMatchText"/>).</summary>
+        internal static string NormKey(string key) => KeyMatchText(Tokenize(key));
+
+        /// <summary>
+        /// The text a key expression is MATCHED by — the condition's key side and a tag's stored KEY go through
+        /// the same tokenizer, so spelling differences VFP's decompiler introduces do not hide a usable tag:
+        /// a VFP-written (and our own) KEY reads <c>IIF(.NOT.EMPTY(name),1,0)</c> for a typed
+        /// <c>IIF(NOT EMPTY(NAME),1,0)</c>, <c>"x"</c> for <c>'x'</c>, <c>#</c> for <c>&lt;&gt;</c> and <c>=&gt;</c>
+        /// for <c>&gt;=</c>. Identifiers are upper-cased; blanks are dropped.
+        /// </summary>
+        private static string KeyMatchText(List<Token> span)
         {
-            var sb = new StringBuilder(key.Length);
-            foreach (char c in key)
-                if (!char.IsWhiteSpace(c)) sb.Append(char.ToUpperInvariant(c));
+            var sb = new StringBuilder();
+            foreach (var t in span)
+            {
+                switch (t.Type)
+                {
+                    case TokType.LParen: sb.Append('('); break;
+                    case TokType.RParen: sb.Append(')'); break;
+                    case TokType.Comma: sb.Append(','); break;
+                    case TokType.Str: sb.Append('\'').Append(t.Str).Append('\''); break;
+                    case TokType.Not: sb.Append("NOT"); break;   // no separator, as NormText (condition text)
+                    case TokType.Cmp:
+                        sb.Append(t.Text switch
+                        {
+                            "!" => "NOT",
+                            "<>" or "!=" => "#",
+                            ">=" or "=>" => ">=",
+                            "<=" or "=<" => "<=",
+                            _ => t.Text,
+                        });
+                        break;
+                    default: sb.Append(t.Text); break;
+                }
+            }
             return sb.ToString();
         }
 
