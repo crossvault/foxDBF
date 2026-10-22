@@ -1,0 +1,5 @@
+ID+1=N
+NO*2=N
+YEAR(D)=N
+AMT*2=N
+D+1=D

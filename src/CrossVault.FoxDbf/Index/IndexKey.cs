@@ -403,9 +403,20 @@ public readonly struct IndexKey
     /// <summary>
     /// Resolves the key TYPE from a tag KEY <paramref name="keyExpression"/> (plan §C5):
     /// a bare field name maps to its <see cref="DbfColumn.Type"/> via <paramref name="table"/>;
-    /// otherwise <see cref="IndexKeyType.Unknown"/>.
+    /// any other expression is typed statically against the table schema, the same way the
+    /// index builder types it (VFP9 agrees: <c>id+1</c> on an Integer field is Numeric).
+    /// <see cref="IndexKeyType.Unknown"/> without a table or for an expression that cannot be typed.
     /// </summary>
     public static IndexKeyType ResolveType(string keyExpression, DbfTable? table)
+        => ResolveType(keyExpression, table, keyLength: 0);
+
+    /// <summary>
+    /// <see cref="ResolveType(string, DbfTable?)"/> cross-checked against the on-disk key length of a tag:
+    /// an Integer key is 4 bytes and a Numeric / Date / DateTime key 8, so an inferred type whose width
+    /// disagrees with <paramref name="keyLength"/> resolves to <see cref="IndexKeyType.Unknown"/> rather than
+    /// decoding the keys with the wrong transform. <paramref name="keyLength"/> 0 skips the check.
+    /// </summary>
+    internal static IndexKeyType ResolveType(string keyExpression, DbfTable? table, int keyLength)
     {
         if (table is null || keyExpression is null)
             return IndexKeyType.Unknown;
@@ -420,8 +431,34 @@ public readonly struct IndexKey
                 return FromColumnType(col.Type);
         }
 
-        // Not a bare field name (composite expression, function, …) → unresolved.
-        return IndexKeyType.Unknown;
+        // Not a bare field name (composite expression, function, …): type it statically.
+        IndexKeyType inferred;
+        try
+        {
+            inferred = VfpExpression.Parse(field).InferType(new Write.CdxIndexBuilder.TableSchema(table)).Type switch
+            {
+                VfpType.Character => IndexKeyType.Character,
+                VfpType.Integer => IndexKeyType.Integer,
+                VfpType.Numeric or VfpType.Currency => IndexKeyType.Numeric,
+                VfpType.Date => IndexKeyType.Date,
+                VfpType.DateTime => IndexKeyType.DateTime,
+                _ => IndexKeyType.Unknown,
+            };
+        }
+        catch
+        {
+            return IndexKeyType.Unknown;
+        }
+
+        if (keyLength <= 0)
+            return inferred;
+        int width = inferred switch
+        {
+            IndexKeyType.Integer => 4,
+            IndexKeyType.Numeric or IndexKeyType.Date or IndexKeyType.DateTime => 8,
+            _ => keyLength,
+        };
+        return width == keyLength ? inferred : IndexKeyType.Unknown;
     }
 
     /// <summary>Maps a DBF column type to the logical index key type (plan §C5).</summary>

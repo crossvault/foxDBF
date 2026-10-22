@@ -231,7 +231,8 @@ public sealed class CdxTag
     /// </summary>
     public uint? Seek(object value)
     {
-        if (KeyType == IndexKeyType.Character && value is string s)
+        // A character tag whose expression could not be typed (e.g. a UDF) still holds character keys.
+        if ((KeyType == IndexKeyType.Character || (KeyType == IndexKeyType.Unknown && IsCharacterKey)) && value is string s)
             return _collationSupport == CollationSupport.Unsupported ? NotFound : Seek(EncodeCharacterKey(s).AsSpan());
 
         var keyBytes = IndexKey.Encode(value, KeyType);

@@ -135,8 +135,10 @@ public sealed class CdxFile : IDisposable
             if (hdr.KeyExpression is null)
                 continue;
 
-            bool isChar = ResolveIsCharacterKey(hdr.KeyExpression);
-            var keyType = IndexKey.ResolveType(hdr.KeyExpression, _table);
+            var keyType = IndexKey.ResolveType(hdr.KeyExpression, _table, hdr.KeyLength);
+            bool isChar = keyType == IndexKeyType.Unknown
+                ? ResolveIsCharacterKey(hdr.KeyExpression)
+                : keyType == IndexKeyType.Character;
 
             var tag = new CdxTag(
                 _index,

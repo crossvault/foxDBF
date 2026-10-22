@@ -8,6 +8,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- CDX tags whose KEY is an expression (`cust+STR(no,4)`, `DTOS(d)`, `UPPER(name)`, `no*2`, `YEAR(d)`, …) now get
+  their key type from the expression's static type, as the index builder already did and as VFP9 stores them
+  (`id+1` on an Integer field is an 8-byte Numeric key). Previously such a tag was `IndexKeyType.Unknown` and
+  treated as a character key: `CdxTag.Seek(object)` returned not-found for every value, numeric and date
+  expression keys were decoded as character bytes, Rushmore skipped the tag for range bounds, and microVFP
+  `SET KEY` on a numeric expression tag threw.
 - Expressions and SQL accept Unicode letters in identifiers, so VFP field names such as `razónSoc` or the DBC
   long name `razónSocial` no longer fail with "Unexpected character" (#2, thanks @rubenrovira). Field names
   in `.dbf` headers are decoded in the table's code page instead of ASCII, which had turned them into
