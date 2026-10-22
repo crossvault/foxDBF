@@ -51,6 +51,11 @@ internal sealed class SelectExecutor
     /// not own (the parent row context for correlation). <see langword="null"/> for a top-level query.</summary>
     private readonly IRowContext? _outer;
 
+    /// <summary>The microVFP interpreter when it runs this query (its row, bound as <see cref="_outer"/>, is
+    /// an <see cref="IVfpFunctionHost"/>); <see langword="null"/> on the plain SQL / ADO.NET path. Every row
+    /// context the query evaluates on is then wrapped in a <see cref="HostedRow"/> (see <see cref="Bind"/>).</summary>
+    private readonly IVfpFunctionHost? _host;
+
     // Per-query subquery memoization (valid for one outer-query execution). An UNCORRELATED subquery's
     // result set is computed once and reused for every outer row; correlation is detected once per node.
     private readonly Dictionary<SelectStatement, List<object?[]>> _uncorrelatedRows = new();
@@ -65,11 +70,20 @@ internal sealed class SelectExecutor
 
     public SelectExecutor(VfpSession session) : this(session, null) { }
 
-    public SelectExecutor(VfpSession session, IRowContext? outer)
+    public SelectExecutor(VfpSession session, IRowContext? outer) : this(session, outer, outer as IVfpFunctionHost) { }
+
+    /// <summary>A subquery executor: <paramref name="host"/> is the enclosing query's host, so an uncorrelated
+    /// subquery (no outer row) still evaluates with the microVFP interpreter.</summary>
+    private SelectExecutor(VfpSession session, IRowContext? outer, IVfpFunctionHost? host)
     {
         _session = session;
         _outer = outer;
+        _host = host;
     }
+
+    /// <summary>The row context an expression of this query evaluates on: unchanged on the plain path, wrapped
+    /// so the microVFP host answers the functions the engine does not implement when microVFP runs the query.</summary>
+    private IRowContext Bind(IRowContext row) => _host is null ? row : new HostedRow(row, _host);
 
     public SqlResult Run(SelectStatement sel)
     {
@@ -178,6 +192,35 @@ internal sealed class SelectExecutor
             w.AppendRecords(rows);
         _session.RegisterCursor(into.Name, temp);
         return SqlResult.Dml(rows.Count);
+    }
+
+    /// <summary>microVFP: VFP9 types a result column from its evaluated value. A UDF or microVFP function has no
+    /// static type (the inference falls back to an unsized character column), so such a column takes the type of
+    /// its first non-<c>.NULL.</c> value when that is a number, logical, date or datetime.</summary>
+    private static IReadOnlyList<SqlColumn> TypeUntypedColumnsByValue(
+        IReadOnlyList<SqlColumn> columns, List<(object?[] row, IRowContext rep)> rows)
+    {
+        SqlColumn[]? typed = null;
+        for (int i = 0; i < columns.Count; i++)
+        {
+            var col = columns[i];
+            if (col.VfpType != 'C' || col.Length > 0) continue;
+            object? first = null;
+            foreach (var (r, _) in rows)
+                if (i < r.Length && r[i] is { } v) { first = v; break; }
+            (char Vfp, Type Clr)? byValue = first switch
+            {
+                decimal or double or float or int or long => ('N', typeof(decimal)),
+                bool => ('L', typeof(bool)),
+                DateOnly => ('D', typeof(DateOnly)),
+                DateTime => ('T', typeof(DateTime)),
+                _ => null,
+            };
+            if (byValue is not { } t) continue;
+            typed ??= columns.ToArray();
+            typed[i] = new SqlColumn(col.Name, t.Vfp, 0, 0, t.Clr);
+        }
+        return typed ?? columns;
     }
 
     /// <summary>Derives the output <see cref="DbfColumnDef"/> set from the result schema: each column's
@@ -314,7 +357,7 @@ internal sealed class SelectExecutor
         }
         else
         {
-            pairs = Aggregate(ctx, sel, rows.ConvertAll(r => (IRowContext)r.Ctx));
+            pairs = Aggregate(ctx, sel, rows.ConvertAll(r => r.Ctx));
         }
 
         Func<SelectItem, int> starWidth = _ => table.Columns.Count;
@@ -350,7 +393,7 @@ internal sealed class SelectExecutor
     /// </summary>
     private List<Row> CollectSingleRows(DbfTable table, EvaluationContext ctx, SelectStatement sel, string alias)
     {
-        if (sel.WherePredicate is null && _outer is null)
+        if (sel.WherePredicate is null && _outer is null && _host is null)
         {
             // The optimizer's residual resolves BARE field names only, so a qualifier naming THIS
             // query's own source (alias.field / table.field) is dropped first — as the join pushdown
@@ -379,7 +422,7 @@ internal sealed class SelectExecutor
         {
             rn++;
             if (ctx.Deleted && rec.IsDeleted) continue; // SET DELETED ON excludes deleted rows.
-            var rc = new RowContext(rec, rn, table.RecordCount, alias, _outer, colNames);
+            var rc = Bind(new RowContext(rec, rn, table.RecordCount, alias, _outer, colNames));
             bool keep;
             if (sel.WherePredicate is not null)
                 keep = EvalPredicate(sel.WherePredicate, rc, ctx) == true;
@@ -487,12 +530,12 @@ internal sealed class SelectExecutor
         {
             if (!_uncorrelatedRows.TryGetValue(sub, out var cached))
             {
-                cached = new SelectExecutor(_session).Run(sub).Rows.ToList();
+                cached = new SelectExecutor(_session, null, _host).Run(sub).Rows.ToList();
                 _uncorrelatedRows[sub] = cached;
             }
             return cached;
         }
-        return new SelectExecutor(_session, outerRow).Run(sub).Rows.ToList();
+        return new SelectExecutor(_session, outerRow, _host).Run(sub).Rows.ToList();
     }
 
     /// <summary>The first-column values of a subquery's rows (for IN membership).</summary>
@@ -808,7 +851,7 @@ internal sealed class SelectExecutor
             // synthesize a NULL driving row (RIGHT / FULL).
             var seed = src[0].Survivors;
             PushdownFilters = ChainPreservesDriving(sel)
-                ? CollectPushdownFilters(sel, src)
+                ? CollectPushdownFilters(sel, src, hosted: _host is not null)
                 : new List<string>();
             if (PushdownFilters.Count > 0)
                 seed = RestrictDriving(src[0], PushdownFilters, ctx);
@@ -832,7 +875,7 @@ internal sealed class SelectExecutor
             {
                 var kept = new List<DbfRecord?[]>(composites.Count);
                 foreach (var c in composites)
-                    if (EvalPredicate(sel.WherePredicate, new CompositeRowContext(src, c, _outer), ctx) == true)
+                    if (EvalPredicate(sel.WherePredicate, Bind(new CompositeRowContext(src, c, _outer)), ctx) == true)
                         kept.Add(c);
                 composites = kept;
             }
@@ -841,7 +884,7 @@ internal sealed class SelectExecutor
                 var kept = new List<DbfRecord?[]>(composites.Count);
                 foreach (var c in composites)
                 {
-                    var v = sel.Where.Evaluate(new CompositeRowContext(src, c, _outer), ctx);
+                    var v = sel.Where.Evaluate(Bind(new CompositeRowContext(src, c, _outer)), ctx);
                     if (v.Type == VfpType.Logical && v.AsLogical) kept.Add(c);
                 }
                 composites = kept;
@@ -858,13 +901,13 @@ internal sealed class SelectExecutor
                 pairs = new List<(object?[], IRowContext)>(composites.Count);
                 foreach (var c in composites)
                 {
-                    var rc = new CompositeRowContext(src, c, _outer);
+                    var rc = Bind(new CompositeRowContext(src, c, _outer));
                     pairs.Add((ProjectJoinRow(rc, src, sel.Items, ctx), rc));
                 }
             }
             else
             {
-                var rcs = composites.ConvertAll(c => (IRowContext)new CompositeRowContext(src, c, _outer));
+                var rcs = composites.ConvertAll(c => Bind(new CompositeRowContext(src, c, _outer)));
                 pairs = Aggregate(ctx, sel, rcs);
             }
 
@@ -1062,14 +1105,19 @@ internal sealed class SelectExecutor
     /// <summary>True when the fragment reads at least one field, every field it reads resolves to the
     /// DRIVING source, and it calls no function from <see cref="IsUnpushableFunction"/>. A fragment
     /// without any field reference (<c>.T.</c>, <c>RAND() &lt; 0.5</c>, a bare memvar) is never pushed:
-    /// it is either useless to push or would be evaluated twice in two different contexts.</summary>
-    private static bool IsDrivingOnly(string text, JoinSource[] src)
+    /// it is either useless to push or would be evaluated twice in two different contexts. When microVFP runs
+    /// the query (<paramref name="hosted"/>) a fragment calling a function the engine does not implement (a
+    /// UDF, a microVFP function, an unknown name) stays in the full WHERE: the pushdown evaluates without the
+    /// host, so such a call would read <c>.NULL.</c> there and silently drop the driving rows.</summary>
+    private static bool IsDrivingOnly(string text, JoinSource[] src, bool hosted)
     {
         VfpExpression expr;
         try { expr = VfpExpression.Parse(text); }
         catch { return false; }      // unparseable here ⇒ let the post-join path report it
 
         if (expr.ContainsFunction(static (name, _) => IsUnpushableFunction(name)))
+            return false;
+        if (hosted && expr.ContainsFunction(static (name, _) => !VfpRuntime.EngineFunctionNames.Contains(name)))
             return false;
 
         var references = expr.ReferencedFields();
@@ -1094,7 +1142,7 @@ internal sealed class SelectExecutor
 
     /// <summary>The WHERE conjuncts that read ONLY the driving source and are therefore safe to
     /// evaluate against it before the join chain runs. Empty when there is no WHERE.</summary>
-    private static List<string> CollectPushdownFilters(SelectStatement sel, JoinSource[] src)
+    private static List<string> CollectPushdownFilters(SelectStatement sel, JoinSource[] src, bool hosted)
     {
         List<string> conjuncts;
         if (sel.WherePredicate is not null)
@@ -1111,7 +1159,7 @@ internal sealed class SelectExecutor
             return new List<string>();
         }
 
-        conjuncts.RemoveAll(t => !IsDrivingOnly(t, src));
+        conjuncts.RemoveAll(t => !IsDrivingOnly(t, src, hosted));
         return conjuncts;
     }
 
@@ -1207,7 +1255,7 @@ internal sealed class SelectExecutor
                 bool ok = step.On is null; // comma cross-join: ON is implicitly true.
                 if (!ok)
                 {
-                    var v = step.On!.Evaluate(new CompositeRowContext(src, cand, _outer), ctx);
+                    var v = step.On!.Evaluate(Bind(new CompositeRowContext(src, cand, _outer)), ctx);
                     ok = v.Type == VfpType.Logical && v.AsLogical;
                 }
                 if (ok)
@@ -1248,7 +1296,7 @@ internal sealed class SelectExecutor
     {
         if (step.Equi is { } equi)
         {
-            var v = equi.OuterExpr.Evaluate(new CompositeRowContext(src, combo, _outer), ctx);
+            var v = equi.OuterExpr.Evaluate(Bind(new CompositeRowContext(src, combo, _outer)), ctx);
             if (!v.IsNull && IsNumericType(v.Type))
             {
                 string lit = v.AsNumber.ToString(CultureInfo.InvariantCulture);
@@ -1322,7 +1370,7 @@ internal sealed class SelectExecutor
     // ---- projection (join) ----------------------------------------------------------------
 
     private static object?[] ProjectJoinRow(
-        CompositeRowContext rc, JoinSource[] src, IReadOnlyList<SelectItem> items, EvaluationContext ctx)
+        IRowContext rc, JoinSource[] src, IReadOnlyList<SelectItem> items, EvaluationContext ctx)
     {
         var outv = new List<object?>();
         foreach (var it in items)
@@ -1633,8 +1681,9 @@ internal sealed class SelectExecutor
     private static SqlResult MaterializeAlreadyCoerced(
         IReadOnlyList<SqlColumn> columns, List<object?[]> rows) => new(columns, rows);
 
-    private static SqlResult Materialize(IReadOnlyList<SqlColumn> columns, List<(object?[] row, IRowContext rep)> pairs)
+    private SqlResult Materialize(IReadOnlyList<SqlColumn> columns, List<(object?[] row, IRowContext rep)> pairs)
     {
+        if (_host is not null) columns = TypeUntypedColumnsByValue(columns, pairs);
         // Coerce each cell to its SqlColumn.ClrType so the DataReader's typed getters never see a
         // mismatched box.
         var outRows = new List<object?[]>(pairs.Count);
@@ -2057,8 +2106,8 @@ internal sealed class SelectExecutor
     private readonly struct Row
     {
         public readonly DbfRecord Rec;
-        public readonly RowContext Ctx;
-        public Row(DbfRecord rec, RowContext ctx) { Rec = rec; Ctx = ctx; }
+        public readonly IRowContext Ctx;
+        public Row(DbfRecord rec, IRowContext ctx) { Rec = rec; Ctx = ctx; }
     }
 
     /// <summary>Adapts a <see cref="DbfRecord"/> to <see cref="IRowContext"/>, stripping a leading
@@ -2110,6 +2159,30 @@ internal sealed class SelectExecutor
             if (_cols.Contains(name)) return _rec.GetExpressionValue(name);
             return _outer?.GetField(name);
         }
+    }
+
+    /// <summary>A row of a query microVFP runs: the scan row answers fields, <c>RECNO()</c>, <c>RECCOUNT()</c>,
+    /// <c>DELETED()</c> and every other function the engine implements, exactly as on the plain path; any
+    /// other name — a UDF, a memvar array, a microVFP function, an unknown name — goes to the interpreter, so
+    /// a UDF runs and an unknown function raises VFP's error 1 instead of reading <c>.NULL.</c>. Functions the
+    /// interpreter answers see its work areas, not the scan row (VFP9 scans through hidden work areas too).</summary>
+    private sealed class HostedRow : IRowContext, IVfpFunctionHost
+    {
+        private readonly IRowContext _row;
+        private readonly IVfpFunctionHost _host;
+        public HostedRow(IRowContext row, IVfpFunctionHost host) { _row = row; _host = host; }
+        public int RecNo => _row.RecNo;
+        public int RecCount => _row.RecCount;
+        public bool Deleted => _row.Deleted;
+        public object? GetField(string name) => _row.GetField(name);
+
+        public bool TryInvoke(string upperName, VfpValue[] args, EvaluationContext ctx, out VfpValue result)
+        {
+            if (VfpRuntime.EngineFunctionNames.Contains(upperName)) { result = default; return false; }
+            return _host.TryInvoke(upperName, args, ctx, out result);
+        }
+
+        public VfpValue UnknownFunction(string upperName, VfpValue[] args) => _host.UnknownFunction(upperName, args);
     }
 
     /// <summary>An empty row context (all fields <see langword="null"/>) used as the representative

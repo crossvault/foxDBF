@@ -1271,7 +1271,7 @@ public sealed partial class VfpInterpreter
         if (idx < 0) return null;
         var m = Meta(wa.Area);
         int rc = wa.Table.RecordCount;
-        if (m.RecNo < 1 || m.RecNo > rc) return null;
+        if (m.RecNo < 1 || m.RecNo > rc) return _probing ? BlankFor(wa.Table.Columns[idx]) : null;
 
         DbfRecord rec;
         if (m.Cached is { } c && m.CachedRec == m.RecNo) rec = c;

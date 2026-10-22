@@ -116,9 +116,24 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `"U"`). Stored procedures and RI triggers that microVFP runs for the ADO.NET enforced write model raise
   the error too; a DBC `RULE` calling an unknown function was already reported as a violation and still is,
   a field `DEFAULT` still evaluates to `.NULL.`. Expressions evaluated without an attached interpreter are
-  unchanged — an unknown function there is still `.NULL.`: the plain SQL / ADO.NET path, index keys, and
-  inside microVFP embedded SQL, `INDEX ON` and `SET FILTER`. `IVfpFunctionHost` gains `UnknownFunction(name, args)` with a default implementation that
-  returns `.NULL.`, so existing hosts keep their behaviour.
+  unchanged — an unknown function there is still `.NULL.`: the plain SQL / ADO.NET path and the index-key
+  maintenance of the table writer. `IVfpFunctionHost` gains `UnknownFunction(name, args)` with a default
+  implementation that returns `.NULL.`, so existing hosts keep their behaviour.
+- **BREAKING — microVFP evaluates embedded SQL, `INDEX ON` and `SET FILTER TO` with the interpreter.** These
+  expressions used to be evaluated without it, so an unknown function there read `.NULL.` and a UDF or
+  microVFP function (`TRANSFORM()`, `VARTYPE()`, …) in an embedded `SELECT` read `.NULL.` too. Now, as in
+  VFP9: an embedded `SELECT` (field list, `WHERE`, `JOIN … ON`, `HAVING`, subqueries) calls UDFs and microVFP
+  functions per row and raises error 1 for an unknown function; a result column fed by such a call takes the
+  type of its first non-`.NULL.` value (it was an unsized character column). `RECNO()`, `RECCOUNT()`,
+  `DELETED()` and the other engine functions still answer from the scanned row. `INDEX ON` and `SET FILTER TO`
+  evaluate their expression once when the command runs (at EOF against a blank record), so an unknown function
+  raises error 1 then, also on an empty table, and a filter UDF is called once at SET time. An error raised
+  while a filter is evaluated during navigation propagates out of `GO`/`SKIP`/`LOCATE`/… (it hid the record).
+  `INDEX ON` refuses a UDF, an array or a microVFP-only function in the key or `FOR` expression with an error,
+  because the index engine evaluates keys without the interpreter and would key every record `.NULL.` (VFP9
+  builds such an index). Deviations: VFP9 also raises for an unknown function in a `SELECT` over an empty
+  table (microVFP evaluates per row), and a function the interpreter answers inside a `SELECT` sees microVFP's
+  work areas, not the scanned row. The plain SQL / ADO.NET path is unchanged.
 - `AND` / `OR` short-circuit like VFP9 in every expression path (microVFP, SQL, filters, compiled
   delegates): a logical `.F.` left of `AND` or `.T.` left of `OR` decides the result and the right operand is
   not evaluated, so `.F. AND NoSuchFn()` is `.F.` and a UDF on the right is not called. Results are unchanged;

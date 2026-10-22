@@ -405,7 +405,12 @@ public sealed partial class VfpInterpreter
         // the referenced names explicitly BEFORE mutating state (a throw leaves the prior filter in place).
         ValidateFilterNames(rest, area);
 
-        m.FilterExpr = PrgExpr.Parse(rest);
+        // ...and evaluates it once against the current record (VFP9-verified, also at EOF and on an empty table):
+        // an unknown function raises error 1 here, a UDF is called, an error inside it surfaces.
+        var filter = PrgExpr.Parse(rest);
+        ProbeEvaluate(filter);
+
+        m.FilterExpr = filter;
         m.FilterText = NormalizeFilterText(rest);
     }
 
@@ -908,9 +913,10 @@ public sealed partial class VfpInterpreter
     /// disturbing the user-visible pointer: temporarily re-base the pointer (and, only when the filter's area
     /// is not current, select it) so the engine resolves the filter's bare field references against
     /// <paramref name="rec"/> of <paramref name="wa"/>, evaluate, then restore everything. A non-logical /
-    /// <c>.NULL.</c> result (or any runtime eval failure) HIDES the record — VFP filter semantics; navigation
-    /// never throws out of Visible(). The pointer/cache save-restore mirrors <see cref="ExecCopyToArray"/>'s
-    /// scan probe.</summary>
+    /// <c>.NULL.</c> result HIDES the record — VFP filter semantics. A VFP error raised while evaluating (error 1
+    /// from an unknown function, an error inside a filter UDF) propagates out of the navigating command, as in
+    /// VFP9; any other evaluation failure hides the record. The pointer/cache save-restore mirrors
+    /// <see cref="ExecCopyToArray"/>'s scan probe.</summary>
     private bool PassesFilter(VfpSession.WorkArea wa, AreaMeta m, int rec)
     {
         if (_inFilterEval) return true;                 // nested filter eval ⇒ treat as visible (never recurse).
@@ -924,7 +930,8 @@ public sealed partial class VfpInterpreter
             m.RecNo = rec; m.Eof = false; m.Bof = false; m.Cached = null;
             VfpValue v;
             try { v = Eval(m.FilterExpr!); }
-            catch { return false; }                     // a runtime failure hides the row (never escapes navigation).
+            catch (Exception ex) when (ex is not MicroVfpRuntimeException and not IVfpErrorCode { VfpErrorNumber: not null })
+            { return false; }                           // a non-VFP failure hides the row; a VFP error propagates.
             return Truth(v);
         }
         finally

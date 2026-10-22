@@ -385,11 +385,26 @@ differences below are deliberate, verified simplifications, not bugs to be worke
   is just the property), on another defined name 1924 "X is not an object.", on an unknown name 1923
   "Object X is not found.". `AND`/`OR` short-circuit as in VFP9, so `.F. AND NoSuchFn()` stays `.F.`; `TYPE()`
   of a failing call is `"U"`. Two forms VFP9 accepts are not modelled and therefore raise: 4-letter function
-  abbreviations (`SUBS()`, `RECC()`, `UPPE()`) and `CREATEOBJECT()`. Expressions microVFP hands to the SQL
-  executor or the index/filter machinery are evaluated without the interpreter, so an unknown function in an
-  embedded `SELECT`, in `INDEX ON` or in `SET FILTER TO` still yields `.NULL.` there (VFP9 raises error 1);
-  the same holds for the SQL / ADO.NET path outside microVFP. The real stored-procedure corpus calls no
-  unknown function.
+  abbreviations (`SUBS()`, `RECC()`, `UPPE()`) and `CREATEOBJECT()`. The real stored-procedure corpus calls
+  no unknown function.
+- **Embedded `SELECT`, `INDEX ON` and `SET FILTER TO` evaluate with the interpreter** (since 0.11), so an
+  unknown function raises error 1 there too:
+  - In an embedded `SELECT` (field list, `WHERE`, `JOIN … ON`, `HAVING`, subqueries) a UDF, a memvar array
+    and a microVFP function such as `TRANSFORM()` run per row; the result column of such a call takes the type
+    of its first non-`.NULL.` value. Fields, `RECNO()`, `RECCOUNT()`, `DELETED()` and the other engine
+    functions answer from the scanned row. A function the interpreter answers (a UDF, `EOF()`, `ALIAS()`, …)
+    sees microVFP's work areas, not the scanned row, so pass a UDF the fields it needs as parameters. VFP9
+    raises error 1 even when the table is empty, because it evaluates the expressions once up front; microVFP
+    evaluates per row and does not raise there. The plain SQL / ADO.NET path has no interpreter: an unknown
+    function still yields `.NULL.` there, and SQL `UPDATE`/`DELETE` are not modelled in microVFP.
+  - `INDEX ON` and `SET FILTER TO` evaluate their expression once when the command runs, against the current
+    record (at EOF against a blank record), as VFP9 does: an unknown function raises error 1 then, also on an
+    empty table, and a UDF in `SET FILTER TO` is called once at that point. An error raised while a filter is
+    evaluated during navigation (inside a filter UDF, say) now propagates out of the navigating command, as in
+    VFP9; before, it hid the record.
+  - `INDEX ON` refuses a UDF, an array or a microVFP-only function (for example `TRANSFORM()`) in the key or
+    `FOR` expression with an error (VFP9 builds such an index): the index engine evaluates keys without the
+    interpreter, at build time and whenever a write updates the index, so it would key every record `.NULL.`.
 - **`FILE()` does not search `SET PATH`.** microVFP has no `SET PATH`; `FILE()` looks only at the given
   path, relative names resolving against the session data directory. Its optional `nFlags` is accepted and
   ignored.

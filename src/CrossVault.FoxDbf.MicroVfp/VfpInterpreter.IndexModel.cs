@@ -91,6 +91,12 @@ public sealed partial class VfpInterpreter
 
         string keyExpr = ix.Key.Text.Trim();
         string? forExpr = ix.For?.Text is { } f && f.Trim().Length > 0 ? f.Trim() : null;
+        // VFP evaluates the KEY (and FOR) once before it builds: an unknown function raises error 1 here, also on an
+        // empty table, and an error inside a UDF surfaces. The builder then evaluates without the interpreter, so
+        // a function only microVFP answers is refused instead of keying every record .NULL..
+        RequireEngineFunctions(ix.Key, ProbeEvaluate(ix.Key), "key");
+        if (forExpr is not null) RequireEngineFunctions(ix.For!, ProbeEvaluate(ix.For!), "FOR");
+
         bool candidate = ix.Candidate;
         // UNIQUE clause OR the SET UNIQUE session default (candidate is a distinct constraint, not UNIQUE).
         bool unique = ix.Unique || (Runtime.Unique && !candidate);
@@ -473,6 +479,68 @@ public sealed partial class VfpInterpreter
         BuildTagOnDisk(path, w => w.Reindex(_ctx, includeDeleted: !_ctx.Deleted));
         var m = Meta(area);
         m.Ordered = null; m.OrderedFor = null; m.OrderPos = -1; m.KeyVisible = null;
+    }
+
+    // True while ProbeEvaluate runs: a field read at EOF/BOF yields the blank record VFP reads there, not .NULL..
+    private bool _probing;
+
+    /// <summary>The one evaluation VFP9 makes when <c>INDEX ON</c> or <c>SET FILTER TO</c> runs (verified: an
+    /// unknown function raises error 1 even on an empty table or at EOF, a UDF in <c>SET FILTER</c> is called once
+    /// at SET time). It runs through the interpreter against the current record, so UDFs and microVFP functions
+    /// answer, AND/OR short-circuit, and every error propagates. Returns the names the interpreter answered that
+    /// the expression engine does not implement.</summary>
+    private HashSet<string> ProbeEvaluate(PrgExpr expr)
+    {
+        var hostNames = new HashSet<string>(StringComparer.Ordinal);
+        bool saved = _probing;
+        _probing = true;
+        try
+        {
+            if (expr.IsParsed) expr.Parsed!.Evaluate(new ProbeRow(_row, hostNames), _ctx);
+            else Eval(expr);
+        }
+        finally { _probing = saved; }
+        return hostNames;
+    }
+
+    /// <summary>The index builder and the write-path key maintenance evaluate KEY/FOR with the expression engine
+    /// alone: a call only the interpreter answers would read <c>.NULL.</c> for every record, so <c>INDEX ON</c>
+    /// refuses a name the probe saw the interpreter answer, and a procedure or array named anywhere in the
+    /// expression. An unknown name in a branch the probe did not evaluate passes, as in VFP9.</summary>
+    private void RequireEngineFunctions(PrgExpr expr, HashSet<string> hostNames, string clause)
+    {
+        string? name = null;
+        expr.Parsed?.ContainsFunction((n, _) =>
+        {
+            if (!hostNames.Contains(n) && !_procs.ContainsKey(n) && Memory.FindArray(n) is null) return false;
+            name = n;
+            return true;
+        });
+        if (name is not null)
+            throw new MicroVfpRuntimeException(
+                $"INDEX ON: {name}() cannot be used in the {clause} expression; index expressions are evaluated by the "
+                + "index engine, which knows only the built-in functions.");
+    }
+
+    /// <summary>The probe's row: the interpreter's own row, recording which names its host answered.</summary>
+    private sealed class ProbeRow : IRowContext, IVfpFunctionHost
+    {
+        private readonly Row _row;
+        private readonly HashSet<string> _hostNames;
+        public ProbeRow(Row row, HashSet<string> hostNames) { _row = row; _hostNames = hostNames; }
+        public object? GetField(string name) => _row.GetField(name);
+        public int RecNo => _row.RecNo;
+        public bool Deleted => _row.Deleted;
+        public int RecCount => _row.RecCount;
+
+        public bool TryInvoke(string upperName, VfpValue[] args, EvaluationContext ctx, out VfpValue result)
+        {
+            if (!_row.TryInvoke(upperName, args, ctx, out result)) return false;
+            if (!VfpRuntime.EngineFunctionNames.Contains(upperName)) _hostNames.Add(upperName);
+            return true;
+        }
+
+        public VfpValue UnknownFunction(string upperName, VfpValue[] args) => _row.UnknownFunction(upperName, args);
     }
 
     /// <summary>Run an index-mutating writer action against <paramref name="path"/>: release every work
