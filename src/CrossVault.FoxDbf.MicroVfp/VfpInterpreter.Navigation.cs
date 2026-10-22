@@ -487,7 +487,6 @@ public sealed partial class VfpInterpreter
                 // EXACT and the order's collation (see ScopeCharacterKey).
                 if (m.KeyLow is not { } single) return set;   // no bound value ⇒ nothing matches (never fail-open).
                 byte[] bound = ScopeCharacterKey(src, single, _ctx.Exact, out bool equality);
-                if (ScopeTopMisses(src, m, single, bound)) return set;
                 foreach (var (key, recno) in OrderedEntries(src))
                 {
                     if (equality ? CompareBytesUnsigned(key, bound) == 0 : IsBytePrefix(bound, key))
@@ -518,31 +517,39 @@ public sealed partial class VfpInterpreter
     }
 
     /// <summary>
-    /// VFP9 finds the top of a single-value SET KEY scope by SEEKing the bound and stepping at most once; when that
-    /// lands outside the scope, the scope shows no rows although keys inside it exist (VFP9-verified). Two cases:
+    /// VFP9 positions GO TOP / GO BOTTOM (and so SCAN) in a single-value SET KEY scope by SEEKing the bound and
+    /// stepping at most once; in two cases one END of the scope is not found and the move parks at EOF, although
+    /// SKIP and SEEK still reach the rows inside the scope (VFP9-verified):
     /// <list type="bullet">
-    ///   <item>a MACHINE bound longer than the key on a DESCENDING order (an ascending order cuts it to the key
-    ///   length);</item>
-    ///   <item>an ascending GENERAL / SPANISH order under SET EXACT OFF with trailing blanks in the bound: the SEEK
-    ///   needle also matches keys whose heads end there ('Ab' for 'Ab '), which sort before the scope; with two such
-    ///   keys first, VFP shows nothing (one is stepped over).</item>
+    ///   <item>the high-key end with a MACHINE bound longer than the key (GO BOTTOM ascending, GO TOP descending);</item>
+    ///   <item>the low-key end of a GENERAL / SPANISH order under SET EXACT OFF with trailing blanks in the bound: the
+    ///   SEEK needle also matches keys whose heads end there ('Ab' for 'Ab '), which sort before the scope; one of them
+    ///   is stepped over, with two first the end is missed (GO TOP ascending, GO BOTTOM descending).</item>
     /// </list>
     /// </summary>
-    private bool ScopeTopMisses(OrderSource src, AreaMeta m, VfpValue single, byte[] scopePrefix)
+    private bool ScopeEndMisses(int area, bool top)
     {
+        if (!_meta.TryGetValue(area, out var m) || !m.KeySet || m.KeyRange
+            || m.KeyLow is not { Type: VfpType.Character } single)
+            return false;
+        using var src = OpenMasterOrder(area);
+        if (src is null || !src.IsCharacterKey) return false;
         bool descending = src.Descending != m.OrderReversed;
-        if (descending)
-            return NaturalCharacterKey(src, single).Length > src.KeyLength;
+        bool highEnd = top == descending;
+        if (highEnd)
+            return IndexKey.CharacterKeyPad(src.CollationName) == 0x20   // MACHINE (a weighted bound is cut)
+                && NaturalCharacterKey(src, single).Length > src.KeyLength;
         if (_ctx.Exact || src.CdxTag is null)
             return false;
         var needle = SeekCharacterNeedle(src, single, exact: false);
         if (needle.Exact || needle.TrailingBlanks == 0)
             return false;
-        var entries = OrderedEntries(src);
-        if (m.OrderReversed) entries = entries.Reverse();
+        byte[] scopePrefix = ScopeCharacterKey(src, single, exact: false, out _);
+        var ascending = OrderedEntries(src);
+        if (src.Descending) ascending = ascending.Reverse();
         int outside = 0;
         bool started = false;
-        foreach (var (key, _) in entries)
+        foreach (var (key, _) in ascending)
         {
             if (!started && !needle.Matches(key)) continue;
             started = true;
@@ -550,6 +557,19 @@ public sealed partial class VfpInterpreter
             if (++outside == 2) return true;
         }
         return false;
+    }
+
+    /// <summary>Park <paramref name="area"/> at EOF after a GO TOP / GO BOTTOM whose SET KEY scope end VFP9 does not find
+    /// (see <see cref="ScopeEndMisses"/>).</summary>
+    private void ParkIfScopeEndMissed(int area, bool top)
+    {
+        if (!ScopeEndMisses(area, top)) return;
+        var m = Meta(area);
+        var wa = Session.AreaAt(area);
+        if (wa is null) return;
+        var ord = ActiveOrder(area);
+        if (ord is not null) m.OrderPos = ord.Count;
+        m.RecNo = wa.Table.RecordCount + 1; m.Eof = true; m.Bof = top; m.Cached = null;
     }
 
     /// <summary>The stored-key bytes for a CHARACTER SET KEY range bound: the natural CDX weights or IDX
@@ -986,8 +1006,8 @@ public sealed partial class VfpInterpreter
     // Batch 4: every USER nav move first flushes any DEFERRED fast-append refresh for the area, so GO
     // BOTTOM/TOP/n, SKIP and SEEK see the just-appended rows (and a loop-internal SKIP after a scan-body
     // INSERT into the scanned table stays correct). No-op when nothing is pending.
-    private void GoTop(int area) { if (_pendingAppendPaths is { Count: > 0 }) FlushPendingAppends(area); MaybeAutoCommitRow(area); GoTopCore(area); RepositionChildren(area); }
-    private void GoBottom(int area) { if (_pendingAppendPaths is { Count: > 0 }) FlushPendingAppends(area); MaybeAutoCommitRow(area); GoBottomCore(area); RepositionChildren(area); }
+    private void GoTop(int area) { if (_pendingAppendPaths is { Count: > 0 }) FlushPendingAppends(area); MaybeAutoCommitRow(area); GoTopCore(area); ParkIfScopeEndMissed(area, top: true); RepositionChildren(area); }
+    private void GoBottom(int area) { if (_pendingAppendPaths is { Count: > 0 }) FlushPendingAppends(area); MaybeAutoCommitRow(area); GoBottomCore(area); ParkIfScopeEndMissed(area, top: false); RepositionChildren(area); }
     private void GoRecord(int area, int rec) { if (_pendingAppendPaths is { Count: > 0 }) FlushPendingAppends(area); MaybeAutoCommitRow(area); GoRecordCore(area, rec); RepositionChildren(area); }
 
     private void Skip(int area, int count)
