@@ -256,8 +256,10 @@ internal static class VfpRuntime
         int n = mode == StringCompareMode.Pad ? Math.Max(nl, nr) : Math.Min(nl, nr);
         for (int i = 0; i < n; i++)
         {
-            int x = i < nl ? Cp1252.ToByte(l[i]) : ' ';
-            int y = i < nr ? Cp1252.ToByte(r[i]) : ' ';
+            // Below 0x80 a char is its own CP1252 byte; only the rest needs the (not inlined) lookup.
+            int x = ' ', y = ' ';
+            if (i < nl) { x = l[i]; if (x >= 0x80) x = Cp1252.ToByte((char)x); }
+            if (i < nr) { y = r[i]; if (y >= 0x80) y = Cp1252.ToByte((char)y); }
             if (x != y) return x < y ? -1 : 1;
         }
         return mode == StringCompareMode.Pad ? 0 : nl.CompareTo(nr);

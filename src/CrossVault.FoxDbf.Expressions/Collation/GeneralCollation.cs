@@ -122,10 +122,10 @@ public sealed class GeneralCollation : IVfpCollation
         int capR = right.Length * 2;
 
         byte[]? rhL = null, rtL = null, rhR = null, rtR = null;
-        Span<byte> hL = capL <= StackCap ? stackalloc byte[StackCap] : (rhL = ArrayPool<byte>.Shared.Rent(capL));
-        Span<byte> tL = capL <= StackCap ? stackalloc byte[StackCap] : (rtL = ArrayPool<byte>.Shared.Rent(capL));
-        Span<byte> hR = capR <= StackCap ? stackalloc byte[StackCap] : (rhR = ArrayPool<byte>.Shared.Rent(capR));
-        Span<byte> tR = capR <= StackCap ? stackalloc byte[StackCap] : (rtR = ArrayPool<byte>.Shared.Rent(capR));
+        Span<byte> hL = capL <= StackCap ? stackalloc byte[capL] : (rhL = ArrayPool<byte>.Shared.Rent(capL));
+        Span<byte> tL = capL <= StackCap ? stackalloc byte[capL] : (rtL = ArrayPool<byte>.Shared.Rent(capL));
+        Span<byte> hR = capR <= StackCap ? stackalloc byte[capR] : (rhR = ArrayPool<byte>.Shared.Rent(capR));
+        Span<byte> tR = capR <= StackCap ? stackalloc byte[capR] : (rtR = ArrayPool<byte>.Shared.Rent(capR));
         try
         {
             BuildKey(left, hL, tL, out int hcL, out int tcL);
@@ -158,10 +158,10 @@ public sealed class GeneralCollation : IVfpCollation
         int capL = left.Length * 2;
         int capR = right.Length * 2;
         byte[]? rhL = null, rtL = null, rhR = null, rtR = null;
-        Span<byte> hL = capL <= StackCap ? stackalloc byte[StackCap] : (rhL = ArrayPool<byte>.Shared.Rent(capL));
-        Span<byte> tL = capL <= StackCap ? stackalloc byte[StackCap] : (rtL = ArrayPool<byte>.Shared.Rent(capL));
-        Span<byte> hR = capR <= StackCap ? stackalloc byte[StackCap] : (rhR = ArrayPool<byte>.Shared.Rent(capR));
-        Span<byte> tR = capR <= StackCap ? stackalloc byte[StackCap] : (rtR = ArrayPool<byte>.Shared.Rent(capR));
+        Span<byte> hL = capL <= StackCap ? stackalloc byte[capL] : (rhL = ArrayPool<byte>.Shared.Rent(capL));
+        Span<byte> tL = capL <= StackCap ? stackalloc byte[capL] : (rtL = ArrayPool<byte>.Shared.Rent(capL));
+        Span<byte> hR = capR <= StackCap ? stackalloc byte[capR] : (rhR = ArrayPool<byte>.Shared.Rent(capR));
+        Span<byte> tR = capR <= StackCap ? stackalloc byte[capR] : (rtR = ArrayPool<byte>.Shared.Rent(capR));
         try
         {
             BuildKey(left, hL, tL, out int hcL, out int tcL, trim: false);

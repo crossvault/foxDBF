@@ -20,8 +20,11 @@ public readonly struct DbfRecord
 
     // Per-record decode memo. Both arrays are reference fields on a readonly struct:
     // struct copies share them, and mutating their *elements* (not the field) is legal.
+    // _decoded says what the slot holds: Decoded (the indexer's value) or ExpressionDecoded (a C field at full
+    // width, GetExpressionValue); a C slot holds one of the two at a time.
     private readonly object?[] _cache;
-    private readonly bool[] _decoded;
+    private readonly byte[] _decoded;
+    private const byte Decoded = 1, ExpressionDecoded = 2;
 
     /// <summary>
     /// Wrap a per-record buffer. The buffer is owned by this record (callers must hand
@@ -33,7 +36,7 @@ public readonly struct DbfRecord
         _buffer = buffer;
         int n = table.Columns.Count;
         _cache = new object?[n];
-        _decoded = new bool[n];
+        _decoded = new byte[n];
     }
 
     /// <summary>The owning table (column offsets / encoding source).</summary>
@@ -81,13 +84,13 @@ public readonly struct DbfRecord
             if ((uint)index >= (uint)columns.Count)
                 return null;
 
-            if (_decoded[index])
+            if (_decoded[index] == Decoded)
                 return _cache[index];
 
             var column = columns[index];
             var value = DecodeColumn(column);
             _cache[index] = value;
-            _decoded[index] = true;
+            _decoded[index] = Decoded;
             return value;
         }
     }
@@ -106,15 +109,24 @@ public readonly struct DbfRecord
         var column = columns[index];
         if (column.Type != 'C')
             return this[index];
+        // Memoized like the indexer: a filter naming the field twice (a OR chain, a range) decodes it once.
+        if (_decoded[index] == ExpressionDecoded)
+            return _cache[index];
 
+        object? value = null;
         var (_, nullBit) = _table.GetVarlenNullBits(column);
-        if (_table.ApplyNullFlags && nullBit >= 0 && IsNullFlagBitSet(nullBit))
-            return null;
-        var raw = GetRawField(column);
-        if (raw.IsEmpty)
-            return null;
-        var encoding = column.IsBinary ? System.Text.Encoding.Latin1 : _table.Encoding;
-        return FieldDecoder.DecodeCharacterPadded(column, raw, encoding, _table.EncodingIsExplicit);
+        if (!(_table.ApplyNullFlags && nullBit >= 0 && IsNullFlagBitSet(nullBit)))
+        {
+            var raw = GetRawField(column);
+            if (!raw.IsEmpty)
+            {
+                var encoding = column.IsBinary ? System.Text.Encoding.Latin1 : _table.Encoding;
+                value = FieldDecoder.DecodeCharacterPadded(column, raw, encoding, _table.EncodingIsExplicit);
+            }
+        }
+        _cache[index] = value;
+        _decoded[index] = ExpressionDecoded;
+        return value;
     }
 
     /// <summary>The expression value (<see cref="GetExpressionValue(int)"/>) of the column named <paramref name="name"/>.</summary>
