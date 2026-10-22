@@ -168,7 +168,7 @@ public sealed partial class VfpInterpreter
     /// oracle test pins that DELETED/EXACT are session-SCOPED (isolated), which is the load-bearing fact.</summary>
     private static EvaluationContext FreshSessionContext()
     {
-        var c = new EvaluationContext { Exact = false, Deleted = true };
+        var c = new EvaluationContext { Exact = false, Deleted = true, VfpBlankFields = true };
         c.Encoding ??= Encoding.Latin1;
         return c;
     }

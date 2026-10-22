@@ -162,6 +162,7 @@ public sealed partial class VfpInterpreter
         // field = literal compare as in VFP).
         _ctx.Exact = false;
         _ctx.Deleted = true;
+        _ctx.VfpBlankFields = true;        // VFP9 reads: a blank field is its typed empty; EMPTY(.NULL.) is .F.
         _ctx.Encoding ??= Encoding.Latin1; // CHR()/ASC() byte-consistency for createId/newguid.
         _callStack.Add(new CallContext("(main)", Array.Empty<VfpValue>(), 0));
         // 5.14: register the DEFAULT data session (id 1) — its interpreter-side state (record pointers, locks,
@@ -918,7 +919,8 @@ public sealed partial class VfpInterpreter
     {
         var parsed = sq.Parsed ?? SafeParseSql(sq.Sql) ?? ThrowSqlParseError(sq.Sql);
         if (parsed is not SelectStatement sel) { ThrowSqlParseError(sq.Sql); return; }
-        var exec = new SelectExecutor(Session, _row);
+        // VFP9 read semantics: a blank (non-NULL) field is its typed empty, only a set null bit is .NULL.
+        var exec = new SelectExecutor(Session, _row) { VfpBlankFields = true };
         exec.Run(sel);
         if (sel.Into is { Kind: IntoKind.Cursor } into)
         {
@@ -1271,7 +1273,9 @@ public sealed partial class VfpInterpreter
         'I' => 0,
         'N' or 'F' or 'B' or 'Y' => 0m,
         'L' => false,
-        _ => null,   // D/T → empty date (DbfWriter writes a blank date field); exotic types → null.
+        'D' => default(DateOnly),        // FieldEncoder writes the empty date as 8 spaces …
+        'T' or '@' => default(DateTime), // … and the empty datetime as 8 zero bytes.
+        _ => null,                       // exotic types → null.
     };
 
     // Field read straight from the on-disk record (ignores the buffer) — the pre-change value OLDVAL is
@@ -1315,7 +1319,9 @@ public sealed partial class VfpInterpreter
             var memo = rec[idx];
             return memo is null && !rec.IsNullFlagSet(col) ? string.Empty : memo;
         }
-        return rec[idx];
+        // Every other type: .NULL. ONLY for a set null bit — a blank N/F/D/T/M field (null bit clear, or a
+        // non-NULL-able column) reads as its typed empty (0 / {} / ""), ISNULL() .F., exactly as VFP9.
+        return rec.GetVfpValue(idx);
     }
 
     // A character value as a C field of col's width holds it: truncated or blank-padded to the declared width (the

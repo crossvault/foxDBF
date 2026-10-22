@@ -129,6 +129,29 @@ internal sealed class SelectExecutor
             && (_session.FindAreaByAlias(q) is not null || interp.GetField(q) is not null);
     }
 
+    /// <summary>
+    /// VFP9 field-read semantics (set by the microVFP runtime): a BLANK field — null bit clear, or a
+    /// non-NULL-able column — reads as its typed empty (0 / {} / "") everywhere the query reads a row
+    /// (WHERE, projections, aggregates, ORDER BY, subqueries), and only a set <c>_NullFlags</c> bit is
+    /// <c>.NULL.</c>; an INTO CURSOR/TABLE column that receives a <c>.NULL.</c> is created NULL-able so the
+    /// value survives. Off (the default) keeps the public <see cref="VfpSession.Execute"/> / ADO.NET
+    /// contract: a blank N/F/D/T/M field reads as <see langword="null"/> (IsDBNull).
+    /// </summary>
+    internal bool VfpBlankFields { get; init; }
+
+    /// <summary>The session's SQL evaluation context, carrying <see cref="VfpBlankFields"/> down to the
+    /// optimizer's residual row reads.</summary>
+    private EvaluationContext SqlContext()
+    {
+        var ctx = _session.SqlContext();
+        ctx.VfpBlankFields = VfpBlankFields;
+        return ctx;
+    }
+
+    /// <summary>One field read from a source record under this executor's blank semantics.</summary>
+    private static object? ReadField(DbfRecord rec, string field, bool vfpBlanks)
+        => vfpBlanks ? rec.GetVfpValue(field) : rec.GetExpressionValue(field);
+
     public SqlResult Run(SelectStatement sel)
     {
         PushdownFilters = Array.Empty<string>(); // reset: RunSingle / RunUnion never push
@@ -219,6 +242,20 @@ internal sealed class SelectExecutor
         }
 
         var defs = BuildColumnDefs(columns);
+
+        // VFP9 carries .NULL. into the cursor/table (a NULL-able source column stays NULL-able there; a
+        // .NULL. read back is still .NULL.). Under VfpBlankFields a result value is null only for a genuine
+        // .NULL. (a set null bit, a .NULL. expression, an unmatched outer-join side), so a column that
+        // receives one is created NULL-able — otherwise the writer would store it as a blank.
+        if (VfpBlankFields)
+        {
+            for (int i = 0; i < defs.Count; i++)
+            {
+                int col = i;
+                if (rows.Any(r => col < r.Length && r[col] is null))
+                    defs[i] = defs[i] with { Nullable = true };
+            }
+        }
 
         if (into.Kind == IntoKind.Table)
         {
@@ -345,7 +382,7 @@ internal sealed class SelectExecutor
     private SqlResult RunSingle(SelectStatement sel)
     {
         var from = sel.From[0];
-        var ctx = _session.SqlContext();
+        var ctx = SqlContext();
 
         // Resolve FROM: reuse an open work area whose alias matches, else auto-open a scratch handle.
         var existing = _session.FindAreaByAlias(from.Alias ?? from.Table);
@@ -448,7 +485,7 @@ internal sealed class SelectExecutor
             {
                 recno++;
                 if (!hits.Contains(recno)) continue;
-                rows.Add(new Row(rec, new RowContext(rec, recno, table.RecordCount, alias)));
+                rows.Add(new Row(rec, new RowContext(rec, recno, table.RecordCount, alias, VfpBlankFields)));
             }
             return rows;
         }
@@ -461,7 +498,7 @@ internal sealed class SelectExecutor
         {
             rn++;
             if (ctx.Deleted && rec.IsDeleted) continue; // SET DELETED ON excludes deleted rows.
-            var rc = Bind(new RowContext(rec, rn, table.RecordCount, alias, _outer, colNames));
+            var rc = Bind(new RowContext(rec, rn, table.RecordCount, alias, _outer, colNames, VfpBlankFields));
             bool keep;
             if (sel.WherePredicate is not null)
                 keep = EvalPredicate(sel.WherePredicate, rc, ctx) == true;
@@ -571,12 +608,12 @@ internal sealed class SelectExecutor
             {
                 // Under microVFP the host IS the interpreter's row: binding it as the outer row resolves a memvar
                 // inside the subquery exactly as the top-level query does (plain path: no host, no outer row).
-                cached = new SelectExecutor(_session, _host as IRowContext, _host).Run(sub).Rows.ToList();
+                cached = new SelectExecutor(_session, _host as IRowContext, _host) { VfpBlankFields = VfpBlankFields }.Run(sub).Rows.ToList();
                 _uncorrelatedRows[sub] = cached;
             }
             return cached;
         }
-        return new SelectExecutor(_session, outerRow, _host).Run(sub).Rows.ToList();
+        return new SelectExecutor(_session, outerRow, _host) { VfpBlankFields = VfpBlankFields }.Run(sub).Rows.ToList();
     }
 
     /// <summary>The first-column values of a subquery's rows (for IN membership).</summary>
@@ -695,7 +732,7 @@ internal sealed class SelectExecutor
                 acc.Add(CoerceRow(row, accSchema));
             if (i > 0 && !allFlags[i - 1])
                 acc = Distinct(acc.Select((r, _) =>
-                    (r, new DummyRowContext() as IRowContext)).ToList(), _session.SqlContext())
+                    (r, new DummyRowContext() as IRowContext)).ToList(), SqlContext())
                     .ConvertAll(p => p.row);
         }
 
@@ -709,7 +746,7 @@ internal sealed class SelectExecutor
 
         if (orderBy.Count > 0)
         {
-            var ctx = _session.SqlContext();
+            var ctx = SqlContext();
             IOrderedEnumerable<object?[]>? ordered = null;
             for (int k = 0; k < orderBy.Count; k++)
             {
@@ -850,7 +887,7 @@ internal sealed class SelectExecutor
 
     private SqlResult RunJoin(SelectStatement sel)
     {
-        var ctx = _session.SqlContext();
+        var ctx = SqlContext();
         var owned = new List<JoinSource>();
         try
         {
@@ -920,7 +957,7 @@ internal sealed class SelectExecutor
             {
                 var kept = new List<DbfRecord?[]>(composites.Count);
                 foreach (var c in composites)
-                    if (EvalPredicate(sel.WherePredicate, Bind(new CompositeRowContext(src, c, _outer)), ctx) == true)
+                    if (EvalPredicate(sel.WherePredicate, Bind(new CompositeRowContext(src, c, _outer, VfpBlankFields)), ctx) == true)
                         kept.Add(c);
                 composites = kept;
             }
@@ -929,7 +966,7 @@ internal sealed class SelectExecutor
                 var kept = new List<DbfRecord?[]>(composites.Count);
                 foreach (var c in composites)
                 {
-                    var v = sel.Where.Evaluate(Bind(new CompositeRowContext(src, c, _outer)), ctx);
+                    var v = sel.Where.Evaluate(Bind(new CompositeRowContext(src, c, _outer, VfpBlankFields)), ctx);
                     if (v.Type == VfpType.Logical && v.AsLogical) kept.Add(c);
                 }
                 composites = kept;
@@ -950,7 +987,7 @@ internal sealed class SelectExecutor
                 pairs = new List<(object?[], IRowContext)>(composites.Count);
                 foreach (var c in composites)
                 {
-                    var rc = Bind(new CompositeRowContext(src, c, _outer));
+                    var rc = Bind(new CompositeRowContext(src, c, _outer, VfpBlankFields));
                     pairs.Add((ProjectJoinRow(rc, src, sel.Items, ctx), rc));
                 }
             }
@@ -959,7 +996,7 @@ internal sealed class SelectExecutor
                 var groupBy = ResolveGroupBy(sel, order, it => src
                     .Where(s => it.StarAlias is null || string.Equals(it.StarAlias, s.Alias, StringComparison.OrdinalIgnoreCase))
                     .SelectMany(s => s.Columns.Select(c => s.Alias + "." + c.Name)));
-                var rcs = composites.ConvertAll(c => Bind(new CompositeRowContext(src, c, _outer)));
+                var rcs = composites.ConvertAll(c => Bind(new CompositeRowContext(src, c, _outer, VfpBlankFields)));
                 pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, order, rcs);
             }
 
@@ -1297,7 +1334,7 @@ internal sealed class SelectExecutor
                 bool ok = step.On is null; // comma cross-join: ON is implicitly true.
                 if (!ok)
                 {
-                    var v = step.On!.Evaluate(Bind(new CompositeRowContext(src, cand, _outer)), ctx);
+                    var v = step.On!.Evaluate(Bind(new CompositeRowContext(src, cand, _outer, VfpBlankFields)), ctx);
                     ok = v.Type == VfpType.Logical && v.AsLogical;
                 }
                 if (ok)
@@ -1338,7 +1375,7 @@ internal sealed class SelectExecutor
     {
         if (step.Equi is { } equi)
         {
-            var v = equi.OuterExpr.Evaluate(Bind(new CompositeRowContext(src, combo, _outer)), ctx);
+            var v = equi.OuterExpr.Evaluate(Bind(new CompositeRowContext(src, combo, _outer, VfpBlankFields)), ctx);
             if (!v.IsNull && IsNumericType(v.Type))
             {
                 string lit = v.AsNumber.ToString(CultureInfo.InvariantCulture);
@@ -1399,7 +1436,7 @@ internal sealed class SelectExecutor
             if (it.IsStar)
             {
                 foreach (var c in table.Columns)
-                    outv.Add(r.Rec.GetExpressionValue(c.Name));
+                    outv.Add(ReadField(r.Rec, c.Name, ctx.VfpBlankFields));
             }
             else
             {
@@ -2346,21 +2383,24 @@ internal sealed class SelectExecutor
         private readonly string _alias;
         private readonly IRowContext? _outer;
         private readonly HashSet<string>? _cols; // non-null ⇒ alias-/outer-aware resolution
+        private readonly bool _vfpBlanks;        // VfpBlankFields: a blank field reads as its typed empty
 
         /// <summary>The legacy context (no correlation): resolves a field by stripping any
         /// <c>alias.</c> qualifier — behaviour preserved verbatim for the fast WHERE path.</summary>
-        public RowContext(DbfRecord rec, int recNo, int recCount, string alias)
+        public RowContext(DbfRecord rec, int recNo, int recCount, string alias, bool vfpBlanks)
         {
-            _rec = rec; RecNo = recNo; RecCount = recCount; _alias = alias;
+            _rec = rec; RecNo = recNo; RecCount = recCount; _alias = alias; _vfpBlanks = vfpBlanks;
         }
 
         /// <summary>The alias-/outer-aware context used by the row-by-row WHERE path: a qualified
         /// <c>alias.field</c> resolves here only when <paramref name="alias"/> matches and the field is
         /// one of <paramref name="cols"/>; anything else falls back to <paramref name="outer"/> (the
         /// correlated parent row) — which is <see langword="null"/> for a top-level query.</summary>
-        public RowContext(DbfRecord rec, int recNo, int recCount, string alias, IRowContext? outer, HashSet<string> cols)
+        public RowContext(DbfRecord rec, int recNo, int recCount, string alias, IRowContext? outer, HashSet<string> cols,
+            bool vfpBlanks)
         {
             _rec = rec; RecNo = recNo; RecCount = recCount; _alias = alias; _outer = outer; _cols = cols;
+            _vfpBlanks = vfpBlanks;
         }
 
         public int RecNo { get; }
@@ -2374,7 +2414,7 @@ internal sealed class SelectExecutor
             if (_cols is null)
             {
                 int d = name.LastIndexOf('.');
-                return _rec.GetExpressionValue(d >= 0 ? name[(d + 1)..] : name);
+                return ReadField(_rec, d >= 0 ? name[(d + 1)..] : name, _vfpBlanks);
             }
 
             int dot = name.IndexOf('.');
@@ -2382,10 +2422,10 @@ internal sealed class SelectExecutor
             {
                 string alias = name[..dot], field = name[(dot + 1)..];
                 if (string.Equals(alias, _alias, StringComparison.OrdinalIgnoreCase) && _cols.Contains(field))
-                    return _rec.GetExpressionValue(field);
+                    return ReadField(_rec, field, _vfpBlanks);
                 return _outer?.GetField(name); // correlated reference to an outer source
             }
-            if (_cols.Contains(name)) return _rec.GetExpressionValue(name);
+            if (_cols.Contains(name)) return ReadField(_rec, name, _vfpBlanks);
             return _outer?.GetField(name);
         }
     }
@@ -2542,8 +2582,9 @@ internal sealed class SelectExecutor
         private readonly JoinSource[] _src;
         private readonly DbfRecord?[] _recs;
         private readonly IRowContext? _outer;
-        public CompositeRowContext(JoinSource[] src, DbfRecord?[] recs, IRowContext? outer = null)
-        { _src = src; _recs = recs; _outer = outer; }
+        private readonly bool _vfpBlanks; // VfpBlankFields: a blank field reads as its typed empty
+        public CompositeRowContext(JoinSource[] src, DbfRecord?[] recs, IRowContext? outer, bool vfpBlanks)
+        { _src = src; _recs = recs; _outer = outer; _vfpBlanks = vfpBlanks; }
         public IRowContext? Outer => _outer;
         public bool HasAlias(string q)
             => Array.Exists(_src, s => string.Equals(s.Alias, q, StringComparison.OrdinalIgnoreCase));
@@ -2559,7 +2600,7 @@ internal sealed class SelectExecutor
                 string alias = name[..dot], field = name[(dot + 1)..];
                 for (int i = 0; i < _src.Length; i++)
                     if (string.Equals(_src[i].Alias, alias, StringComparison.OrdinalIgnoreCase))
-                        return _recs[i] is { } r && _src[i].ColNames.Contains(field) ? r.GetExpressionValue(field) : null;
+                        return _recs[i] is { } r && _src[i].ColNames.Contains(field) ? ReadField(r, field, _vfpBlanks) : null;
                 return _outer?.GetField(name); // correlated reference to an outer source
             }
 
@@ -2569,7 +2610,7 @@ internal sealed class SelectExecutor
             if (count == 0) return _outer?.GetField(name);
             if (count > 1)
                 throw new FoxDbfSqlException($"Column '{name}' is ambiguous; qualify it with an alias.");
-            return _recs[found] is { } rec ? rec.GetExpressionValue(name) : null;
+            return _recs[found] is { } rec ? ReadField(rec, name, _vfpBlanks) : null;
         }
     }
 

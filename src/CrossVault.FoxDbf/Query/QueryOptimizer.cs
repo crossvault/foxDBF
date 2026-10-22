@@ -117,7 +117,7 @@ public static class QueryOptimizer
 
                 int recno = idx + 1; // 1-based physical record number
                 scanned++;
-                var v = compiled(new RowAdapter(rec.Value, recno, recordCount));
+                var v = compiled(new RowAdapter(rec.Value, recno, recordCount, ctx.VfpBlankFields));
                 if (v.Type == VfpType.Logical && v.AsLogical)
                     hits.Add(recno);
             }
@@ -135,7 +135,7 @@ public static class QueryOptimizer
                 if (ctx.Deleted && rec.IsDeleted) continue;
 
                 scanned++;
-                var v = compiled(new RowAdapter(rec, recno, recordCount));
+                var v = compiled(new RowAdapter(rec, recno, recordCount, ctx.VfpBlankFields));
                 if (v.Type == VfpType.Logical && v.AsLogical)
                     hits.Add(recno);
             }
@@ -241,7 +241,7 @@ public static class QueryOptimizer
                         if (rec is null) continue;
 
                         int recno = idx + 1; // 1-based physical record number
-                        var v = compiled(new RowAdapter(rec.Value, recno, recordCount));
+                        var v = compiled(new RowAdapter(rec.Value, recno, recordCount, ctx.VfpBlankFields));
                         if (v.Type == VfpType.Logical && v.AsLogical) count++;
                     }
                 }
@@ -255,7 +255,7 @@ public static class QueryOptimizer
                 {
                     recno++; // 1-based physical record number
                     if (ctx.Deleted && rec.IsDeleted) continue; // implicit AND NOT DELETED()
-                    var v = compiled(new RowAdapter(rec, recno, recordCount));
+                    var v = compiled(new RowAdapter(rec, recno, recordCount, ctx.VfpBlankFields));
                     if (v.Type == VfpType.Logical && v.AsLogical) count++;
                 }
             }
@@ -328,15 +328,17 @@ public static class QueryOptimizer
     private sealed class RowAdapter : IRowContext
     {
         private readonly DbfRecord _rec;
-        public RowAdapter(DbfRecord rec, int recNo, int recCount)
+        private readonly bool _vfpBlanks;
+        public RowAdapter(DbfRecord rec, int recNo, int recCount, bool vfpBlanks)
         {
-            _rec = rec; RecNo = recNo; RecCount = recCount;
+            _rec = rec; RecNo = recNo; RecCount = recCount; _vfpBlanks = vfpBlanks;
         }
         public int RecNo { get; }
         public int RecCount { get; }
         public bool Deleted => _rec.IsDeleted;
-        // Character fields at full width, as VFP evaluates them (leading blanks count, == sees the trailing ones).
-        public object? GetField(string name) => _rec.GetExpressionValue(name);
+        // Character fields at full width, as VFP evaluates them (leading blanks count, == sees the trailing ones);
+        // EvaluationContext.VfpBlankFields (a microVFP SQL query): a blank field reads as its typed empty.
+        public object? GetField(string name) => _vfpBlanks ? _rec.GetVfpValue(name) : _rec.GetExpressionValue(name);
     }
 
     // ============================================================ analysis result

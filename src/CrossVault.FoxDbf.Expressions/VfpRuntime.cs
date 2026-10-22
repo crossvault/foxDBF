@@ -363,7 +363,7 @@ internal static class VfpRuntime
         switch (name)
         {
             case "ISNULL": return VfpValue.Logical(Arg(args, 0).IsNull);
-            case "EMPTY": return Empty(Arg(args, 0));
+            case "EMPTY": return Empty(Arg(args, 0), ctx);
             case "IIF":
             {
                 var c = Arg(args, 0);
@@ -868,11 +868,14 @@ internal static class VfpRuntime
         return best;
     }
 
-    private static VfpValue Empty(VfpValue v)
+    private static VfpValue Empty(VfpValue v, EvaluationContext ctx)
     {
         switch (v.Type)
         {
-            case VfpType.Null: return VfpValue.Logical(true);
+            // VFP9: EMPTY(.NULL.) is .F. — .NULL. is not an empty value (BlankFieldNullBitVfp9OracleTests).
+            // Only where a row read separates blank from .NULL. (VfpBlankFields, the microVFP runtime): on the
+            // public record/ADO.NET read a blank N/F/D/T/M field IS null, and EMPTY() must keep matching it.
+            case VfpType.Null: return VfpValue.Logical(!ctx.VfpBlankFields);
             case VfpType.Character: return VfpValue.Logical(v.AsString.Trim().Length == 0);
             case VfpType.Numeric:
             case VfpType.Currency:

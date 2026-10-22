@@ -138,6 +138,17 @@ public sealed class EvaluationContext
     /// </summary>
     public bool NullSetting { get; set; }
 
+    /// <summary>
+    /// When <c>true</c>, a row read resolves a BLANK field (null bit clear, or a non-NULL-able column) to
+    /// its typed empty value — as the VFP9 runtime does — instead of the public record API's
+    /// <see langword="null"/>; only a set <c>_NullFlags</c> bit reads as <c>.NULL.</c>. Set by the SQL
+    /// executor on the contexts of a query the microVFP runtime runs; the plain <c>VfpSession.Execute</c>
+    /// / ADO.NET path leaves it off (blank → null, the IsDBNull contract). It also decides
+    /// <c>EMPTY(.NULL.)</c>: <c>.F.</c> as in VFP9 when on, <c>.T.</c> when off (there a blank field reads as
+    /// null and must stay EMPTY()). The microVFP interpreter turns it on for its own evaluation context.
+    /// </summary>
+    internal bool VfpBlankFields { get; set; }
+
     /// <summary>Active collation; default MACHINE.</summary>
     public IVfpCollation Collation { get; set; } = VfpCollations.Machine;
 

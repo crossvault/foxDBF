@@ -308,6 +308,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - An empty memo or blob (`''`, `0h`) no longer allocates a memo block; it is stored as a 0 pointer, as VFP9
   stores it on INSERT and REPLACE, and microVFP reads such a memo (null bit clear) as `''`, not `.NULL.`. A
   Varbinary (`Q`) value shorter than its field is padded with 0x20, as in VFP9, instead of zero bytes.
+- microVFP read a blank N, F, D, T or M field (null bit clear, or a column that is not NULL-able) as `.NULL.`:
+  `ISNULL()` returned `.T.`, `n + 1` stayed `.NULL.`, and the same happened in the `SELECT`s microVFP runs
+  (`WHERE ISNULL(n)`, `COUNT(n)`, `INTO ARRAY`, `INTO CURSOR`). As in VFP9, such a field now reads as its
+  empty value (0, `{}`, `""`) with `ISNULL()` `.F.` and `EMPTY()` `.T.`; only a set null bit is `.NULL.`.
+  `SELECT … INTO CURSOR`/`TABLE` from microVFP makes a column NULL-able when a `.NULL.` lands in it, so the
+  value stays `.NULL.` there. `EMPTY(.NULL.)` now returns `.F.`, as in VFP9. `DbfRecord`, `VfpSession.Execute`
+  and ADO.NET are unchanged: a blank N/F/D/T/M field still reads as `null` (`IsDBNull` true).
 
 ## [0.10.0] - 2026-10-22
 

@@ -137,6 +137,47 @@ public readonly struct DbfRecord
     }
 
     /// <summary>
+    /// The value the VFP9 runtime reads for the column at <paramref name="index"/>: <see langword="null"/>
+    /// ONLY when the column's <c>_NullFlags</c> bit is set (honoured per <see cref="DbfTable.ApplyNullFlags"/>);
+    /// a blank field without a null bit reads as its type's EMPTY value instead of the public indexer's
+    /// <see langword="null"/> — <c>0</c> for N/F, the empty date/datetime (<c>default</c>) for D/T,
+    /// <c>""</c> for a memo and an empty blob for W. VFP9-pinned (BlankFieldNullBitVfp9OracleTests): a blank
+    /// N/F/D/T/M field has ISNULL() .F. and EMPTY() .T. whether or not the column is NULL-able. The public
+    /// <see cref="this[int]"/> keeps mapping blank → <see langword="null"/> (the ADO.NET IsDBNull contract);
+    /// this accessor is the read the microVFP runtime and its SQL engine use.
+    /// </summary>
+    internal object? GetVfpValue(int index)
+    {
+        var value = GetExpressionValue(index);   // a C field at its full width, as VFP reads it.
+        if (value is not null) return value;
+        var columns = _table.Columns;
+        if ((uint)index >= (uint)columns.Count) return null;
+
+        var column = columns[index];
+        var (_, nullBit) = _table.GetVarlenNullBits(column);
+        if (_table.ApplyNullFlags && nullBit >= 0 && IsNullFlagBitSet(nullBit))
+            return null;
+
+        return column.Type switch
+        {
+            'N' => column.Decimal > 0 ? 0m : 0L,   // the CLR types DecodeNumeric yields for a value.
+            'F' => 0d,
+            'D' => default(DateOnly),
+            'T' or '@' => default(DateTime),
+            'M' => string.Empty,
+            'W' => Array.Empty<byte>(),
+            _ => null,
+        };
+    }
+
+    /// <summary><see cref="GetVfpValue(int)"/> by column name; <see langword="null"/> for an unknown column.</summary>
+    internal object? GetVfpValue(string name)
+    {
+        int index = IndexOfColumn(name);
+        return index < 0 ? null : GetVfpValue(index);
+    }
+
+    /// <summary>
     /// Decode one column applying the §A5b VFP rules: a set null bit (when
     /// <see cref="DbfTable.ApplyNullFlags"/>) overrides the value to
     /// <see langword="null"/>; <c>V</c>/<c>Q</c> use the varlen bit for their effective
