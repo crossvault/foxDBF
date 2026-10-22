@@ -1,0 +1,98 @@
+A	A
+A 	A
+A	A 
+Ab	A
+A	Ab
+a	A
+A	a
+Á	A
+A	Á
+Áb	A
+Ab	Á
+ A	A
+A	 A
+	
+A	
+	A
+ 	
+	 
+ 	A
+A	 
+AEtest	Æ
+Æ	AE
+AE	Æ
+Ætest	AE
+Ætest	A
+Straße	Strasse
+Strasse	Straße
+Straße	Stras
+Straße	Straß
+ß	s
+ss	ß
+ß	ss
+Müller	Mu
+Muller	Mü
+Müller	Mü
+abc	ABC
+aBc 	Abc
+B	A 
+A 	B
+A 	A  
+Ab	A 
+A         	A
+Ab        	A
+a         	A
+Á         	A
+A         	Ab
+A	A         
+AB	Ab
+ab	aB
+Á	á
+á	a
+x	Á
+Á	x
+ Á	A
+  x	 x
+ x	  x
+Ab	AB
+a	B
+B	a
+chico	c
+chico	ch
+ch	c
+c	ch
+lla	l
+llama	ll
+ll	l
+l	ll
+cha	c
+Ch	c
+cH	ch
+ßá	ssá
+ssá	ßá
+ßá	s
+ßá	ß
+Æá	AEá
+AEá	Æá
+ßx	s
+ßx	ss
+Ætest	Æ
+Æ	A
+Þa	T
+Þa	TH
+THa	Þ
+œ	o
+Œuvre	OE
+OEuvre	Œ
+Ø	O
+áb	a
+ab	á
+ñ	n
+ña	n
+na	ñ
+Peñarol	Pen
+Penarol	Peñ
+A b	A
+A b	A 
+ÀB	AB
+AB	ÀB

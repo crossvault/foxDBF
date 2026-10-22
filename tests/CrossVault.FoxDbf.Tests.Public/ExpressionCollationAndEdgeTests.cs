@@ -86,14 +86,19 @@ public sealed class ExpressionCollationAndEdgeTests
     // ====================================================================
 
     [Fact]
-    public void General_Equality_IsCaseAndAccentInsensitive()
+    public void General_Equality_IsCaseInsensitive_ExactEqualityIsNot()
     {
         Assert.True(Eval("'A' = 'a'", ctx: General).AsLogical);
-        Assert.True(Eval("'A' == 'a'", ctx: General).AsLogical);   // == also collation-aware
         // Case folds, accents preserved (the diacritic tail must still match).
-        Assert.True(Eval("'CAFÉ' == 'café'", ctx: General).AsLogical);
+        Assert.True(Eval("'CAFÉ' = 'café'", ctx: General).AsLogical);
         // Differing accents are NOT equal (é carries a tail byte, e does not).
-        Assert.False(Eval("'café' == 'cafe'", ctx: General).AsLogical);
+        Assert.False(Eval("'café' = 'cafe'", ctx: General).AsLogical);
+        // Xbase == ignores SET COLLATE: character for character (VFP9, vfp_test/strcmp).
+        Assert.False(Eval("'A' == 'a'", ctx: General).AsLogical);
+        Assert.False(Eval("'CAFÉ' == 'café'", ctx: General).AsLogical);
+        // SQL == is the collation-aware padded comparison.
+        var sql = new EvaluationContext { Collation = General.Collation, SqlSemantics = true };
+        Assert.True(Eval("'CAFÉ' == 'café  '", ctx: sql).AsLogical);
     }
 
     [Fact]

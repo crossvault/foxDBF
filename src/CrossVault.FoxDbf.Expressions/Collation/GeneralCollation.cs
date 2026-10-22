@@ -135,6 +135,53 @@ public sealed class GeneralCollation : IVfpCollation
         }
     }
 
+    /// <summary>
+    /// Compares two strings with the length rule of an operator: <see cref="StringCompareMode.Pad"/> is
+    /// <see cref="Compare(ReadOnlySpan{char}, ReadOnlySpan{char})"/>; the cutting modes keep trailing blanks and the 0x00
+    /// tails, cut the head run (of the left operand, or of the longer one) to the other's head count and compare the
+    /// heads, then the tails, where tails that merely extend the other operand's tails count as equal. VFP9-verified
+    /// for GENERAL; SPANISH ligatures under SET EXACT OFF keep the deviations listed in <c>StringComparisonGoldenTests</c>.
+    /// </summary>
+    internal int Compare(ReadOnlySpan<char> left, ReadOnlySpan<char> right, StringCompareMode mode)
+    {
+        if (mode == StringCompareMode.Pad) return Compare(left, right);
+        // A character-for-character prefix is equal before any weighting: under SPANISH 'chico' = 'c' holds although
+        // 'ch' is one head, while 'ch' = 'C' does not (VFP9). For GENERAL the weighted path gives the same answer.
+        if (left.StartsWith(right) || (mode == StringCompareMode.Shorter && right.StartsWith(left))) return 0;
+
+        int capL = left.Length * 2;
+        int capR = right.Length * 2;
+        byte[]? rhL = null, rtL = null, rhR = null, rtR = null;
+        Span<byte> hL = capL <= StackCap ? stackalloc byte[StackCap] : (rhL = ArrayPool<byte>.Shared.Rent(capL));
+        Span<byte> tL = capL <= StackCap ? stackalloc byte[StackCap] : (rtL = ArrayPool<byte>.Shared.Rent(capL));
+        Span<byte> hR = capR <= StackCap ? stackalloc byte[StackCap] : (rhR = ArrayPool<byte>.Shared.Rent(capR));
+        Span<byte> tR = capR <= StackCap ? stackalloc byte[StackCap] : (rtR = ArrayPool<byte>.Shared.Rent(capR));
+        try
+        {
+            BuildKey(left, hL, tL, out int hcL, out int tcL, trim: false);
+            BuildKey(right, hR, tR, out int hcR, out int tcR, trim: false);
+            if (mode == StringCompareMode.TruncateLeft) hcL = Math.Min(hcL, hcR);
+            else hcL = hcR = Math.Min(hcL, hcR);
+
+            int d = hL[..hcL].SequenceCompareTo(hR[..hcR]);
+            if (d != 0) return d < 0 ? -1 : 1;
+
+            var a = tL[..tcL];
+            var b = tR[..tcR];
+            if (a.StartsWith(b)) return 0;
+            if (mode == StringCompareMode.Shorter && b.StartsWith(a)) return 0;
+            d = a.SequenceCompareTo(b);
+            return d < 0 ? -1 : 1;
+        }
+        finally
+        {
+            if (rhL is not null) ArrayPool<byte>.Shared.Return(rhL);
+            if (rtL is not null) ArrayPool<byte>.Shared.Return(rtL);
+            if (rhR is not null) ArrayPool<byte>.Shared.Return(rhR);
+            if (rtR is not null) ArrayPool<byte>.Shared.Return(rtR);
+        }
+    }
+
     /// <summary>Stack-buffer threshold (bytes). Inputs whose worst-case key (len*2) fits are
     /// keyed with no heap traffic at all; longer ones fall back to an <see cref="ArrayPool{T}"/>
     /// rent (Compare) or a plain array (GetCollatedKey, which must allocate the result anyway).</summary>
@@ -144,13 +191,13 @@ public sealed class GeneralCollation : IVfpCollation
     /// Shared two-pass key builder: writes the head (primary) weights into
     /// <paramref name="heads"/> and the diacritic (tail) weights into <paramref name="tails"/>,
     /// expanding ligatures (Œ→OE, Æ→AE, Þ→TH, ß→SS), folding SPANISH contractions (ch, ll) into one
-    /// head, trimming trailing source spaces and trailing 0x00 tail bytes. Buffers must each hold at
+    /// head, trimming (unless <paramref name="trim"/> is off) trailing source spaces and trailing 0x00 tail bytes. Buffers must each hold at
     /// least <c>s.Length * 2</c> bytes. The logical key is <c>heads[..hc]</c> followed by <c>tails[..tc]</c>.
     /// </summary>
-    private void BuildKey(ReadOnlySpan<char> s, Span<byte> heads, Span<byte> tails, out int hc, out int tc)
+    private void BuildKey(ReadOnlySpan<char> s, Span<byte> heads, Span<byte> tails, out int hc, out int tc, bool trim = true)
     {
         int len = s.Length;
-        while (len > 0 && s[len - 1] == ' ') len--;
+        while (trim && len > 0 && s[len - 1] == ' ') len--;
 
         var table = _table;
         var head = table.Head;
@@ -191,7 +238,7 @@ public sealed class GeneralCollation : IVfpCollation
             }
         }
 
-        while (tc > 0 && tails[tc - 1] == 0) tc--;
+        while (trim && tc > 0 && tails[tc - 1] == 0) tc--;
     }
 
     /// <summary>Matches the byte pair (<paramref name="a"/>, <paramref name="b"/>) against the lower-case

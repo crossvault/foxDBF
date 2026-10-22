@@ -12,6 +12,17 @@ internal enum BinOp
     And, Or,
 }
 
+/// <summary>How two strings of different length are lined up before they are compared.</summary>
+internal enum StringCompareMode
+{
+    /// <summary>Xbase SET EXACT OFF: the left operand is cut to the right one's length.</summary>
+    TruncateLeft,
+    /// <summary>SET EXACT ON / SET ANSI ON / SQL <c>==</c>: the shorter operand is padded with blanks.</summary>
+    Pad,
+    /// <summary>SQL SET ANSI OFF: the longer operand is cut to the shorter one's length.</summary>
+    Shorter,
+}
+
 /// <summary>Unary operator tag used by the AST / runtime.</summary>
 internal enum UnOp { Neg, Not }
 
@@ -81,10 +92,10 @@ internal static class VfpRuntime
             case BinOp.Eq: return VfpValue.Logical(ValueEquals(l, r, ctx, exact: false));
             case BinOp.ExactEq: return VfpValue.Logical(ValueEquals(l, r, ctx, exact: true));
             case BinOp.Ne: return VfpValue.Logical(!ValueEquals(l, r, ctx, exact: false));
-            case BinOp.Lt: return VfpValue.Logical(Compare(l, r, ctx) < 0);
-            case BinOp.Le: return VfpValue.Logical(Compare(l, r, ctx) <= 0);
-            case BinOp.Gt: return VfpValue.Logical(Compare(l, r, ctx) > 0);
-            case BinOp.Ge: return VfpValue.Logical(Compare(l, r, ctx) >= 0);
+            case BinOp.Lt: return VfpValue.Logical(CompareOperands(l, r, ctx) < 0);
+            case BinOp.Le: return VfpValue.Logical(CompareOperands(l, r, ctx) <= 0);
+            case BinOp.Gt: return VfpValue.Logical(CompareOperands(l, r, ctx) > 0);
+            case BinOp.Ge: return VfpValue.Logical(CompareOperands(l, r, ctx) >= 0);
             case BinOp.Dollar:
                 return VfpValue.Logical(Contains(l.AsString, r.AsString, ctx));
             default:
@@ -189,10 +200,7 @@ internal static class VfpRuntime
         if (l.Type == VfpType.Character && r.Type == VfpType.Character)
         {
             if (exact) return StrEqExact(l.AsString, r.AsString, ctx);
-            // SQL '=' (governed by SET ANSI) is selected ONLY when the host opts in via
-            // EvaluationContext.SqlSemantics; otherwise the Xbase SET EXACT path is unchanged.
-            if (ctx.SqlSemantics) return StrEqSql(l.AsString, r.AsString, ctx);
-            return StrEqInexact(l.AsString, r.AsString, ctx);
+            return CompareStrings(l.AsString, r.AsString, OperatorMode(ctx), ctx) == 0;
         }
         if (IsNumeric(l) && IsNumeric(r)) return l.AsDouble == r.AsDouble;
         if (l.Type == VfpType.Logical && r.Type == VfpType.Logical)
@@ -207,80 +215,76 @@ internal static class VfpRuntime
     private static bool IsMachine(EvaluationContext ctx)
         => string.Equals(ctx.Collation.Name, "MACHINE", StringComparison.Ordinal);
 
-    // The "==" operator (and EXACT-ON / INLIST): exact, but collation-aware. Under
-    // GENERAL it is case- and accent-insensitive and ignores trailing blanks; under
-    // MACHINE it is character-for-character ordinal.
-    private static bool StrEqExact(string l, string r, EvaluationContext ctx)
-    {
-        if (IsMachine(ctx))
-            return string.Equals(l, r, StringComparison.Ordinal);
-        return ctx.Collation.Compare(l.AsSpan(), r.AsSpan()) == 0;
-    }
-
-    internal static bool StrEqInexact(string l, string r, EvaluationContext ctx)
-    {
-        if (ctx.Exact)
-        {
-            // SET EXACT ON: equal apart from trailing blanks (collation-aware).
-            if (IsMachine(ctx))
-                return string.Equals(l.TrimEnd(' '), r.TrimEnd(' '), StringComparison.Ordinal);
-            return ctx.Collation.Compare(l.AsSpan(), r.AsSpan()) == 0;
-        }
-        // SET EXACT OFF: r must be a prefix of l.
-        if (r.Length == 0) return true;
-        if (IsMachine(ctx))
-        {
-            // MACHINE keys are one CP1252 byte per char, so char count == weight count.
-            if (r.Length > l.Length) return false;
-            return l.AsSpan(0, r.Length).SequenceEqual(r.AsSpan());
-        }
-        // GENERAL (any weighted collation): compare on the collated KEY length, NOT the
-        // char length. Expansion chars (Æ/æ, Œ/œ, ß, Þ/þ) emit two weights each, so char
-        // count diverges from weight count — e.g. "AEtest" = "Æ" must be TRUE because the
-        // weights of "Æ" are exactly the prefix weights of "AEtest".
-        byte[] kr = ctx.Collation.GetCollatedKey(r.AsSpan());
-        if (kr.Length == 0) return true;
-        byte[] kl = ctx.Collation.GetCollatedKey(l.AsSpan());
-        if (kr.Length > kl.Length) return false;
-        return kl.AsSpan(0, kr.Length).SequenceEqual(kr);
-    }
+    /// <summary>
+    /// The length rule of <c>=</c>, <c>&lt;&gt;</c>, <c>&lt;</c>, <c>&lt;=</c>, <c>&gt;</c>, <c>&gt;=</c>, INLIST and
+    /// BETWEEN for two strings (VFP9-verified, see <c>StringComparisonGoldenTests</c>): Xbase SET EXACT OFF cuts the
+    /// LEFT operand to the right one's length, SET EXACT ON pads the shorter with blanks; SQL (SET ANSI) cuts the
+    /// LONGER to the shorter's length (ANSI OFF) or pads (ANSI ON).
+    /// </summary>
+    private static StringCompareMode OperatorMode(EvaluationContext ctx) => ctx.SqlSemantics
+        ? (ctx.Ansi ? StringCompareMode.Pad : StringCompareMode.Shorter)
+        : (ctx.Exact ? StringCompareMode.Pad : StringCompareMode.TruncateLeft);
 
     /// <summary>
-    /// The SQL <c>=</c> operator's STRING comparison, governed by SET ANSI (used ONLY when
+    /// Three-way string comparison under <paramref name="mode"/> and the active collation. Trailing blanks are
+    /// significant in the cutting modes (<c>'Ab' = 'A '</c> is false) and insignificant under
+    /// <see cref="StringCompareMode.Pad"/>. MACHINE cuts by characters; a weighted collation cuts by head (primary)
+    /// weights, so <c>'AEtest' = 'Æ'</c> and <c>'Straße' = 'Stras'</c> hold under GENERAL while <c>'Á' = 'A'</c> does
+    /// not (the diacritic tails still count).
+    /// </summary>
+    internal static int CompareStrings(string l, string r, StringCompareMode mode, EvaluationContext ctx)
+    {
+        if (IsMachine(ctx)) return MachineCompare(l, r, mode);
+        if (ctx.Collation is GeneralCollation general) return general.Compare(l.AsSpan(), r.AsSpan(), mode);
+        // A host-supplied collation: cut by characters, then its own three-way compare.
+        ReadOnlySpan<char> a = l, b = r;
+        if (mode == StringCompareMode.TruncateLeft && a.Length > b.Length) a = a[..b.Length];
+        else if (mode == StringCompareMode.Shorter)
+        {
+            int n = Math.Min(a.Length, b.Length);
+            a = a[..n]; b = b[..n];
+        }
+        return ctx.Collation.Compare(a, b);
+    }
+
+    /// <summary>MACHINE: CP1252 byte order, cut by characters (TruncateLeft / Shorter) or blank-padded (Pad).</summary>
+    private static int MachineCompare(string l, string r, StringCompareMode mode)
+    {
+        int nl = l.Length, nr = r.Length;
+        if (mode == StringCompareMode.TruncateLeft) nl = Math.Min(nl, nr);
+        else if (mode == StringCompareMode.Shorter) nl = nr = Math.Min(nl, nr);
+        int n = mode == StringCompareMode.Pad ? Math.Max(nl, nr) : Math.Min(nl, nr);
+        for (int i = 0; i < n; i++)
+        {
+            int x = i < nl ? Cp1252.ToByte(l[i]) : ' ';
+            int y = i < nr ? Cp1252.ToByte(r[i]) : ' ';
+            if (x != y) return x < y ? -1 : 1;
+        }
+        return mode == StringCompareMode.Pad ? 0 : nl.CompareTo(nr);
+    }
+
+    // The "==" operator. Xbase: character for character and of equal length; trailing blanks count and SET COLLATE
+    // does not apply ('a' == 'A' is false even under GENERAL). SQL "==" (SqlSemantics): the collation-aware
+    // blank-padded comparison, independent of SET ANSI.
+    private static bool StrEqExact(string l, string r, EvaluationContext ctx)
+    {
+        if (ctx.SqlSemantics) return CompareStrings(l, r, StringCompareMode.Pad, ctx) == 0;
+        return string.Equals(l, r, StringComparison.Ordinal);
+    }
+
+    /// <summary>The Xbase <c>=</c> of two strings under the context's SET EXACT.</summary>
+    internal static bool StrEqInexact(string l, string r, EvaluationContext ctx)
+        => CompareStrings(l, r, ctx.Exact ? StringCompareMode.Pad : StringCompareMode.TruncateLeft, ctx) == 0;
+
+    /// <summary>
+    /// The SQL <c>=</c> operator's STRING comparison, governed by SET ANSI (used when
     /// <see cref="EvaluationContext.SqlSemantics"/> is on — the SQL executor's predicate path).
     /// ANSI OFF: compare up to the SHORTER operand's length, ORDER-INDEPENDENT
     /// (<c>"Smith" = "Sm"</c> and <c>"Sm" = "Smith"</c> are BOTH true). ANSI ON: pad the shorter
-    /// operand with blanks for a full-length compare (equivalently, ignore trailing-blank
-    /// differences). Collation-aware in both modes; <c>==</c> is never routed here.
+    /// operand with blanks for a full-length compare. Collation-aware in both modes.
     /// </summary>
     internal static bool StrEqSql(string l, string r, EvaluationContext ctx)
-    {
-        if (ctx.Ansi)
-        {
-            // ANSI ON: blank-pad the shorter to the longer, then full-length compare. This is
-            // equivalent to comparing with trailing-blank differences ignored.
-            if (IsMachine(ctx))
-                return string.Equals(l.TrimEnd(' '), r.TrimEnd(' '), StringComparison.Ordinal);
-            return ctx.Collation.Compare(l.AsSpan(), r.AsSpan()) == 0;
-        }
-
-        // ANSI OFF: the SHORTER operand must be a prefix of the longer (order-independent).
-        if (IsMachine(ctx))
-        {
-            string shorter = l.Length <= r.Length ? l : r;
-            string longer = l.Length <= r.Length ? r : l;
-            if (shorter.Length == 0) return true;
-            return longer.AsSpan(0, shorter.Length).SequenceEqual(shorter.AsSpan());
-        }
-        // Weighted collation: compare on the collated KEY bytes, shorter key as a prefix of the
-        // longer (expansion chars emit multiple weights, so char count != weight count).
-        byte[] kl = ctx.Collation.GetCollatedKey(l.AsSpan());
-        byte[] kr = ctx.Collation.GetCollatedKey(r.AsSpan());
-        byte[] shortK = kl.Length <= kr.Length ? kl : kr;
-        byte[] longK = kl.Length <= kr.Length ? kr : kl;
-        if (shortK.Length == 0) return true;
-        return longK.AsSpan(0, shortK.Length).SequenceEqual(shortK);
-    }
+        => CompareStrings(l, r, ctx.Ansi ? StringCompareMode.Pad : StringCompareMode.Shorter, ctx) == 0;
 
     /// <summary>The "$" operator: is <paramref name="l"/> contained in <paramref name="r"/>,
     /// honouring the active collation (case/accent-insensitive under GENERAL).</summary>
@@ -304,6 +308,16 @@ internal static class VfpRuntime
         return false;
     }
 
+    /// <summary>The relational operators and BETWEEN: strings follow the length rule of <c>=</c>
+    /// (<see cref="OperatorMode"/>), every other type <see cref="Compare"/>.</summary>
+    internal static int CompareOperands(VfpValue l, VfpValue r, EvaluationContext ctx)
+    {
+        if (l.Type == VfpType.Character && r.Type == VfpType.Character)
+            return CompareStrings(l.AsString, r.AsString, OperatorMode(ctx), ctx);
+        return Compare(l, r, ctx);
+    }
+
+    /// <summary>Ordering (ORDER BY, MAX/MIN): strings by the active collation over their full length.</summary>
     internal static int Compare(VfpValue l, VfpValue r, EvaluationContext ctx)
     {
         if (l.Type == VfpType.Character && r.Type == VfpType.Character)
@@ -825,7 +839,7 @@ internal static class VfpRuntime
     private static VfpValue Between(VfpValue[] a, EvaluationContext ctx)
     {
         var v = Arg(a, 0); var lo = Arg(a, 1); var hi = Arg(a, 2);
-        return VfpValue.Logical(Compare(v, lo, ctx) >= 0 && Compare(v, hi, ctx) <= 0);
+        return VfpValue.Logical(CompareOperands(v, lo, ctx) >= 0 && CompareOperands(v, hi, ctx) <= 0);
     }
 
     private static VfpValue Inlist(VfpValue[] a, EvaluationContext ctx)
@@ -833,7 +847,7 @@ internal static class VfpRuntime
         if (a.Length == 0) return VfpValue.Logical(false);
         var v = a[0];
         for (int i = 1; i < a.Length; i++)
-            if (ValueEquals(v, a[i], ctx, exact: true)) return VfpValue.Logical(true);
+            if (ValueEquals(v, a[i], ctx, exact: false)) return VfpValue.Logical(true);
         return VfpValue.Logical(false);
     }
 }
