@@ -56,6 +56,13 @@ internal sealed class SelectExecutor
     private readonly Dictionary<SelectStatement, List<object?[]>> _uncorrelatedRows = new();
     private readonly Dictionary<SelectStatement, bool> _correlation = new();
 
+    /// <summary>The WHERE conjuncts this executor actually pushed down onto the driving source before
+    /// running the join chain — empty when nothing was pushed (no WHERE, or nothing in it read only the
+    /// driving source, or the chain contains a RIGHT/FULL step). Test seam: proves the pushdown was
+    /// WIRED UP, which a result-equivalence test alone cannot (a no-op pushdown would still match the
+    /// oracle).</summary>
+    internal IReadOnlyList<string> PushdownFilters { get; private set; } = Array.Empty<string>();
+
     public SelectExecutor(VfpSession session) : this(session, null) { }
 
     public SelectExecutor(VfpSession session, IRowContext? outer)
@@ -66,6 +73,8 @@ internal sealed class SelectExecutor
 
     public SqlResult Run(SelectStatement sel)
     {
+        PushdownFilters = Array.Empty<string>(); // reset: RunSingle / RunUnion never push
+
         // UNION owns its overall ORDER BY / TOP / INTO modifiers. VFP's grammar attaches a
         // trailing INTO to the final SELECT branch rather than to the root statement.
         if (sel.Union is not null)
@@ -786,9 +795,23 @@ internal sealed class SelectExecutor
                 steps[idx++] = new JoinStep(sel.Joins[j].JoinType, sel.Joins[j].On, equi);
             }
 
+            // ---- predicate pushdown on the driving source (BEFORE the join chain) -------------
+            // A WHERE conjunct that reads only src[0] is applied to it first, so a selective WHERE
+            // no longer pays one inner-side lookup (and one composite clone) per driving row. The
+            // FULL WHERE below is UNCHANGED and still runs over the composites, so every conjunct
+            // that could not be pushed keeps its exact semantics, and a conjunct that was pushed is
+            // simply re-confirmed on a much smaller set. No pushdown at all when the chain can
+            // synthesize a NULL driving row (RIGHT / FULL).
+            var seed = src[0].Survivors;
+            PushdownFilters = ChainPreservesDriving(sel)
+                ? CollectPushdownFilters(sel, src)
+                : new List<string>();
+            if (PushdownFilters.Count > 0)
+                seed = RestrictDriving(src[0], PushdownFilters, ctx);
+
             // Seed the composite rowset with the driving source's surviving rows.
-            var composites = new List<DbfRecord?[]>(src[0].Survivors.Count);
-            foreach (var rec in src[0].Survivors)
+            var composites = new List<DbfRecord?[]>(seed.Count);
+            foreach (var rec in seed)
             {
                 var arr = new DbfRecord?[src.Length];
                 arr[0] = rec;
@@ -925,6 +948,227 @@ internal sealed class SelectExecutor
         foreach (int r in recnos)
             if (byRecno.TryGetValue(r, out var rec)) { list.Add(rec); keptRecnos?.Add(r); }
         return list;
+    }
+
+    // =======================================================================================
+    //  WHERE pushdown on the DRIVING source (src[0]) — evaluated BEFORE the join chain runs.
+    //
+    //  A WHERE conjunct that reads only the driving source is applied to that source first, so a
+    //  selective WHERE no longer pays one inner-side lookup (and one composite clone) per driving
+    //  row. The FULL WHERE below is UNCHANGED and still runs over the composites, so every conjunct
+    //  that could not be pushed keeps its exact semantics, and a conjunct that WAS pushed is simply
+    //  re-confirmed on a much smaller set.
+    //
+    //  WHY IT IS SAFE: for a chain of INNER / LEFT steps the driving row is never NULL in any
+    //  composite, so a conjunct reads the same value before and after the join — dropping the
+    //  driving rows it rejects removes exactly the composites the post-join WHERE would have
+    //  removed. Chains containing RIGHT / FULL can SYNTHESIZE a composite whose driving row is
+    //  NULL, so those get no pushdown at all (see ChainPreservesDriving).
+    // =======================================================================================
+
+    /// <summary>Splits a text on its TOP-LEVEL <c>AND</c> keywords only — never descending into
+    /// parentheses, string literals (<c>'</c>/<c>"</c>) or bracket literals (<c>[</c>) — so each
+    /// piece stays an independent conjunct. Same character scan as <see cref="HasTopLevelBoolean"/>,
+    /// extended for bracket strings. Unbalanced text simply yields one untrimmed piece (the caller's
+    /// <see cref="VfpExpression.Parse"/> then rejects it).</summary>
+    internal static List<string> SplitTopLevelAnd(string text)
+    {
+        var parts = new List<string>();
+        int depth = 0;
+        int start = 0;
+        char quote = '\0';
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (quote != '\0')
+            {
+                if (c == quote) quote = '\0';
+                continue;
+            }
+            if (c == '\'' || c == '"') { quote = c; continue; }
+            if (c == '[') { quote = ']'; continue; }
+            if (c == '(') { depth++; continue; }
+            if (c == ')') { depth--; continue; }
+            if (depth != 0) continue;
+            if (!IsKeywordAt(text, i, "AND")) continue;
+
+            string piece = text[start..i].Trim();
+            if (piece.Length > 0) parts.Add(piece);
+            i += 2;      // skip 'AND'; the loop's i++ lands on the character after it
+            start = i + 1;
+        }
+        string tail = text[start..].Trim();
+        if (tail.Length > 0) parts.Add(tail);
+        return parts;
+    }
+
+    /// <summary>Collects the top-level AND-conjuncts of a predicate TREE: <see cref="AndPredicate"/>
+    /// links are descended, <see cref="ExprPredicate"/> leaves are collected, and every other node
+    /// (OR / NOT / subquery atoms) is left entirely to the post-join residual — re-rendering a NOT
+    /// from its operand's text would risk a precedence change.</summary>
+    internal static void CollectAndLeaves(SqlPredicate predicate, List<string> into)
+    {
+        switch (predicate)
+        {
+            case AndPredicate a:
+                CollectAndLeaves(a.Left, into);
+                CollectAndLeaves(a.Right, into);
+                break;
+            case ExprPredicate e:
+                into.Add(e.Expression.Text);
+                break;
+        }
+    }
+
+    /// <summary>True when a RIGHT / FULL step anywhere in the chain can synthesize a composite whose
+    /// DRIVING row is <see langword="null"/>. Comma-FROM entries are always INNER
+    /// (<see cref="JoinStep"/> is built as Inner for them), so only the explicit JOINs matter.</summary>
+    internal static bool ChainPreservesDriving(SelectStatement sel)
+    {
+        foreach (var j in sel.Joins)
+            if (j.JoinType is JoinType.Right or JoinType.Full)
+                return false;
+        return true;
+    }
+
+    /// <summary>Mirrors <see cref="CompositeRowContext.GetField"/> for the driving source: a dotted
+    /// reference must carry the DRIVING alias plus a column that source owns; a bare reference must be
+    /// owned by the driving source ALONE (a name owned by two sources is ambiguous and is REJECTED at
+    /// evaluation time — never resolve it silently here, or a pushdown would succeed where the real
+    /// evaluation would have thrown).</summary>
+    internal static bool ResolvesToDriving(string reference, JoinSource[] src)
+    {
+        var drive = src[0];
+        int dot = reference.IndexOf('.');
+        if (dot >= 0)
+        {
+            string alias = reference[..dot];
+            string field = reference[(dot + 1)..];
+            return string.Equals(alias, drive.Alias, StringComparison.OrdinalIgnoreCase)
+                && drive.ColNames.Contains(field);
+        }
+
+        if (!drive.ColNames.Contains(reference)) return false;
+        for (int i = 1; i < src.Length; i++)
+            if (src[i].ColNames.Contains(reference))
+                return false;                       // ambiguous bare name → reject
+        return true;
+    }
+
+    /// <summary>True when the fragment reads at least one field, every field it reads resolves to the
+    /// DRIVING source, and it calls no function from <see cref="IsUnpushableFunction"/>. A fragment
+    /// without any field reference (<c>.T.</c>, <c>RAND() &lt; 0.5</c>, a bare memvar) is never pushed:
+    /// it is either useless to push or would be evaluated twice in two different contexts.</summary>
+    private static bool IsDrivingOnly(string text, JoinSource[] src)
+    {
+        VfpExpression expr;
+        try { expr = VfpExpression.Parse(text); }
+        catch { return false; }      // unparseable here ⇒ let the post-join path report it
+
+        if (expr.ContainsFunction(static (name, _) => IsUnpushableFunction(name)))
+            return false;
+
+        var references = expr.ReferencedFields();
+        if (references.Count == 0) return false;
+        foreach (var reference in references)
+            if (!ResolvesToDriving(reference, src))
+                return false;
+        return true;
+    }
+
+    /// <summary>Functions whose result depends on something other than the driving row's field values,
+    /// so evaluating them once against the driving table and again over the composites can disagree:
+    /// the ROW CONTEXT (RECNO / RECCOUNT / DELETED — RowAdapter reports the real recno/flag,
+    /// CompositeRowContext reports 0 / 0 / false), work-area or session STATE (EOF / BOF / FOUND / SEEK /
+    /// ALIAS / SELECT / USED / EVALUATE / TYPE / SYS, which a microVFP host may answer), or a fresh value
+    /// per call (RAND / SECONDS / DATETIME / TIME / DATE).</summary>
+    private static bool IsUnpushableFunction(string name) => name is
+        "RECNO" or "RECCOUNT" or "DELETED" or
+        "EOF" or "BOF" or "FOUND" or "SEEK" or "ALIAS" or "SELECT" or "USED" or
+        "EVALUATE" or "TYPE" or "SYS" or
+        "RAND" or "SECONDS" or "DATETIME" or "TIME" or "DATE";
+
+    /// <summary>The WHERE conjuncts that read ONLY the driving source and are therefore safe to
+    /// evaluate against it before the join chain runs. Empty when there is no WHERE.</summary>
+    private static List<string> CollectPushdownFilters(SelectStatement sel, JoinSource[] src)
+    {
+        List<string> conjuncts;
+        if (sel.WherePredicate is not null)
+        {
+            conjuncts = new List<string>();
+            CollectAndLeaves(sel.WherePredicate, conjuncts);
+        }
+        else if (sel.Where is not null)
+        {
+            conjuncts = SplitTopLevelAnd(sel.Where.Text);
+        }
+        else
+        {
+            return new List<string>();
+        }
+
+        conjuncts.RemoveAll(t => !IsDrivingOnly(t, src));
+        return conjuncts;
+    }
+
+    /// <summary>Drops every <c>alias.</c> qualifier OUTSIDE string/bracket literals, so the
+    /// optimizer's residual row adapter (which resolves BARE field names only — see
+    /// QueryOptimizer.RowAdapter.GetField) can read the text. Every dotted reference in an accepted
+    /// conjunct is known to be <c>alias.field</c> with exactly this driving alias. Without this the
+    /// residual would look up a physical column literally named "alias.field", get null back
+    /// (DbfRecord's string indexer returns null for an unknown column, it does not throw) and silently
+    /// report zero matching rows.</summary>
+    internal static string StripDrivingQualifier(string text, string alias)
+    {
+        if (alias.Length == 0 || text.IndexOf(alias, StringComparison.OrdinalIgnoreCase) < 0)
+            return text;
+
+        var sb = new System.Text.StringBuilder(text.Length);
+        char quote = '\0';
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (quote != '\0')
+            {
+                sb.Append(c);
+                if (c == quote) quote = '\0';
+                continue;
+            }
+            if (c == '\'' || c == '"') { quote = c; sb.Append(c); continue; }
+            if (c == '[') { quote = ']'; sb.Append(c); continue; }
+
+            if (i + alias.Length + 1 <= text.Length
+                && text[i + alias.Length] == '.'
+                && (i == 0 || !IsWordChar(text[i - 1]))
+                && string.Compare(text, i, alias, 0, alias.Length,
+                        StringComparison.OrdinalIgnoreCase) == 0)
+            {
+                i += alias.Length;   // skip "alias."; the loop's i++ lands after the '.'
+                continue;
+            }
+            sb.Append(c);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Evaluates the pushed conjuncts against the driving source through the SAME
+    /// <see cref="VfpSession.FindRecords"/> machinery the single-table WHERE path uses (index
+    /// candidates + residual; SET DELETED honoured by ctx), returning the surviving records in recno
+    /// order — mapped through the source's ByRecno map exactly like <see cref="OpenSource"/> does, so
+    /// deleted rows survive SET DELETED OFF.</summary>
+    private List<DbfRecord> RestrictDriving(
+        JoinSource drive, IReadOnlyList<string> conjuncts, EvaluationContext ctx)
+    {
+        var filter = new System.Text.StringBuilder();
+        foreach (var c in conjuncts)
+        {
+            if (filter.Length > 0) filter.Append(" AND ");
+            filter.Append('(').Append(StripDrivingQualifier(c, drive.Alias)).Append(')');
+        }
+
+        return MapRecnos(
+            _session.FindRecords(drive.Table, drive.Cdx, filter.ToString(), ctx).RecordNumbers,
+            drive.ByRecno);
     }
 
     /// <summary>One nested-loop step: extend each current composite with the matching rows of the
@@ -1904,7 +2148,7 @@ internal sealed class SelectExecutor
     /// <summary>One resolved JOIN/FROM source: its alias, open table + structural CDX, column set,
     /// surviving rows (for the scan-fallback inner candidate set / driving rowset) and the scratch
     /// CDX handle to dispose when the executor owns the table.</summary>
-    private sealed class JoinSource
+    internal sealed class JoinSource
     {
         public string Alias { get; }
         public DbfTable Table { get; }
