@@ -291,6 +291,13 @@ public sealed partial class DbfWriter
             var tags = ReadExistingTagDefinitions();
             if (tags.Count == 0)
                 return;
+            // A tag under a collating sequence we cannot reproduce (a VFP-built GERMAN tag, ...) is un-derivable:
+            // invalidate like the row-at-a-time path instead of failing an append whose rows are already written.
+            if (tags.Any(t => !CdxIndexBuilder.CanReproduceCollation(_schema, t.Collation)))
+            {
+                InvalidateStructuralCdxForMaintenance();
+                return;
+            }
             var appendUniqueState = CaptureAppendUniqueState(tags, existingRecordCount);
             RebuildStructuralCdx(tags, includeDeleted: true, appendUniqueState: appendUniqueState);
         }

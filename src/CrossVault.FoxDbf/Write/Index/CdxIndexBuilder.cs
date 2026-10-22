@@ -359,6 +359,11 @@ internal static class CdxIndexBuilder
         }
     }
 
+    /// <summary>True when keys under <paramref name="collation"/> can be written for a table in
+    /// <paramref name="schema"/>'s code page (MACHINE, GENERAL, SPANISH); false for an unknown sequence.</summary>
+    internal static bool CanReproduceCollation(DbfTable schema, string? collation)
+        => VfpCollations.Resolve(collation, schema.Encoding.CodePage, out _) != CollationSupport.Unsupported;
+
     /// <summary>
     /// Build the <see cref="TagKeyComputer"/> for <paramref name="def"/> against <paramref name="schema"/>.
     /// The per-tag collation ALWAYS wins (it is baked into the tag header), but the KEY/FOR expressions

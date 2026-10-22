@@ -57,7 +57,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   join, RIGHT/FULL chains are never pushed, and only deterministic conjuncts that read a driving-table field
   are pushed.
 - BREAKING: `DbfWriter.CreateTag` / REINDEX with an unsupported collating sequence (anything but MACHINE, GENERAL and
-  SPANISH) throws `DbfWriteException` instead of silently building a MACHINE tag.
+  SPANISH), or a REINDEX of a CDX holding such a VFP-built tag, throws `DbfWriteException` and leaves the CDX
+  untouched instead of silently rebuilding the tag as MACHINE. A bulk append invalidates such a CDX.
 - New overloads `VfpCollations.ByName(name, codePage)` and `VfpCollations.FromSortSequence(name, codePage)`
   resolve the code-page-specific collation; `GeneralCollation.CodePage` reports it. The one-argument overloads
   stay CP1252 and now also resolve `SPANISH`. microVFP `SET COLLATE TO "SPANISH"` is accepted.
