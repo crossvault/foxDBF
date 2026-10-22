@@ -352,8 +352,12 @@ internal sealed class SelectExecutor
     {
         if (sel.WherePredicate is null && _outer is null)
         {
+            // The optimizer's residual resolves BARE field names only, so a qualifier naming THIS
+            // query's own source (alias.field / table.field) is dropped first — as the join pushdown
+            // does for its driving source. With no outer row bound, any other qualifier cannot be a
+            // correlated reference and is left untouched.
             string? filter = sel.Where?.Text;
-            if (string.IsNullOrWhiteSpace(filter)) filter = ".T.";
+            filter = string.IsNullOrWhiteSpace(filter) ? ".T." : StripDrivingQualifier(filter, alias);
             var qr = _session.FindRecords(table, null, filter, ctx);
             var hits = new HashSet<int>(qr.RecordNumbers);
             var rows = new List<Row>(hits.Count);
@@ -1117,7 +1121,9 @@ internal sealed class SelectExecutor
     /// conjunct is known to be <c>alias.field</c> with exactly this driving alias. Without this the
     /// residual would look up a physical column literally named "alias.field", get null back
     /// (DbfRecord's string indexer returns null for an unknown column, it does not throw) and silently
-    /// report zero matching rows.</summary>
+    /// report zero matching rows. A match preceded by '.' is never a qualifier: under a single-letter
+    /// alias T / F it is the inside of a <c>.T.</c> / <c>.F.</c> literal (likewise <c>.AND.</c> /
+    /// <c>.OR.</c> / <c>.NOT.</c>), and stripping it would leave an unparseable "." behind.</summary>
     internal static string StripDrivingQualifier(string text, string alias)
     {
         if (alias.Length == 0 || text.IndexOf(alias, StringComparison.OrdinalIgnoreCase) < 0)
@@ -1139,7 +1145,7 @@ internal sealed class SelectExecutor
 
             if (i + alias.Length + 1 <= text.Length
                 && text[i + alias.Length] == '.'
-                && (i == 0 || !IsWordChar(text[i - 1]))
+                && (i == 0 || (!IsWordChar(text[i - 1]) && text[i - 1] != '.'))
                 && string.Compare(text, i, alias, 0, alias.Length,
                         StringComparison.OrdinalIgnoreCase) == 0)
             {
