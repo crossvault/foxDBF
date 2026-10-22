@@ -307,6 +307,15 @@ public sealed class ExpressionCollationAndEdgeTests
     }
 
     [Fact]
+    public void QualifiedName_UnicodeIdentifier_ParsesAndResolves()
+    {
+        // FoxPro field names may contain Unicode letters: 'razónSocial' must lex as one
+        // identifier in both the first and the continuation position of the name part.
+        var row = new TestRow().Set("clientes.razónSocial", "ACME S.A.");
+        Assert.Equal("ACME S.A.", Eval("clientes.razónSocial", row).AsString);
+    }
+
+    [Fact]
     public void MemoryVarStylePrefix_Parses()
     {
         var row = new TestRow().Set("m.lname", "Smith");

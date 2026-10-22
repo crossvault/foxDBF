@@ -110,7 +110,7 @@ internal sealed class ExpressionLexer
                 tokens.Add(ReadNumber(s, ref i));
                 continue;
             }
-            if (char.IsAsciiLetter(c) || c == '_')
+            if (char.IsLetter(c) || c == '_')
             {
                 tokens.Add(ReadIdentifier(s, ref i));
                 continue;
@@ -182,18 +182,18 @@ internal sealed class ExpressionLexer
     private static Token ReadIdentifier(ReadOnlySpan<char> s, ref int i)
     {
         int start = i;
-        while (i < s.Length && (char.IsAsciiLetterOrDigit(s[i]) || s[i] == '_')) i++;
+        while (i < s.Length && (char.IsLetterOrDigit(s[i]) || s[i] == '_')) i++;
 
         // Qualified field references: alias.field (or m.var, customer.cust_id, a.b.c).
         // A '.' followed by a letter/underscore that is NOT a dotted operator/literal
         // (.AND. .OR. .NOT. .T. .F. .Y. .N. .NULL., each closed by a trailing '.')
         // is treated as a name qualifier and folded into a single identifier token.
         while (i < s.Length && s[i] == '.' && i + 1 < s.Length &&
-               (char.IsAsciiLetter(s[i + 1]) || s[i + 1] == '_') &&
+               (char.IsLetter(s[i + 1]) || s[i + 1] == '_') &&
                !IsDottedOperatorAhead(s, i))
         {
             i++; // the '.'
-            while (i < s.Length && (char.IsAsciiLetterOrDigit(s[i]) || s[i] == '_')) i++;
+            while (i < s.Length && (char.IsLetterOrDigit(s[i]) || s[i] == '_')) i++;
         }
 
         string text = s.Slice(start, i - start).ToString();

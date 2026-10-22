@@ -36,10 +36,10 @@ internal sealed class SelectExecutor
             RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
 
     private static readonly Regex SimpleFieldRx =
-        new(@"^[A-Za-z_][A-Za-z0-9_]*(\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
+        new(@"^[\p{L}_][\p{L}\p{Nd}_]*(\s*\.\s*[\p{L}_][\p{L}\p{Nd}_]*)*$", RegexOptions.Compiled);
 
     private static readonly Regex SimpleQualifiedRx =
-        new(@"^[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
+        new(@"^[\p{L}_][\p{L}\p{Nd}_]*\.[\p{L}_][\p{L}\p{Nd}_]*$", RegexOptions.Compiled);
 
     private static readonly Regex HavingCmpRx =
         new(@"^\s*(?<l>.+?)\s*(?<op><=|>=|<>|!=|==|=|<|>)\s*(?<r>.+?)\s*$", RegexOptions.Singleline);
@@ -501,7 +501,7 @@ internal sealed class SelectExecutor
     }
 
     private static readonly Regex QualifiedRefRx =
-        new(@"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*[A-Za-z_]", RegexOptions.Compiled);
+        new(@"([\p{L}_][\p{L}\p{Nd}_]*)\s*\.\s*[\p{L}_]", RegexOptions.Compiled);
 
     /// <summary>A subquery is CORRELATED when one of its fragments references an alias its own FROM/JOIN
     /// sources do not own (i.e. an outer-query source). Computed once per node.</summary>

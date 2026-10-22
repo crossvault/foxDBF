@@ -419,7 +419,7 @@ public sealed partial class DbfTable : IDisposable
             byte forcedByte = options.ForceVersion!.Value;
             var forcedVersion = DbfVersion.FromByte(forcedByte);
             var forcedHeader = rawHeader with { VersionByte = forcedByte, Version = forcedVersion };
-            var forcedColumns = ParseColumns(stream, forcedVersion, forcedHeader.HeaderLength, tolerantDescriptors: true);
+            var forcedColumns = ParseColumns(stream, forcedVersion, forcedHeader.HeaderLength, NameEncoding(rawHeader, options), tolerantDescriptors: true);
             if (columnTransform is not null)
                 forcedColumns = columnTransform(forcedColumns);
             return new DbfTable(stream, leaveOpen, forcedHeader, forcedColumns, options, dbfPath);
@@ -438,7 +438,7 @@ public sealed partial class DbfTable : IDisposable
                 $"Unsupported/unknown DBF version byte 0x{rawHeader.VersionByte:x2}; " +
                 $"use DbfTable.TryOpen for a non-throwing probe or DbfOptions.ForceVersion to force a layout (§A12).");
 
-        var columns = ParseColumns(stream, rawHeader.Version, rawHeader.HeaderLength);
+        var columns = ParseColumns(stream, rawHeader.Version, rawHeader.HeaderLength, NameEncoding(rawHeader, options));
         long requiredRecordLength = 1;
         foreach (var column in columns)
             requiredRecordLength += column.Length;
@@ -480,7 +480,7 @@ public sealed partial class DbfTable : IDisposable
         // 32/32 layout (VFP and dBase III both use it). Scan to the real 0x0D bounded
         // only by the file size, since the on-disk HeaderLength is unreliable here.
         var scanVersion = DbfVersion.FromByte(0x30); // 32-byte header, 32-byte descriptors
-        var (columns, terminator) = ParseColumnsScan(stream, scanVersion, fileSize, tolerantDescriptors: true);
+        var (columns, terminator) = ParseColumnsScan(stream, scanVersion, fileSize, NameEncoding(rawHeader, options), tolerantDescriptors: true);
 
         int recordLength = 1;
         foreach (var c in columns)
@@ -552,7 +552,8 @@ public sealed partial class DbfTable : IDisposable
     /// terminator via a non-destructive peek, and compute each column's offset as
     /// the prefix-sum of prior lengths.
     /// </summary>
-    private static IReadOnlyList<DbfColumn> ParseColumns(Stream stream, DbfVersion version, long headerLengthBound, bool tolerantDescriptors = false)
+    private static IReadOnlyList<DbfColumn> ParseColumns(Stream stream, DbfVersion version, long headerLengthBound,
+        System.Text.Encoding nameEncoding, bool tolerantDescriptors = false)
     {
         long descriptorBytesBeforeBacklink = headerLengthBound - version.HeaderSize - 263 - 1;
         bool hasCanonicalBacklinkGeometry = version.HasBacklink &&
@@ -573,7 +574,7 @@ public sealed partial class DbfTable : IDisposable
                     $"for declared HeaderLength={headerLengthBound}; use Recovery.Reconstruct to recover.");
         }
 
-        var scan = ParseColumnsScan(stream, version, headerLengthBound, tolerantDescriptors);
+        var scan = ParseColumnsScan(stream, version, headerLengthBound, nameEncoding, tolerantDescriptors);
         if (tolerantDescriptors)
             return scan.Columns;
 
@@ -600,7 +601,7 @@ public sealed partial class DbfTable : IDisposable
     /// throwing.
     /// </summary>
     private static (List<DbfColumn> Columns, long TerminatorOffset) ParseColumnsScan(
-        Stream stream, DbfVersion version, long headerLengthBound, bool tolerantDescriptors)
+        Stream stream, DbfVersion version, long headerLengthBound, System.Text.Encoding nameEncoding, bool tolerantDescriptors)
     {
         int headerSize = version.HeaderSize;
         int width = version.DescriptorWidth;
@@ -638,7 +639,7 @@ public sealed partial class DbfTable : IDisposable
             DbfColumn col;
             try
             {
-                col = ParseDescriptor(descriptor.AsSpan(0, width), version, runningOffset);
+                col = ParseDescriptor(descriptor.AsSpan(0, width), version, runningOffset, nameEncoding);
             }
             catch (Exception ex) when (tolerantDescriptors &&
                 ex is DbfColumnNameException or DbfColumnLengthException)
@@ -661,7 +662,7 @@ public sealed partial class DbfTable : IDisposable
     /// FoxBase 16B: name A11 (0–10), type @11, length @12, decimal forced 0.
     /// dBase 7 48B: name A32 (0–31), type @32, length @33, decimal @34.
     /// </summary>
-    private static DbfColumn ParseDescriptor(ReadOnlySpan<byte> d, DbfVersion version, int offset)
+    private static DbfColumn ParseDescriptor(ReadOnlySpan<byte> d, DbfVersion version, int offset, System.Text.Encoding nameEncoding)
     {
         int nameLen;
         int typeIndex;
@@ -690,7 +691,7 @@ public sealed partial class DbfTable : IDisposable
                 break;
         }
 
-        var name = CleanName(d[..nameLen]);
+        var name = CleanName(d[..nameLen], nameEncoding);
         char type = (char)d[typeIndex];
         int length = d[lengthIndex];
         int dec = decimalIndex >= 0 ? d[decimalIndex] : 0;
@@ -703,16 +704,23 @@ public sealed partial class DbfTable : IDisposable
     }
 
     /// <summary>
-    /// Clean a fixed-width name field: cut at the first NUL byte, decode as ASCII,
-    /// and trim surrounding spaces (plan §A4 — trim on NUL/space).
+    /// Clean a fixed-width name field: cut at the first NUL byte, decode with the table's
+    /// code page, and trim surrounding spaces (plan §A4 — trim on NUL/space). VFP stores a
+    /// field name such as <c>RAZÓNSOC</c> in the table's code page (0xD3 for 'Ó' in CP1252);
+    /// decoding it as ASCII would turn it into <c>RAZ?NSOC</c>, which no expression can name.
     /// </summary>
-    private static string CleanName(ReadOnlySpan<byte> nameField)
+    private static string CleanName(ReadOnlySpan<byte> nameField, System.Text.Encoding encoding)
     {
         int end = nameField.IndexOf((byte)0);
         if (end < 0) end = nameField.Length;
         var slice = nameField[..end];
-        return System.Text.Encoding.ASCII.GetString(slice).Trim();
+        return encoding.GetString(slice).Trim();
     }
+
+    /// <summary>The encoding field names are decoded with — the same §A7 selection the table uses
+    /// for its data (explicit override → header code page → default).</summary>
+    private static System.Text.Encoding NameEncoding(DbfHeader header, DbfOptions options)
+        => options.Encoding ?? Encodings.ResolveEncoding(header.CodePage, options.DefaultEncoding);
 
     /// <summary>
     /// Stream the data region (plan §A3): seek <see cref="DbfHeader.HeaderLength"/>,
