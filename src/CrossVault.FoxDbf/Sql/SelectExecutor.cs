@@ -530,7 +530,9 @@ internal sealed class SelectExecutor
         {
             if (!_uncorrelatedRows.TryGetValue(sub, out var cached))
             {
-                cached = new SelectExecutor(_session, null, _host).Run(sub).Rows.ToList();
+                // Under microVFP the host IS the interpreter's row: binding it as the outer row resolves a memvar
+                // inside the subquery exactly as the top-level query does (plain path: no host, no outer row).
+                cached = new SelectExecutor(_session, _host as IRowContext, _host).Run(sub).Rows.ToList();
                 _uncorrelatedRows[sub] = cached;
             }
             return cached;

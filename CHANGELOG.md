@@ -133,7 +133,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   because the index engine evaluates keys without the interpreter and would key every record `.NULL.` (VFP9
   builds such an index). Deviations: VFP9 also raises for an unknown function in a `SELECT` over an empty
   table (microVFP evaluates per row), and a function the interpreter answers inside a `SELECT` sees microVFP's
-  work areas, not the scanned row. The plain SQL / ADO.NET path is unchanged.
+  work areas, not the scanned row. A memory variable inside an uncorrelated subquery of an embedded `SELECT`
+  now resolves (it read as `.NULL.`, so `… IN (SELECT … WHERE id = lnX)` matched nothing). The plain SQL /
+  ADO.NET path is unchanged.
 - `AND` / `OR` short-circuit like VFP9 in every expression path (microVFP, SQL, filters, compiled
   delegates): a logical `.F.` left of `AND` or `.T.` left of `OR` decides the result and the right operand is
   not evaluated, so `.F. AND NoSuchFn()` is `.F.` and a UDF on the right is not called. Results are unchanged;

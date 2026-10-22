@@ -128,6 +128,16 @@ public sealed class MicroVfpHostedExpressionTests : IDisposable
         Assert.Equal(2m, Num("RECCOUNT('q')"));
     }
 
+    [Theory]
+    [InlineData("SELECT id FROM ct WHERE id IN (SELECT id FROM ct WHERE id = lnX) INTO CURSOR q")]
+    [InlineData("SELECT id FROM ct WHERE id IN (SELECT id FROM ct WHERE id = m.lnX) INTO CURSOR q")]
+    [InlineData("SELECT id FROM ct WHERE id = lnX INTO CURSOR q")]
+    public void Sql_MemvarInsideASubquery_StillResolves(string sql)
+    {
+        _i.Execute("lnX = 2\n" + sql);
+        Assert.Equal(1m, Num("RECCOUNT('q')"));
+    }
+
     [Fact]
     public void Sql_ShortCircuit_DoesNotReachTheUnknownFunction()
     {
