@@ -277,7 +277,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   VFP9 read e.g. an omitted nullable memo as `.NULL.` instead of `''`. Omitted columns now follow `SET NULL` as
   in VFP9: under `SET NULL OFF` (the default) they are written blank with the null bit clear; under
   `SET NULL ON` a NULL-able one is `.NULL.` and a NOT NULL one rejects the row with error 1581 "does not accept
-  null values" (AUTOINC columns and DBC fields with a DEFAULT excepted). `INSERT … FROM MEMVAR` treats a field
+  null values" (except an AUTOINC column, and a DBC field with a DEFAULT, which is written blank because this
+  path does not evaluate DBC defaults yet). `INSERT … FROM MEMVAR` treats a field
   without a memvar the same way, and the fields a short `INSERT … FROM ARRAY` row does not reach are always
   blank. microVFP's `SET NULL` applies. A `.NULL.` Varchar/Varbinary, and one an INSERT leaves blank, is now
   stored as VFP9 stores it (0x20 padding, length byte 0, varlen bit set) instead of zero bytes.
