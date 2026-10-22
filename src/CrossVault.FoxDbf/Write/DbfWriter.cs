@@ -931,7 +931,7 @@ public sealed partial class DbfWriter : IDisposable
     /// <summary>Locate the <c>.fpt</c> sidecar beside <paramref name="dbfPath"/> (case-insensitive).</summary>
     private static string? FindFpt(string dbfPath)
     {
-        string candidate = Path.ChangeExtension(dbfPath, ".fpt");
+        string candidate = SidecarFile.ChangeExtension(dbfPath, ".fpt");
         if (File.Exists(candidate))
             return candidate;
 

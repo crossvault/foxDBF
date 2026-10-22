@@ -179,7 +179,8 @@ public sealed partial class VfpInterpreter
     {
         string dir = Path.GetDirectoryName(Path.GetFullPath(tablePath)) ?? ".";
         string file = Path.HasExtension(name) ? name : name + defaultExt;
-        return Path.IsPathRooted(file) ? Path.GetFullPath(file) : Path.GetFullPath(Path.Combine(dir, file));
+        string full = Path.IsPathRooted(file) ? Path.GetFullPath(file) : Path.GetFullPath(Path.Combine(dir, file));
+        return SidecarFile.FindCaseInsensitive(full) ?? full;   // NAME.IDX written by VFP on a case-sensitive FS
     }
 
     /// <summary>The controlling-order identity a standalone <c>.idx</c> is addressed by — its file stem,
@@ -211,7 +212,7 @@ public sealed partial class VfpInterpreter
 
         bool structural = dt.OfCdx is null;
         string cdxPath = structural
-            ? Path.ChangeExtension(path, ".cdx")
+            ? SidecarFile.ChangeExtension(path, ".cdx")
             : ResolveSidecarPath(path, NameOf(dt.OfCdx!).Trim(), ".cdx");
         IReadOnlyCollection<string>? names = dt.All ? null : dt.Tags;
 
@@ -554,7 +555,7 @@ public sealed partial class VfpInterpreter
     {
         var set = CandidateTagsFor(candidateRegistrationPath ?? path);
         if (set is null) return null;
-        string cdx = Path.ChangeExtension(path, ".cdx");
+        string cdx = SidecarFile.ChangeExtension(path, ".cdx");
         if (!File.Exists(cdx)) return null;
         using var table = DbfTable.Open(path, new DbfOptions { LockMode = LockMode.Shared });
         using var cdxFile = CdxFile.Open(cdx, table);
@@ -597,7 +598,7 @@ public sealed partial class VfpInterpreter
         try
         {
             try { if (pre.DbfTemp is not null) File.Copy(pre.DbfTemp, pre.Path, overwrite: true); } catch { }
-            string cdx = Path.ChangeExtension(pre.Path, ".cdx");
+            string cdx = SidecarFile.ChangeExtension(pre.Path, ".cdx");
             if (pre.CdxTemp is not null) { try { File.Copy(pre.CdxTemp, cdx, overwrite: true); } catch { } }
             else { try { if (File.Exists(cdx)) File.Delete(cdx); } catch { } }
         }

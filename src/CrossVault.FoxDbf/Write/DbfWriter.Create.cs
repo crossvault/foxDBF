@@ -284,7 +284,7 @@ public sealed partial class DbfWriter
         string stem = Path.GetFileNameWithoutExtension(full) + "_" + Guid.NewGuid().ToString("N");
         string tmpDbf = Path.Combine(dir, stem + ".dbf.tmp");
         string tmpFpt = Path.Combine(dir, stem + ".fpt.tmp");
-        string fptPath = Path.ChangeExtension(full, ".fpt");
+        string fptPath = SidecarFile.ChangeExtension(full, ".fpt");
 
         string bakDbf = full + ".bak_" + Guid.NewGuid().ToString("N");
         string bakFpt = fptPath + ".bak_" + Guid.NewGuid().ToString("N");

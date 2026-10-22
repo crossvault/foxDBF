@@ -210,7 +210,7 @@ public sealed partial class DbfWriter
     }
 
     /// <summary>The structural <c>.cdx</c> path beside the table (same stem, <c>.cdx</c> extension).</summary>
-    private string StructuralCdxPath() => Path.ChangeExtension(_stream.Name, ".cdx");
+    private string StructuralCdxPath() => SidecarFile.ChangeExtension(_stream.Name, ".cdx");
 
     /// <summary>
     /// Resolve the on-disk structural <c>.cdx</c> path, honouring an existing case variant

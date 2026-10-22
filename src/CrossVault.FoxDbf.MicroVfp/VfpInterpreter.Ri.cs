@@ -203,8 +203,8 @@ public sealed partial class VfpInterpreter
         try
         {
             snap.DbfTemp = CopyToTempSnapshot(path);
-            snap.CdxTemp = CopyToTempSnapshot(Path.ChangeExtension(path, ".cdx"));
-            snap.FptTemp = CopyToTempSnapshot(Path.ChangeExtension(path, ".fpt"));
+            snap.CdxTemp = CopyToTempSnapshot(SidecarFile.ChangeExtension(path, ".cdx"));
+            snap.FptTemp = CopyToTempSnapshot(SidecarFile.ChangeExtension(path, ".fpt"));
         }
         catch
         {
@@ -245,8 +245,8 @@ public sealed partial class VfpInterpreter
         foreach (var r in reopen) Session.CloseArea(r.Area);
 
         try { if (snap.DbfTemp is not null) File.Copy(snap.DbfTemp, snap.Path, overwrite: true); } catch { }
-        string cdx = Path.ChangeExtension(snap.Path, ".cdx");
-        string fpt = Path.ChangeExtension(snap.Path, ".fpt");
+        string cdx = SidecarFile.ChangeExtension(snap.Path, ".cdx");
+        string fpt = SidecarFile.ChangeExtension(snap.Path, ".fpt");
         RestoreSnapshotSidecar(cdx, snap.CdxTemp);
         RestoreSnapshotSidecar(fpt, snap.FptTemp);
 

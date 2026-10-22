@@ -985,7 +985,7 @@ public sealed partial class DbfTable : IDisposable
     private Index.CdxFile? OpenStructuralCdx()
     {
         if (_dbfPath is null) return null;
-        string cdxPath = System.IO.Path.ChangeExtension(_dbfPath, ".cdx");
+        string cdxPath = SidecarFile.ChangeExtension(_dbfPath, ".cdx");
         return System.IO.File.Exists(cdxPath) ? Index.CdxFile.Open(cdxPath, this, _readBackend, _driveKind) : null;
     }
 

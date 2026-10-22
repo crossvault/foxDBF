@@ -157,25 +157,7 @@ public abstract class MemoFile : IDisposable
     }
 
     /// <summary>Resolve <paramref name="path"/> ignoring case on the filename (§A6).</summary>
-    private static string? FindCaseInsensitive(string path)
-    {
-        if (File.Exists(path))
-            return path;
-
-        var dir = Path.GetDirectoryName(path);
-        if (string.IsNullOrEmpty(dir))
-            dir = ".";
-        if (!Directory.Exists(dir))
-            return null;
-
-        var name = Path.GetFileName(path);
-        foreach (var file in Directory.EnumerateFiles(dir))
-        {
-            if (string.Equals(Path.GetFileName(file), name, StringComparison.OrdinalIgnoreCase))
-                return file;
-        }
-        return null;
-    }
+    private static string? FindCaseInsensitive(string path) => SidecarFile.FindCaseInsensitive(path);
 }
 
 /// <summary>

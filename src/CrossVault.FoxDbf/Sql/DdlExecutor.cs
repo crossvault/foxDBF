@@ -178,8 +178,8 @@ internal sealed class DdlExecutor
 
         // Remove the .dbf and its companion side files (.fpt memo, .cdx structural index).
         Delete(path);
-        Delete(Path.ChangeExtension(path, ".fpt"));
-        Delete(Path.ChangeExtension(path, ".cdx"));
+        Delete(SidecarFile.ChangeExtension(path, ".fpt"));
+        Delete(SidecarFile.ChangeExtension(path, ".cdx"));
 
         return SqlResult.Dml(0);
     }

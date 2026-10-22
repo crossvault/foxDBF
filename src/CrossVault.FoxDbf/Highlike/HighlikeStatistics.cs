@@ -203,7 +203,7 @@ public static class HighlikeStatistics
     {
         string? path = table?.SourcePath;
         if (string.IsNullOrEmpty(path)) return null;
-        return ReadFileWriteUtc(Path.ChangeExtension(path, ".cdx"));
+        return ReadFileWriteUtc(SidecarFile.ChangeExtension(path, ".cdx"));
     }
 
     private static string? ReadFileWriteUtc(string? path)

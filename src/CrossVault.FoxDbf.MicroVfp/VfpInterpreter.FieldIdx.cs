@@ -418,7 +418,7 @@ public sealed partial class VfpInterpreter
 
         bool structural = ci.ToCdx is null;
         string cdxPath = structural
-            ? Path.ChangeExtension(path, ".cdx")
+            ? SidecarFile.ChangeExtension(path, ".cdx")
             : ResolveSidecarPath(path, NameOf(ci.ToCdx!).Trim(), ".cdx");
 
         var idxPaths = ci.All

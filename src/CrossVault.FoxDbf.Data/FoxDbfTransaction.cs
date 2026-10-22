@@ -210,9 +210,9 @@ public sealed class FoxDbfTransaction : DbTransaction
     private static IEnumerable<string> CompanionFiles(string dbfPath)
     {
         yield return dbfPath;
-        yield return Path.ChangeExtension(dbfPath, ".fpt"); // VFP memo
-        yield return Path.ChangeExtension(dbfPath, ".dbt"); // dBase memo
-        yield return Path.ChangeExtension(dbfPath, ".cdx"); // structural compound index
+        yield return SidecarFile.ChangeExtension(dbfPath, ".fpt"); // VFP memo
+        yield return SidecarFile.ChangeExtension(dbfPath, ".dbt"); // dBase memo
+        yield return SidecarFile.ChangeExtension(dbfPath, ".cdx"); // structural compound index
     }
 
     // ---- commit / rollback ----------------------------------------------------------------
@@ -413,7 +413,7 @@ public sealed class FoxDbfTransaction : DbTransaction
             long sig = 17;
             foreach (string ext in (ReadOnlySpan<string>)[".fpt", ".dbt", ".cdx"])
             {
-                var fi = new FileInfo(Path.ChangeExtension(dbfPath, ext));
+                var fi = new FileInfo(SidecarFile.ChangeExtension(dbfPath, ext));
                 if (fi.Exists)
                 {
                     sig = sig * 31 + 2;                       // present marker (distinct from absent).

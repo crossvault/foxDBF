@@ -628,7 +628,7 @@ public sealed class VfpSession : IDisposable
             : DbfTable.Open(readPath, new DbfOptions { LockMode = w.Exclusive ? Write.LockMode.Exclusive : Write.LockMode.Shared });
 
         CdxFile? cdx = null;
-        string cdxPath = Path.ChangeExtension(readPath, ".cdx");
+        string cdxPath = SidecarFile.ChangeExtension(readPath, ".cdx");
         if (File.Exists(cdxPath))
         {
             try { cdx = CdxFile.Open(cdxPath, dbf); }
@@ -712,7 +712,7 @@ public sealed class VfpSession : IDisposable
         var src = dbf.SourcePath;
         if (src is not null)
         {
-            string cdxPath = Path.ChangeExtension(src, ".cdx");
+            string cdxPath = SidecarFile.ChangeExtension(src, ".cdx");
             if (File.Exists(cdxPath))
             {
                 try { cdx = CdxFile.Open(cdxPath, dbf); }

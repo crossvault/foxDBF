@@ -8,6 +8,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- On a case-sensitive file system (Linux, containers) the sidecar files VFP writes as `NAME.CDX` / `NAME.FPT`
+  were only found for memos: the structural index was neither read nor maintained (it went stale for VFP),
+  and transactions, RI snapshots, DROP TABLE and microVFP index commands overlooked it. Every sidecar lookup
+  now resolves the file whatever the case of its name; a new sidecar still gets the lower-case default.
 - microVFP file commands wrote and read UTF-8. `COPY MEMO … TO` now writes the memo in the table's code page
   (a binary memo byte for byte), `COPY PROCEDURES TO` / `APPEND PROCEDURES FROM` round-trip the stored-procedure
   source byte for byte (an APPEND used to store mangled non-ASCII text in the DBC), and `LIST/DISPLAY MEMORY`,

@@ -351,7 +351,7 @@ public sealed partial class DbfWriter
     {
         try
         {
-            string candidate = Path.ChangeExtension(dbfPath, ".cdx");
+            string candidate = SidecarFile.ChangeExtension(dbfPath, ".cdx");
             if (File.Exists(candidate))
             {
                 File.Delete(candidate);

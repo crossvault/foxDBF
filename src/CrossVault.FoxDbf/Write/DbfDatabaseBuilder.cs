@@ -153,7 +153,7 @@ public static class DbfDatabaseBuilder
 
         // The .dbc's memo extension is .DCT (NOT .fpt): rename the sidecar DbfWriter just produced so
         // the reader (and a real VFP9 runtime) discovers it. The PROPERTY blobs already live inside it.
-        string fptPath = Path.ChangeExtension(full, ".fpt");
+        string fptPath = SidecarFile.ChangeExtension(full, ".fpt");
         string dctPath = Path.ChangeExtension(full, ".DCT");
         if (File.Exists(fptPath))
             File.Move(fptPath, dctPath, overwrite: true);

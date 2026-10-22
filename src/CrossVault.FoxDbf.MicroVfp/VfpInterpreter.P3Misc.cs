@@ -371,7 +371,7 @@ public sealed partial class VfpInterpreter
     private static void WriteStoredProcedureSource(string dbcPath, string source)
     {
         // The DBC's memo sidecar is the sibling .DCT (not a .fpt); point the writer at it explicitly.
-        string dct = Path.ChangeExtension(dbcPath, ".dct");
+        string dct = SidecarFile.ChangeExtension(dbcPath, ".dct");
         using var writer = DbfWriter.Open(dbcPath,
             new DbfOptions { LockMode = LockMode.Shared, MemoPath = File.Exists(dct) ? dct : null });
         var schema = writer.Schema;
