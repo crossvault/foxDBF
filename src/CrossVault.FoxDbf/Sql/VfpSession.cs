@@ -822,8 +822,8 @@ public sealed class VfpSession : IDisposable
     /// columns of <paramref name="readColumns"/> (the hidden <c>_NullFlags</c> system column, which the
     /// public column list does not carry, keeps its name — <see cref="DbfDatabase.ApplyLongNames"/>).
     /// Applied only when the read handle has the same geometry as the file the writer opens; otherwise (or
-    /// for a free table) the physical names stand.</summary>
-    private static Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? NamesOf(IReadOnlyList<DbfColumn> readColumns)
+    /// for a free table) the physical names stand. Also used by microVFP's cached writer.</summary>
+    internal static Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? NamesOf(IReadOnlyList<DbfColumn> readColumns)
     {
         var read = readColumns.Where(c => !c.IsSystem).ToList();
         if (read.Count == 0) return null;

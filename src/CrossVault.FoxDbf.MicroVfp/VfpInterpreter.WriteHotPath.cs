@@ -65,7 +65,7 @@ public sealed partial class VfpInterpreter
             return new WriterLease(GetOrOpenCachedWriter(path), dispose: false);
         // ADO.NET COW transaction: the Data layer owns the private-copy file lifecycle — never straddle it
         // with a persistent handle.
-        return new WriterLease(DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared }), dispose: true);
+        return new WriterLease(OpenWriter(path), dispose: true);
     }
 
     private readonly struct WriterLease : IDisposable
@@ -80,9 +80,36 @@ public sealed partial class VfpInterpreter
     {
         string key = Path.GetFullPath(path);
         if (_cachedWriters.TryGetValue(key, out var w)) return w;
-        var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared });
+        var writer = OpenWriter(path);
         _cachedWriters[key] = writer;
         return writer;
+    }
+
+    /// <summary>A Shared writer on <paramref name="path"/> that presents the column names this session READS
+    /// the table under (<see cref="ReadColumnsFor"/>; a DBC member: its long field names), like the SQL DML
+    /// writer (<see cref="VfpSession.OpenWritableTarget"/>). VFP9 stores the structural <c>.cdx</c> tag KEY
+    /// text with the long names (<c>CUSTOMER_NAME</c>); with the 10-char physical names the writer finds such
+    /// a tag un-derivable and deletes the <c>.cdx</c>, and the INSERT fast path cannot map a long column name.
+    /// Writes stay positional.</summary>
+    private DbfWriter OpenWriter(string path)
+        => DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared }, VfpSession.NamesOf(ReadColumnsFor(path)));
+
+    /// <summary>The columns <paramref name="path"/> is read under: those of a work area open on the file, else
+    /// those of the open database's member stored there; empty (physical names) for a free table.</summary>
+    private IReadOnlyList<DbfColumn> ReadColumnsFor(string path)
+    {
+        foreach (var a in Session.OpenAreas)
+            if (SamePath(a.Table.SourcePath, path)) return a.Table.Columns;
+        if (Session.Database is { } db)
+        {
+            foreach (var name in db.TableNames)
+            {
+                if (!SamePath(db.GetTablePath(name), path)) continue;
+                try { using var t = db.OpenTable(name); return t.Columns; }
+                catch { break; }
+            }
+        }
+        return Array.Empty<DbfColumn>();
     }
 
     // ── Batch 4: DEFERRED direct-append read-view refresh ─────────────────────────────────────────────

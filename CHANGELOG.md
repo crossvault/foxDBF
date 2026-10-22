@@ -209,8 +209,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   unqualified name (1806); it used to read `.NULL.` and match nothing or write `.NULL.`. A bare `NULL`
   (`SET field = NULL`) stays the null literal.
 - `UPDATE`, `DELETE` and `INSERT` on a DBC table no longer accept the truncated 10-character physical name of
-  a longer field (`customer_n` for `customer_name`): it is error 1806, as in VFP9. It used to be the only name
-  these statements knew (see Fixed); use the long name.
+  a longer field (`customer_n` for `customer_name`): it is error 1806 in `UPDATE` / `DELETE` and error 12 in the
+  `INSERT` column list, as in VFP9. It used to be the only name these statements knew (see Fixed); use the long
+  name.
 - A qualifier naming another open work area, or the table name under a local alias
   (`SELECT … FROM person p WHERE person.id = 3`), reads that work area's current record in microVFP, a
   constant for the whole query, as in VFP9. The pure SQL `VfpSession` keeps no record pointer and now raises
@@ -227,6 +228,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   long name in WHERE matched no rows). The structural `.cdx` of such a table is now maintained by these
   statements: VFP9 stores the tag KEY with the long names (`CUSTOMER_NAME`), which the write path could not
   resolve, so an `UPDATE` or `INSERT` deleted the `.cdx` and VFP had to rebuild it.
+- microVFP `REPLACE` (also `GATHER`), `INSERT … VALUES` and `APPEND FROM` on a DBC table write through its
+  long field names. The structural `.cdx` is no longer deleted by these writes (its tag KEY names the long
+  fields), an `INSERT` naming the long fields no longer loses the row silently, and `APPEND FROM` matches the
+  source fields by their full names as VFP9 does (a free table's truncated `customer_n` no longer fills
+  `customer_name`).
 
 ## [0.10.0] - 2026-10-22
 

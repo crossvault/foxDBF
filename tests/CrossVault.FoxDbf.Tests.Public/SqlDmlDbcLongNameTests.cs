@@ -113,6 +113,18 @@ public sealed class SqlDmlDbcLongNameTests : IDisposable
     }
 
     [Fact]
+    public void InsertColumnList_PhysicalNameOfALongField_IsError12()
+    {
+        // VFP9 treats an unknown INSERT column as an undefined variable (error 12), not 1806
+        // (pinned by the internal MicroVfpDbcLongNamesVfp9OracleTests).
+        using var s = Open();
+        var ex = Assert.Throws<FoxDbfSqlException>(() =>
+            s.Execute("INSERT INTO customer_accounts (account_number, customer_n) VALUES (9, 'Short')"));
+        Assert.Equal(12, ex.VfpErrorNumber);
+        Assert.Equal("Alpha|Beta|Gamma", Rows(s, "SELECT customer_name FROM customer_accounts ORDER BY 1"));
+    }
+
+    [Fact]
     public void OpenWorkAreaUnderAlias_KeepsItsLongNamesAcrossTheWrite()
     {
         using var s = Open();
