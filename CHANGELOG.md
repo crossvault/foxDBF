@@ -248,8 +248,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   no rows; so did `COUNT(*) AS n … HAVING n > 1`). HAVING now sees the select aliases, aggregate aliases
   included; a source field of the same name wins. A compound HAVING (`… HAVING COUNT(*) > 1 AND k > 0`, `OR`)
   is evaluated instead of throwing `NotSupportedException`, and aggregates inside a function
-  (`HAVING BETWEEN(COUNT(*), 1, 2)`) are computed per group. A HAVING in a query without GROUP BY or
-  aggregates (`SELECT id AS k FROM person HAVING k > 4`) was ignored; it now filters the rows, as in VFP9.
+  (`HAVING BETWEEN(SUM(amount), 60, 80)`) are computed per group. A HAVING in a query without GROUP BY or
+  aggregates (`SELECT id AS k FROM person HAVING k > 4`) was ignored; it now filters the rows, as in VFP9,
+  and an aggregate in such a HAVING (`SELECT id FROM person HAVING COUNT(*) > 1`) raises VFP error 1807.
 
 ### Changed
 

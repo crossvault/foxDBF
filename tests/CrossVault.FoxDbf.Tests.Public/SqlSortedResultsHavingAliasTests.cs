@@ -102,6 +102,7 @@ public sealed class SqlSortedResultsHavingAliasTests : IDisposable
     [InlineData("SELECT ca.region AS r, SUM(ao.balance) AS s" + Join + " GROUP BY 1 HAVING s > 100", "N:450 S:200")]
     [InlineData("SELECT name AS nm, COUNT(*) AS n FROM person GROUP BY name HAVING nm > 'N3'", "N4:1 N5:1 N6:1")]
     [InlineData("SELECT id % 3 AS k, COUNT(*) AS n FROM person GROUP BY 1 HAVING BETWEEN(k, 1, 2)", "1:2 2:2")]
+    [InlineData("SELECT id % 3 AS k, SUM(amount) FROM person GROUP BY 1 HAVING BETWEEN(SUM(amount), 60, 80)", "2:70")]
     [InlineData("SELECT COUNT(*) AS n FROM person WHERE id > 99 HAVING n = 0", "0")]
     [InlineData("SELECT MAX(id) AS m FROM person WHERE id > 99 HAVING ISNULL(m)", ".NULL.")]
     [InlineData("SELECT id AS k FROM person HAVING k > 4", "5 6")]
@@ -109,6 +110,13 @@ public sealed class SqlSortedResultsHavingAliasTests : IDisposable
     [InlineData("SELECT id AS k FROM person WHERE id > 1 HAVING k < 4", "2 3")]
     public void Having_SeesSelectAliases_AsVfp9(string sql, string expected)
         => Assert.Equal(expected, Format(_s.Execute(sql)!));
+
+    [Fact]
+    public void Having_WithAggregate_ButNoGroupBy_Raises1807()
+    {
+        var ex = Assert.Throws<FoxDbfSqlException>(() => _s.Execute("SELECT id FROM person HAVING COUNT(*) > 1"));
+        Assert.Equal(1807, ex.VfpErrorNumber);
+    }
 
     [Theory]
     [InlineData("SELECT COUNT(*), MAX(n) FROM tags GROUP BY w", "1:2 1:3 1:4 2:6 1:.NULL. 1:5")]

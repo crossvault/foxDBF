@@ -1497,6 +1497,11 @@ internal sealed class SelectExecutor
     {
         if (!aggregate && sel.Having is { } having)
         {
+            // An aggregate in the HAVING of a query whose columns are neither grouped nor aggregated
+            // (SELECT id FROM person HAVING COUNT(*) > 1) is VFP9 error 1807.
+            if (ContainsAggregate(having))
+                throw new FoxDbfSqlException(
+                    "HAVING uses an aggregate but the query has no GROUP BY.") { VfpErrorNumber = 1807 };
             var aliases = AliasColumns(scope);
             pairs = pairs.FindAll(p =>
             {
