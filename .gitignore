@@ -1,0 +1,34 @@
+# --- .NET build output ---
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.nupkg
+*.snupkg
+
+# --- IDE / per-user files ---
+.vs/
+.idea/
+*.user
+*.suo
+*.rsuser
+
+# --- Test run output ---
+**/TestResults/
+*.trx
+*.dmp
+
+# --- Visual FoxPro compile / scratch output (fixtures are .dbf/.cdx/.fpt/.dbc/.dct/.dcx/.prg) ---
+*.FXP
+*.fxp
+*.ERR
+*.err
+*.BAK
+*.bak
+*.TBK
+*.tbk
+
+# --- OS cruft ---
+Thumbs.db
+.DS_Store
