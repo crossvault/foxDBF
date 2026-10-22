@@ -4,10 +4,10 @@ using System.Buffers;
 namespace CrossVault.FoxDbf.Expressions;
 
 /// <summary>
-/// VFP's table-driven collations: <c>GENERAL</c> (the Western sort sequence, code pages 1252 and 850) and
-/// <c>SPANISH</c> (1252 and 850). The two-pass key is built from a per-code-page weight table
-/// (<see cref="GeneralWeights1252"/> and the CP850 table, ported from CodeBase <c>COLL4ARR.C</c>, plus their
-/// VFP9-verified variants):
+/// VFP's table-driven collations: <c>GENERAL</c> (code pages 1252, 850, 437 and 1250) and <c>SPANISH</c> (1252
+/// and 850). The two-pass key is built from a per-code-page weight table (<see cref="GeneralWeights1252"/> and the
+/// CP850 / CP437 tables, ported from CodeBase <c>COLL4ARR.C</c>, the CP1250 table derived from VFP9's keys, plus
+/// their VFP9-verified variants):
 /// </summary>
 /// <remarks>
 /// <list type="number">
@@ -38,6 +38,12 @@ public sealed class GeneralCollation : IVfpCollation
     /// <summary>GENERAL over CP850 table bytes.</summary>
     internal static readonly GeneralCollation Cp850 = new("GENERAL", CollationTable.General850);
 
+    /// <summary>GENERAL over CP437 table bytes.</summary>
+    internal static readonly GeneralCollation Cp437 = new("GENERAL", CollationTable.General437);
+
+    /// <summary>GENERAL over CP1250 table bytes.</summary>
+    internal static readonly GeneralCollation Cp1250 = new("GENERAL", CollationTable.General1250);
+
     /// <summary>SPANISH over CP1252 table bytes.</summary>
     internal static readonly GeneralCollation Spanish1252 = new("SPANISH", CollationTable.Spanish1252);
 
@@ -56,7 +62,7 @@ public sealed class GeneralCollation : IVfpCollation
     /// <inheritdoc/>
     public string Name => _name;
 
-    /// <summary>The code page whose bytes this collation's weight table is indexed by (1252 or 850).</summary>
+    /// <summary>The code page whose bytes this collation's weight table is indexed by (1252, 850, 437 or 1250).</summary>
     public int CodePage => _table.CodePage;
 
     /// <summary>

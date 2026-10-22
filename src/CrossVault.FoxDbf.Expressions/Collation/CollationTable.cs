@@ -10,7 +10,8 @@ namespace CrossVault.FoxDbf.Expressions;
 /// <remarks>
 /// Every table below reproduces VFP9's stored CDX keys byte-for-byte. Probe 2026-10-22: VFP9 indexed all 255
 /// non-zero bytes (as <c>X+'a'</c> and <c>X+'á'</c>) and 600 random strings per table; GENERAL 1252/850 and
-/// SPANISH 1252/850 matched with 0 mismatches over 1142 keys each (pinned by <c>CollationCodePageVfp9OracleTests</c>).
+/// SPANISH 1252/850 matched with 0 mismatches over 1142 keys each, GENERAL 437/1250 additionally over all 65 025
+/// byte pairs and 18 472 letter triples (pinned by <c>CollationCodePageVfp9OracleTests</c>).
 /// </remarks>
 internal sealed class CollationTable
 {
@@ -60,15 +61,19 @@ internal sealed class CollationTable
         return map;
     });
 
-    private static readonly Lazy<byte[]> Map850 = new(() =>
+    private static readonly Lazy<byte[]> Map850 = new(() => HighCharMap(GeneralWeights850.HighChars));
+    private static readonly Lazy<byte[]> Map437 = new(() => HighCharMap(GeneralWeights437.HighChars));
+    private static readonly Lazy<byte[]> Map1250 = new(() => HighCharMap(GeneralWeights1250.HighChars));
+
+    /// <summary>char → byte for an ASCII-based code page given its 128 high characters; anything else → '?'.</summary>
+    private static byte[] HighCharMap(char[] high)
     {
         var map = new byte[0x10000];
         map.AsSpan().Fill((byte)'?');
         for (int c = 0; c < 0x80; c++) map[c] = (byte)c;
-        var high = GeneralWeights850.HighChars;
         for (int i = 0; i < high.Length; i++) map[high[i]] = (byte)(0x80 + i);
         return map;
-    });
+    }
 
     private static readonly (byte, byte, byte)[] NoContractions = Array.Empty<(byte, byte, byte)>();
 
@@ -81,6 +86,14 @@ internal sealed class CollationTable
 
     /// <summary>GENERAL, CP850 — <see cref="GeneralWeights850"/> plus VFP9's <c>þ</c>/<c>Þ</c> → <c>TH</c>.</summary>
     public static CollationTable General850 { get; } = BuildGeneral850();
+
+    /// <summary>GENERAL, CP437 — the verbatim <see cref="GeneralWeights437"/> table (COLL4ARR, 0 deviations).</summary>
+    public static CollationTable General437 { get; } = new(437, GeneralWeights437.Head, GeneralWeights437.Tail,
+        GeneralWeights1252.Expansions, expansionTails: true, NoContractions, Map437.Value);
+
+    /// <summary>GENERAL, CP1250 — <see cref="GeneralWeights1250"/>, derived from VFP9's own keys.</summary>
+    public static CollationTable General1250 { get; } = new(1250, GeneralWeights1250.Head, GeneralWeights1250.Tail,
+        GeneralWeights1250.Expansions, expansionTails: true, NoContractions, Map1250.Value);
 
     /// <summary>
     /// SPANISH, CP1252: VFP9 uses the CP1252 GENERAL weights with <c>ñ</c>/<c>Ñ</c> as their own letter (head 113,

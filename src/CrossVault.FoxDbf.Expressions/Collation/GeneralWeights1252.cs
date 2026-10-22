@@ -18,8 +18,9 @@ namespace CrossVault.FoxDbf.Expressions;
 /// <c>NO4TAIL_BYTES</c> sentinel) means the character contributes no diacritic byte.
 /// </para>
 /// <para>
-/// COLL4ARR.C carries the same head/tail format for code pages 437, 850 and 1250. 850 is ported as
-/// <see cref="GeneralWeights850"/>; the others are addable as sibling tables (<see cref="CollationTable"/>).
+/// COLL4ARR.C carries the same head/tail format for code pages 437 and 850, ported as <see cref="GeneralWeights437"/>
+/// and <see cref="GeneralWeights850"/>; its 1250 array is a one-byte Croatian sequence, so the CP1250 GENERAL table
+/// (<see cref="GeneralWeights1250"/>) is derived from VFP9's keys. All are run by <see cref="CollationTable"/>.
 /// </para>
 /// <para>
 /// The <see cref="Head"/>/<see cref="Tail"/> values below are the verbatim

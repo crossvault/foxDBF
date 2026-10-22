@@ -8,9 +8,10 @@ namespace CrossVault.FoxDbf.Expressions;
 /// </summary>
 /// <remarks>
 /// VFP9 weights a key by its byte in the table code page, so GENERAL and SPANISH are per-code-page tables.
-/// Byte-exact with VFP9: MACHINE (any code page), GENERAL and SPANISH on code pages <b>1252</b> and <b>850</b>.
-/// GENERAL / SPANISH on any other code page fall back to the CP1252 table (right for ASCII, approximate
-/// beyond); any other sequence (GERMAN, DUTCH, ...) is unsupported and falls back to MACHINE.
+/// Byte-exact with VFP9: MACHINE (any code page), GENERAL on code pages <b>1252</b>, <b>850</b>, <b>437</b> and
+/// <b>1250</b>, SPANISH on <b>1252</b> and <b>850</b>. GENERAL / SPANISH on any other code page fall back to the
+/// CP1252 table (right for ASCII, approximate beyond); any other sequence (GERMAN, DUTCH, ...) is unsupported and
+/// falls back to MACHINE.
 /// </remarks>
 public static class VfpCollations
 {
@@ -27,8 +28,8 @@ public static class VfpCollations
 
     /// <summary>
     /// Resolves a collation by its VFP name (case-insensitive) for a table in <paramref name="codePage"/>
-    /// (e.g. <c>Encoding.CodePage</c> of the table: 1252, 850): MACHINE, GENERAL or SPANISH. GENERAL / SPANISH
-    /// on a code page without its own table use the CP1252 table; unknown or empty names fall back to MACHINE.
+    /// (e.g. <c>Encoding.CodePage</c> of the table: 1252, 850, 437, 1250): MACHINE, GENERAL or SPANISH. GENERAL /
+    /// SPANISH on a code page without its own table use the CP1252 table; unknown or empty names fall back to MACHINE.
     /// </summary>
     public static IVfpCollation ByName(string? name, int codePage)
     {
@@ -76,6 +77,12 @@ public static class VfpCollations
 
         switch (codePage)
         {
+            case 437 when general:
+                collation = GeneralCollation.Cp437;
+                return CollationSupport.Exact;
+            case 1250 when general:
+                collation = GeneralCollation.Cp1250;
+                return CollationSupport.Exact;
             case 850:
                 collation = general ? GeneralCollation.Cp850 : GeneralCollation.Spanish850;
                 return CollationSupport.Exact;

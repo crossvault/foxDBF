@@ -62,6 +62,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   MACHINE keys: an insert/update invalidates the structural CDX (as for an un-derivable KEY), `CdxTag.Seek`
   returns not-found, microVFP `SEEK` raises an error, and Rushmore does not narrow on it. Rushmore also narrows a
   GENERAL/SPANISH tag only when the context collation is the tag's own (code-page) collation.
+- GENERAL is also exact for CP437 and CP1250 tables. CP437 uses CodeBase's `cp437generalCollationArray`
+  (umlauts stay accented vowels, `ß` → `SS`, symbols and box drawing weigh 0x10). CP1250 uses VFP9's own Central
+  European order, read off VFP9-built keys because CodeBase has no GENERAL table for it: `a` weighs 0x6C, `ą ć ę
+  ł ń ó ś ź ż` are letters of their own, `á č ď ě ň ř š ť ů …` are base letter + accent. Both tables reproduce the
+  keys of a VFP9 probe over every byte, 600 random strings, all 65 025 byte pairs and 18 472 letter triples.
+  Before, both code pages used the CP1252 table (wrong beyond ASCII, so Rushmore did not narrow on them). Rebuild
+  GENERAL CDX files on CP437 and CP1250 tables written by an earlier version.
 
 ### Changed
 
