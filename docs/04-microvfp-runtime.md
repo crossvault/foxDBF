@@ -251,7 +251,6 @@ Every function below runs as real VFP semantics, not a stub — see
 | `ABS()`, `INT()`, `ROUND()`, `MOD()`, `MAX()`, `MIN()` | |
 | `IIF()`, `BETWEEN()`, `INLIST()` | |
 | `EMPTY()`, `ISNULL()`, `ISBLANK()` | emptiness / `.NULL.` / blank-field tests |
-| `BLANK()` | the blank value for a field's type |
 | `TYPE()` | returns a VFP type code (`C`, `N`, `L`, `D`, …) from an expression *string* |
 | `VARTYPE()` | returns the type code of a *value* (no re-evaluation) |
 | `EVALUATE()` / `EVAL()` | evaluates a text expression at runtime |
@@ -331,6 +330,7 @@ not a context-free default), and take precedence over any same-named generic fun
 | `FREAD()`, `FGETS()`, `FWRITE()`, `FPUTS()` | read/write bytes or a line |
 | `FSEEK()`, `FEOF()`, `FCHSIZE()`, `FFLUSH()`, `FERROR()` | position / EOF / truncate / flush / last error |
 | `FILETOSTR()`, `STRTOFILE()` | whole-file read / write in one call |
+| `FILE()` | does the file exist — trimmed, relative to the **session data directory**, case-insensitive; no `SET PATH` search (see deviations) |
 | `ADIR()` | fill an array with the **session data directory**'s file entries (name skeleton only — see deviations) |
 
 ## Deviations from VFP
@@ -377,7 +377,22 @@ differences below are deliberate, verified simplifications, not bugs to be worke
   screen (a `TO FILE` form must be modelled or it raises), `CLOSE ALTERNATE/DEBUGGER/FORMAT/MEMO/
   PRINTER/PROCEDURE`, and unrecognised `SET` settings (`SET TALK`, `SET COMPATIBLE`, …). The real
   stored-procedure corpus the project is tested against uses none of the raising forms.
-  Unknown *functions* are not covered yet: they still evaluate to `.NULL.`.
+- **A function call nobody implements raises an error** (since 0.11; it used to evaluate to `.NULL.`,
+  also whenever an argument was `.NULL.`). Like VFP9, which looks for a program file of that name, microVFP
+  raises error 1 "File 'name.prg' does not exist." with `Details` = `name.prg` — for `NoSuchFn(.NULL.)`,
+  through `EVALUATE()` and a macro, and for `x(1)` on a variable that is not an array. A method call on the
+  `CATCH TO` object raises 1734 "Property M is not found." (a property with a subscript, `oErr.Message(1)`,
+  is just the property), on another defined name 1924 "X is not an object.", on an unknown name 1923
+  "Object X is not found.". `AND`/`OR` short-circuit as in VFP9, so `.F. AND NoSuchFn()` stays `.F.`; `TYPE()`
+  of a failing call is `"U"`. Two forms VFP9 accepts are not modelled and therefore raise: 4-letter function
+  abbreviations (`SUBS()`, `RECC()`, `UPPE()`) and `CREATEOBJECT()`. Expressions microVFP hands to the SQL
+  executor or the index/filter machinery are evaluated without the interpreter, so an unknown function in an
+  embedded `SELECT`, in `INDEX ON` or in `SET FILTER TO` still yields `.NULL.` there (VFP9 raises error 1);
+  the same holds for the SQL / ADO.NET path outside microVFP. The real stored-procedure corpus calls no
+  unknown function.
+- **`FILE()` does not search `SET PATH`.** microVFP has no `SET PATH`; `FILE()` looks only at the given
+  path, relative names resolving against the session data directory. Its optional `nFlags` is accepted and
+  ignored.
 - **`CLOSE TABLES`/`CLOSE DATABASES`/`CLOSE ALL` close every table of the current data session** but
   leave the session's database container attached (the host owns it).
 - **The genuinely GUI-bound functions are stubs**, because a headless interpreter has no window,

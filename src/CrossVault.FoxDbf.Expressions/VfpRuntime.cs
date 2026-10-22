@@ -103,6 +103,11 @@ internal static class VfpRuntime
         }
     }
 
+    /// <summary>True when the LEFT operand alone decides an AND (a logical .F.) or an OR (a logical .T.), so the
+    /// right operand must not be evaluated. Only a genuine Logical decides — .NULL. or a non-logical does not.</summary>
+    internal static bool Decides(BinOp op, VfpValue l)
+        => l.Type == VfpType.Logical && l.AsLogical == (op == BinOp.Or);
+
     private static VfpValue And(VfpValue l, VfpValue r)
     {
         bool? a = l.IsNull ? null : l.AsLogical;
@@ -367,9 +372,10 @@ internal static class VfpRuntime
             }
         }
 
-        // Default .NULL. propagation for everything else.
+        // Default .NULL. propagation for everything else — but only for a name the engine knows: an unknown
+        // name with a .NULL. argument still reaches the host's unknown-function hook (see NullArgument).
         for (int i = 0; i < args.Length; i++)
-            if (args[i].IsNull) return VfpValue.Null;
+            if (args[i].IsNull) return NullArgument(name, args, row);
 
         switch (name)
         {
@@ -463,8 +469,8 @@ internal static class VfpRuntime
                 // frame, which the JIT allocates in full on entry even though a user-function call returns
                 // early at the host hook above — at its prior size is what preserves the MaxCallDepth
                 // recursion headroom (CallFunction sits on EVERY nested UDF call). Same rationale as the
-                // interpreter's TryInvokeFileIo split. Genuinely unknown names still fall through to .NULL.
-                return CallStringExtras(name, args);
+                // interpreter's TryInvokeFileIo split. Genuinely unknown names end in UnknownFunction.
+                return CallStringExtras(name, args, row);
         }
     }
 
@@ -473,14 +479,15 @@ internal static class VfpRuntime
     /// hot switch on purpose (see its <c>default</c> arm). On a single-byte code page (CP1252, our target)
     /// one char == one byte, so each C-variant is byte-identical to its base function (verified against the
     /// VFP9 runtime); they exist purely for VFP9 name compatibility (FLAGGED: real double-byte behaviour is
-    /// untested). Returns <c>.NULL.</c> for a genuinely unknown name (CallFunction's former default).</summary>
-    private static VfpValue CallStringExtras(string name, VfpValue[] args)
+    /// untested). A genuinely unknown name goes to <see cref="UnknownFunction"/>.</summary>
+    private static VfpValue CallStringExtras(string name, VfpValue[] args, IRowContext row)
     {
         switch (name)
         {
             case "LEFTC": return Left(args);
             case "RIGHTC": return Right(args);
             case "SUBSTRC": return Substr(args);
+            case "LENC": return VfpValue.Integer(Arg(args, 0).AsString.Length);
             case "STUFFC": return Stuff(args);
             case "CHRTRANC": return Chrtran(args);
             case "AT_C": return VfpValue.Integer(At(args, fromEnd: false));
@@ -505,10 +512,42 @@ internal static class VfpRuntime
             // COUNT, which is EXACT for a fixed-pitch font (VFP: TXTWIDTH(s,'Courier New',10) == LEN(s)) and a
             // FLAGGED approximation for the proportional desktop font (that value is GUI-/machine-bound).
             case "TXTWIDTH": return VfpValue.Integer(Arg(args, 0).AsString.Length);
-            // Unknown function: never throw at evaluation time.
-            default: return VfpValue.Null;
+            default: return UnknownFunction(name, args, row);
         }
     }
+
+    /// <summary>
+    /// Every name <see cref="CallFunction"/> and <see cref="CallStringExtras"/> dispatch on. Consulted ONLY when an
+    /// argument is <c>.NULL.</c> (the default propagation short-circuits before the switch), so an unknown name
+    /// with a <c>.NULL.</c> argument still reaches the host. Keep it in step with both switches — a test scans
+    /// their <c>case</c> labels against this set.
+    /// </summary>
+    internal static readonly System.Collections.Frozen.FrozenSet<string> EngineFunctionNames =
+        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[]
+        {
+            "ISNULL", "EMPTY", "IIF", "ICASE",
+            "UPPER", "LOWER", "ALLTRIM", "TRIM", "RTRIM", "LTRIM", "LEFT", "RIGHT", "SUBSTR", "STR", "STRZERO",
+            "PADL", "PADR", "PADC", "AT", "RAT", "STUFF", "CHRTRAN", "STRTRAN", "REPLICATE", "SPACE", "LEN",
+            "CHR", "ASC",
+            "VAL", "CTOD", "CTOT", "DTOC", "DTOS", "TTOC",
+            "DATE", "DATETIME", "DAY", "MONTH", "YEAR", "DOW", "CDOW", "CMONTH", "GOMONTH",
+            "INT", "ROUND", "ABS", "MOD", "MAX", "MIN",
+            "RECNO", "RECCOUNT", "DELETED", "BETWEEN", "INLIST",
+            "LEFTC", "RIGHTC", "SUBSTRC", "LENC", "STUFFC", "CHRTRANC", "AT_C", "RATC", "ATC", "ATCC", "ISLEADBYTE",
+            "LIKE", "LIKEC", "NORMALIZE", "TXTWIDTH",
+        }, StringComparer.Ordinal);
+
+    // Out of CallFunction's frame on purpose (MaxCallDepth headroom, see its default arm): the .NULL.-argument
+    // tail. A known name propagates .NULL.; an unknown one is reported like any other unknown call.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static VfpValue NullArgument(string name, VfpValue[] args, IRowContext row)
+        => EngineFunctionNames.Contains(name) ? VfpValue.Null : UnknownFunction(name, args, row);
+
+    /// <summary>A name neither the host nor the engine implements. A host (microVFP) decides — it raises VFP's
+    /// error 1; without one (the SQL / ADO.NET / index path) the call evaluates to <c>.NULL.</c> as before.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static VfpValue UnknownFunction(string name, VfpValue[] args, IRowContext row)
+        => row is IVfpFunctionHost host ? host.UnknownFunction(name, args) : VfpValue.Null;
 
     private static VfpValue Arg(VfpValue[] a, int i) => i < a.Length ? a[i] : VfpValue.Null;
     private static int IntArg(VfpValue[] a, int i) => i < a.Length ? (int)a[i].AsDouble : 0;

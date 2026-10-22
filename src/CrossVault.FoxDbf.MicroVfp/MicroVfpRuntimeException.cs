@@ -28,6 +28,10 @@ public sealed class MicroVfpRuntimeException : Exception, IVfpErrorCode
     /// <summary>The 1-based source line of <see cref="Statement"/>, or 0 when unknown.</summary>
     public int LineNo { get; init; }
 
+    /// <summary>VFP's error detail (<c>Exception.Details</c>, <c>AERROR()</c> column 3), e.g. the missing
+    /// <c>name.prg</c> of error 1 for an unknown function; <see langword="null"/> when VFP reports none.</summary>
+    public string? Details { get; init; }
+
     /// <summary>The <c>eUserExpression</c> of a user <c>THROW</c> (error 2071), or null for any other error.</summary>
     internal Expressions.VfpValue? UserValue { get; init; }
 

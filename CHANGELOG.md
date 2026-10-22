@@ -103,6 +103,25 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `ACTIVATE WINDOW`, `KEYBOARD`, `ON KEY`, `DECLARE … IN <dll>`, `DISPLAY`/`LIST` to the screen, …) stays a
   headless no-op; see "Deviations from VFP" in `docs/04-microvfp-runtime.md`. `MicroVfpRuntimeException`
   gains `Statement` and `LineNo` with the offending source; its `Message` stays VFP's exact text.
+- **BREAKING — microVFP raises an error for a function it does not implement.** A call of a name that is
+  neither a procedure, an array, a microVFP function nor an expression-engine built-in used to evaluate to
+  `.NULL.` (always when an argument was `.NULL.`), so for example `IF FILE(x)` never fired. It now raises
+  VFP9's catchable error 1 "File 'name.prg' does not exist." (`Details` = `name.prg`), also through
+  `EVALUATE()` and a macro; `EVALUATE()` now passes on any VFP runtime error raised while evaluating (text it
+  cannot parse still yields `.NULL.`). A method call on the `CATCH TO` object raises 1734 "Property M is not
+  found." (a property called with a subscript, `oErr.Message(1)`, is the property, as in VFP9), on a defined
+  non-object name 1924, on an unknown name 1923. Not modelled and therefore raising now: 4-letter function
+  abbreviations (`SUBS()`, `RECC()` — VFP accepts them) and `CREATEOBJECT()`. `TYPE()` of such a call is
+  `"U"`; `TYPE()` of a built-in call now reports its result type (`TYPE("FILE('x')")` is `"L"`; it was
+  `"U"`). Expressions evaluated without the microVFP host are unchanged — an unknown function there is still
+  `.NULL.`: the SQL / ADO.NET path, index keys, and inside microVFP embedded SQL, `INDEX ON` and
+  `SET FILTER`. `IVfpFunctionHost` gains `UnknownFunction(name, args)` with a default implementation that
+  returns `.NULL.`, so existing hosts keep their behaviour.
+- `AND` / `OR` short-circuit like VFP9 in every expression path (microVFP, SQL, filters, compiled
+  delegates): a logical `.F.` left of `AND` or `.T.` left of `OR` decides the result and the right operand is
+  not evaluated, so `.F. AND NoSuchFn()` is `.F.` and a UDF on the right is not called. Results are unchanged;
+  a `.NULL.` left operand still evaluates the right one. In referential-integrity code written as
+  `llRetVal = llRetVal .AND. riupdate(...)` the cascade no longer runs after an earlier one failed.
 - microVFP `CLOSE TABLES`, `CLOSE DATABASES` and `CLOSE ALL` close every table of the current data session
   (they did nothing); the session's database container stays attached.
 
@@ -124,6 +143,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Currency literals such as `$0` and `$12.50` in expressions. The TasTrade sample's credit-limit check
   (`IF lyRemainingCredit < $0`) used to evaluate to `.NULL.` and never fire.
 - microVFP `DECLARE name[n]` as the `DIMENSION` synonym.
+- microVFP `FILE(cFileName [, nFlags])` with VFP9 semantics: blanks are trimmed, a relative name resolves
+  against the session data directory, case does not matter (also on Linux); `""`, a directory, a name without
+  its extension and a wildcard skeleton are `.F.`; `.NULL.` or a non-character argument raises 11, no argument
+  1229. It does not search `SET PATH`, which microVFP does not model.
+- `LENC()` (the DBCS twin of `LEN()`, identical on single-byte code pages). The microVFP guide listed it
+  as implemented, but it evaluated to `.NULL.`; the guide also listed a `BLANK()` function, which VFP9 does
+  not have (it raises error 1 there, as it now does in microVFP).
+- `MicroVfpRuntimeException.Details` — VFP's error detail (`Exception.Details`, `AERROR()` column 3).
 
 ### Fixed
 

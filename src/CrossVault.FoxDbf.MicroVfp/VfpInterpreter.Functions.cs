@@ -60,7 +60,7 @@ public sealed partial class VfpInterpreter
             case "PCOUNT": case "PARAMETERS": r = VfpValue.Integer(CurrentCall.PassedCount); return true;
             case "PROGRAM": r = FnProgram(a); return true;
             case "TYPE": r = VfpValue.Character(TypeOf(a.Length > 0 ? a[0].AsString : string.Empty)); return true;
-            case "EVALUATE": case "EVAL": r = a.Length > 0 ? EvalText(a[0].AsString) : VfpValue.Null; return true;
+            case "EVALUATE": case "EVAL": r = a.Length > 0 ? EvaluateFn(a[0].AsString) : VfpValue.Null; return true;
             case "SET": r = FnSet(a); return true;
             case "RELATION": r = FnRelation(a); return true;
             case "TARGET": r = FnTarget(a); return true;
@@ -173,6 +173,7 @@ public sealed partial class VfpInterpreter
             case "FFLUSH": r = FnFFlush(a); return true;
             case "FCHSIZE": r = FnFChSize(a); return true;
             case "DBUSED": r = VfpValue.Logical(FnDbUsed(a)); return true;
+            case "FILE": r = VfpValue.Logical(FnFile(a)); return true;
             // STRTOFILE()/FILETOSTR() — high-level one-shot file write/read (no handle subsystem). Grouped
             // with the low-level file I/O; they live here so HostInvoke's hot switch stays small (stack depth).
             case "STRTOFILE": r = FnStrToFile(a); return true;
@@ -235,6 +236,27 @@ public sealed partial class VfpInterpreter
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             return VfpValue.Integer(0);   // VFP9 returns 0 on a write failure (verified) — NOT a -1 sentinel.
+        }
+    }
+
+    // FILE(cFileName [, nFlags]) → does the FILE exist (VFP9-verified): leading/trailing blanks are ignored; a
+    // relative name resolves against the data directory (SET DEFAULT); case does not matter (also on a
+    // case-sensitive file system); "", a directory, a name without its extension and a wildcard skeleton are .F.
+    // No argument raises 1229, a non-character argument (.NULL. included) raises 11. Deviation: microVFP has no
+    // SET PATH, so FILE() does not search one; nFlags is accepted and ignored.
+    private bool FnFile(VfpValue[] a)
+    {
+        if (a.Length < 1)
+            throw new MicroVfpRuntimeException("Too few arguments.", 1229);
+        if (a[0].Type != VfpType.Character)
+            throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
+        string name = a[0].AsString.Trim();
+        if (name.Length == 0 || name.IndexOfAny(['*', '?']) >= 0) return false;
+        if (Path.DirectorySeparatorChar != '\\') name = name.Replace('\\', Path.DirectorySeparatorChar);
+        try { return SidecarFile.FindCaseInsensitive(ResolveDataPath(name)) is not null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
         }
     }
 

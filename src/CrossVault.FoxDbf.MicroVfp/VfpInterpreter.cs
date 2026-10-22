@@ -292,12 +292,12 @@ public sealed partial class VfpInterpreter
     /// <c>?expr</c> command) over this interpreter's session + memory, returning the typed result. Field
     /// references resolve against the CURRENT work area's record; bare names also resolve to memvars /
     /// <c>#DEFINE</c>s; function calls dispatch to loaded stored procedures (UDFs) before the engine's
-    /// built-ins. A parse/eval failure yields <see cref="VfpValue.Null"/> (the same fail-soft contract as
-    /// <c>EVALUATE()</c>).</summary>
+    /// built-ins. Any parse/eval failure — also a VFP error such as error 1 for an unknown function — yields
+    /// <see cref="VfpValue.Null"/> (fail-soft; <see cref="TryEvalExpression"/> reports it).</summary>
     public VfpValue EvalExpression(string expression) => EvalText(expression ?? string.Empty);
 
     /// <summary>Like <see cref="EvalExpression"/> but REPORTS a parse/eval failure instead of the fail-soft
-    /// <c>EVALUATE()</c> Null. Returns <see langword="true"/> with the evaluated value, or <see langword="false"/>
+    /// Null. Returns <see langword="true"/> with the evaluated value, or <see langword="false"/>
     /// (value = <see cref="VfpValue.Null"/>) when parsing or evaluation threw. The enforced write-model uses
     /// this so a DBC RULE whose expression ERRORS (an unloaded UDF, a missing field reference) surfaces as a
     /// violation rather than silently passing — exactly as VFP9 raises the error.</summary>
@@ -458,7 +458,7 @@ public sealed partial class VfpInterpreter
         _errNo = no; _errMsg = msg; _errLine = line;
         Runtime.LastErrorNumber = no;
         Runtime.LastErrorMessage = msg;
-        Runtime.LastErrorDetail = null;
+        Runtime.LastErrorDetail = ex is MicroVfpRuntimeException { Details: { } d } ? d : null;
         Runtime.LastErrorArea = Session.CurrentArea;
         Runtime.LastErrorTrigger = 0;
         Runtime.LastErrorField = 0;
@@ -1324,19 +1324,13 @@ public sealed partial class VfpInterpreter
     {
         string e = expr.Trim();
         if (IsBareVariable(e) && !IsDefinedName(e)) return "U";
-        // An array-element reference `name(…)` / `name[…]` on an UNDEFINED array is "U" (the corpus uses
-        // TYPE('gaErrors(1)')<>"U" to test existence). A DEFINED array falls through to report the element's
-        // own type (TYPE('gaErrors[r,1]')<>"L" tests whether a row slot is still an unfilled .F.).
-        string lead = LeadingIdentOf(e);
-        if (lead.Length > 0 && lead.Length < e.Length)
-        {
-            char after = e[lead.Length..].TrimStart() is { Length: > 0 } rest ? rest[0] : '\0';
-            if ((after == '(' || after == '[') &&
-                Memory.FindArray(lead) is null && !_procs.ContainsKey(lead))
-                return "U";
-        }
+        // Any error makes the type "U". That covers an array-element reference `name(…)` / `name[…]` on an
+        // UNDEFINED array (the corpus tests existence with TYPE('gaErrors(1)')<>"U"): it is a call of an unknown
+        // function, which raises error 1. A DEFINED array reports the element's own type
+        // (TYPE('gaErrors[r,1]')<>"L" tests whether a row slot is still an unfilled .F.), a built-in its result
+        // type (TYPE("FILE('x')") is "L", VFP9-verified).
         VfpValue v;
-        try { v = EvalText(e); } catch { return "U"; }
+        try { v = EvalTextLoud(e); } catch { return "U"; }
         if (TryGetObject(v, out _)) return "O";
         return v.Type switch
         {
@@ -1436,25 +1430,26 @@ public sealed partial class VfpInterpreter
 
     private VfpValue EvalText(string text)
     {
-        // Normalise VFP array syntax (bracket subscripts → parens; ALEN/AERROR array-name → quoted name)
-        // so dynamically-evaluated strings (TYPE/EVAL/macro/DIMENSION dimension expressions) resolve arrays.
-        try
-        {
-            if (text.IndexOf('&') >= 0) text = ExpandMacrosInLine(text);
-            return ParseExpressionCached(MicroVfpExprRewrite.Normalize(text)).Evaluate(_row, _ctx);
-        }
+        try { return EvalTextLoud(text); }
         catch { return VfpValue.Null; }
     }
 
-    // The leading identifier of an expression (letters/digits/underscore after an optional leading letter),
-    // or "" when it does not start with one.
-    private static string LeadingIdentOf(string s)
+    /// <summary><see cref="EvalText"/> without its catch-all: errors propagate (TYPE(), EVALUATE()).</summary>
+    private VfpValue EvalTextLoud(string text)
     {
-        s = s.TrimStart();
-        if (s.Length == 0 || !(VfpIdentifier.IsStart(s[0]))) return string.Empty;
-        int j = 1;
-        while (j < s.Length && (VfpIdentifier.IsPart(s[j]))) j++;
-        return s.Substring(0, j);
+        // Normalise VFP array syntax (bracket subscripts → parens; ALEN/AERROR array-name → quoted name)
+        // so dynamically-evaluated strings (TYPE/EVAL/macro/DIMENSION dimension expressions) resolve arrays.
+        if (text.IndexOf('&') >= 0) text = ExpandMacrosInLine(text);
+        return ParseExpressionCached(MicroVfpExprRewrite.Normalize(text)).Evaluate(_row, _ctx);
+    }
+
+    /// <summary>EVALUATE(): a VFP runtime error raised while evaluating (error 1 for an unknown function, an
+    /// error inside a called UDF, …) propagates as in VFP9. Anything else — notably text the expression engine
+    /// cannot parse — still yields .NULL. (unchanged).</summary>
+    private VfpValue EvaluateFn(string text)
+    {
+        try { return EvalTextLoud(text); }
+        catch (Exception ex) when (ex is not IVfpErrorCode { VfpErrorNumber: not null }) { return VfpValue.Null; }
     }
 
     private static bool Truth(VfpValue v) => v.Type == VfpType.Logical && v.AsLogical;
@@ -1548,5 +1543,9 @@ public sealed partial class VfpInterpreter
 
         public bool TryInvoke(string upperName, VfpValue[] args, EvaluationContext ctx, out VfpValue result)
             => _it.HostInvoke(upperName, args, ctx, out result);
+
+        // Neither a procedure, an array, a host function nor an engine built-in: raise VFP's error (never .NULL.).
+        public VfpValue UnknownFunction(string upperName, VfpValue[] args)
+            => _it.UnknownFunction(upperName);
     }
 }

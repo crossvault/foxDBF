@@ -164,20 +164,44 @@ internal sealed class BinaryNode : AstNode
     private readonly AstNode _left, _right;
     public BinaryNode(BinOp op, AstNode left, AstNode right) { _op = op; _left = left; _right = right; }
 
+    // AND / OR short-circuit like VFP9: a logical .F. on the left of AND (.T. on the left of OR) decides the
+    // result and the right operand is NOT evaluated — no UDF call, no error from it (VFP9-verified:
+    // `.F. AND NoSuchFn()` is .F., `.F. AND 1` is .F.). A .NULL. left operand still evaluates the right one.
     public override VfpValue Eval(IRowContext row, EvaluationContext ctx)
-        => VfpRuntime.Binary(_op, _left.Eval(row, ctx), _right.Eval(row, ctx), ctx);
+    {
+        var l = _left.Eval(row, ctx);
+        if (_op is BinOp.And or BinOp.Or && VfpRuntime.Decides(_op, l)) return l;
+        return VfpRuntime.Binary(_op, l, _right.Eval(row, ctx), ctx);
+    }
 
     internal override VfpValue Eval(
         IRowContext row, EvaluationContext ctx, ExpressionFunctionResolver functionResolver)
-        => VfpRuntime.Binary(
-            _op, _left.Eval(row, ctx, functionResolver), _right.Eval(row, ctx, functionResolver), ctx);
+    {
+        var l = _left.Eval(row, ctx, functionResolver);
+        if (_op is BinOp.And or BinOp.Or && VfpRuntime.Decides(_op, l)) return l;
+        return VfpRuntime.Binary(_op, l, _right.Eval(row, ctx, functionResolver), ctx);
+    }
 
     internal override bool ContainsFunction(Func<string, int, bool> predicate)
         => _left.ContainsFunction(predicate) || _right.ContainsFunction(predicate);
 
     public override Expression Build(BuildContext b)
-        => Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.Binary), null,
-            Expression.Constant(_op), _left.Build(b), _right.Build(b), b.Ctx);
+    {
+        if (_op is not (BinOp.And or BinOp.Or))
+            return Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.Binary), null,
+                Expression.Constant(_op), _left.Build(b), _right.Build(b), b.Ctx);
+
+        // Same short-circuit as Eval: the left value is computed once into a local, the right operand only
+        // when the left one does not decide.
+        var l = Expression.Variable(typeof(VfpValue), "l");
+        return Expression.Block(typeof(VfpValue), new[] { l },
+            Expression.Assign(l, _left.Build(b)),
+            Expression.Condition(
+                Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.Decides), null, Expression.Constant(_op), l),
+                l,
+                Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.Binary), null,
+                    Expression.Constant(_op), l, _right.Build(b), b.Ctx)));
+    }
 
     public override VfpTypeInfo Infer(ISchema schema)
     {

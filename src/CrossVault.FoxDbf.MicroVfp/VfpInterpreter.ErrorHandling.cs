@@ -254,6 +254,39 @@ public sealed partial class VfpInterpreter
 
     private static bool IsUserThrown(Exception ex) => ex is MicroVfpRuntimeException { UserValue: not null };
 
+    // ─────────────────────────── unknown functions ───────────────────────────
+
+    /// <summary>
+    /// A call nobody implements (VFP9-verified). A plain name: VFP looks for a program file of that name ⇒ error 1
+    /// "File 'name.prg' does not exist." (lower-cased, never truncated; also with a .NULL. argument, through
+    /// EVALUATE() and a macro; an undefined <c>x(1)</c> reports 'x.prg'). A method call <c>obj.m()</c> on the
+    /// Exception object: a property ignores the subscript (<c>oErr.Message(1)</c> is the message), anything else
+    /// is 1734 "Property M is not found."; on a defined non-object name 1924 "X is not an object.", otherwise 1923
+    /// "Object X is not found.".
+    /// </summary>
+    internal VfpValue UnknownFunction(string upperName)
+    {
+        int dot = upperName.IndexOf('.');
+        if (dot < 0)
+        {
+            string prg = upperName.ToLowerInvariant() + ".prg";
+            throw new MicroVfpRuntimeException($"File '{prg}' does not exist.", 1) { Details = prg };
+        }
+        string head = upperName[..dot];
+        string member = upperName[(upperName.LastIndexOf('.') + 1)..];
+        if (Memory.IsDefined(head) && TryGetObject(Memory.Get(head), out var obj))
+        {
+            try { return obj.Get(member); }
+            catch (MicroVfpRuntimeException ex) when (ex.VfpErrorNumber == 1734)
+            {
+                throw new MicroVfpRuntimeException(ex.Message, 1734) { Details = member };
+            }
+        }
+        throw IsDefinedName(head)
+            ? new MicroVfpRuntimeException($"{head} is not an object.", 1924) { Details = head }
+            : new MicroVfpRuntimeException($"Object {head} is not found.", 1923) { Details = head };
+    }
+
     // ─────────────────────────── the Exception object (CATCH TO oErr) ───────────────────────────
     //
     // microVFP has no general object model; the caught Exception object is the one object a .prg can hold.
@@ -315,7 +348,7 @@ public sealed partial class VfpInterpreter
             LineNo = ex.Data[DataLine] is int l ? l : 0;
             Procedure = (ex.Data[DataProc] as string ?? it.CurrentCall.Name).ToLowerInvariant();
             StackLevel = ex.Data[DataLevel] is int s ? s : it._callStack.Count;
-            Details = string.Empty;
+            Details = ex is MicroVfpRuntimeException { Details: { } d } ? d : string.Empty;
             LineContents = ex.Data[DataSource] as string ?? string.Empty;
             UserValue = ex is MicroVfpRuntimeException { UserValue: { } uv } ? uv : VfpValue.Character(string.Empty);
         }

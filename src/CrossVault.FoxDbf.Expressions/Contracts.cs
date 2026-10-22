@@ -40,6 +40,11 @@ public interface IVfpFunctionHost
     /// evaluated <paramref name="args"/>. Returns <see langword="true"/> + <paramref name="result"/> when
     /// the host owns the function, else <see langword="false"/> (the engine then handles it).</summary>
     bool TryInvoke(string upperName, VfpValue[] args, EvaluationContext ctx, out VfpValue result);
+
+    /// <summary>Called for a function that neither <see cref="TryInvoke"/> nor the engine implements, also when
+    /// an argument is <c>.NULL.</c>. Return the call's value or throw the host's error; the default returns
+    /// <c>.NULL.</c> (the engine's behaviour without a host). microVFP raises VFP error 1 here.</summary>
+    VfpValue UnknownFunction(string upperName, VfpValue[] args) => VfpValue.Null;
 }
 
 /// <summary>
