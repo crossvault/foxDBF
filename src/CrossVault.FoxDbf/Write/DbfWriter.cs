@@ -305,6 +305,18 @@ public sealed partial class DbfWriter : IDisposable
     }
 
     /// <summary>
+    /// <see cref="AppendRecord(object?[])"/> with a positional BLANK mask (one entry per public column):
+    /// a null value whose entry is set is written as the VFP blank of its type with the NULL bit clear.
+    /// </summary>
+    internal int AppendRecord(object?[] values, bool[] blankWhenNull)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(blankWhenNull);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return AppendCore(ToPositional(values), blankWhenNull);
+    }
+
+    /// <summary>
     /// Rewrite the FULL row at <paramref name="index"/> from <paramref name="values"/>
     /// (one per public column, physical order). Other records are left byte-identical.
     /// </summary>
@@ -783,6 +795,11 @@ public sealed partial class DbfWriter : IDisposable
 
             object? value = i < positional.Length ? positional[i] : null;
             if (value is null or DBNull)
+                continue;
+
+            // VFP9 stores an empty memo/blob ('' / 0h) as a 0 pointer and allocates no block, on an
+            // append and on a replace alike. The encoder already wrote the 0 pointer.
+            if (value is string { Length: 0 } or byte[] { Length: 0 })
                 continue;
 
             // Non-null memo/blob content but no usable .fpt sidecar: the encoder already wrote a

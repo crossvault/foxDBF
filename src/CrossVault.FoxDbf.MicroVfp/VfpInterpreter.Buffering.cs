@@ -114,6 +114,24 @@ public sealed partial class VfpInterpreter
                 for (int k = 0; k < indexes.Count; k++) ae.Fields[indexes[k]] = values[k];
             }
         }
+
+        // The columns the INSERT omits follow SET NULL as it is NOW, at INSERT time — as the write-through
+        // INSERT does: blank under OFF (left out of Fields, written blank at commit), .NULL. in a NULL-able
+        // column under ON (an explicit null in Fields). An omitted NOT NULL column under ON is VFP error
+        // 1581 and no row; the write-through INSERT swallows that error, so the buffered one does too.
+        var columns = wa.Table.Columns;
+        var provided = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (idx, v) in ae.Fields) provided[columns[idx].Name] = v;
+        bool[] blank;
+        try
+        {
+            blank = DmlExecutor.OmittedColumnsBlankMask(Session, stmt.Table, columns, provided,
+                honourSetNull: stmt.SourceKind != InsertSourceKind.Array);
+        }
+        catch (FoxDbfSqlException) { return; }
+        for (int i = 0; i < columns.Count; i++)
+            if (!columns[i].IsSystem && !columns[i].IsAutoIncrement && !blank[i] && !ae.Fields.ContainsKey(i))
+                ae.Fields[i] = null;
         (m.Buf ??= new TableBuffer()).Appends.Add(ae);
     }
 
@@ -307,10 +325,15 @@ public sealed partial class VfpInterpreter
         string path = BeginTxWrite(livePath);
         wa = Session.AreaAt(area) ?? wa;                        // BeginTxWrite may have reopened the area on the copy.
 
-        // Row built from the pre-evaluated field values; an omitted column gets the type's real blank.
+        // Row built from the pre-evaluated field values; a column the INSERT left blank (not in Fields) is
+        // written as VFP's blank bytes (spaces / zeros, a 0 memo pointer), never as a typed 0 / "" / .F.
         var vals = new object?[wa.Table.Columns.Count];
+        var blank = new bool[vals.Length];
         for (int i = 0; i < vals.Length; i++)
-            vals[i] = ae.Fields.TryGetValue(i, out var v) ? v : BlankFor(wa.Table.Columns[i]);
+        {
+            if (ae.Fields.TryGetValue(i, out var v)) vals[i] = v;
+            else blank[i] = true;
+        }
 
         // 5.5 hot path (must-fix): reverting a committed APPEND removes the last physical record — it is NOT
         // a record-level UpdateRecord, so it keeps the whole-file pre-image. But capture it ONLY when the
@@ -336,7 +359,7 @@ public sealed partial class VfpInterpreter
             SnapshotForTxn(path);
             using (var lease = LeaseWriter(path))
             {
-                lease.Writer.AppendRecord(vals);
+                lease.Writer.AppendRecord(vals, blank);
                 lease.Writer.Flush();
             }
             ReopenFileAreas(path);   // an append changed the record count/geometry ⇒ full re-open (RefreshView cannot).

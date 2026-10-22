@@ -616,7 +616,11 @@ public sealed partial class VfpInterpreter
         var srcWa = srcArea == 0 ? null : Session.AreaAt(srcArea);
         if (srcWa is null) return;
 
-        var rows = new List<Dictionary<string, object?>>();
+        // Each source row: the copied values by name, and the names of the fields that are BLANK on disk.
+        // VFP9 copies a blank field blank and a .NULL. field .NULL. (oracle-pinned by
+        // MicroVfpAppendBlankFieldsVfp9OracleTests), but a blank N/D/M decodes to null and a blank L to .F.,
+        // so the decoded value alone cannot tell blank, .NULL. and .F. apart — the raw record does.
+        var rows = new List<(Dictionary<string, object?> Values, HashSet<string> Blank)>();
         try
         {
             var sm = _meta[srcArea] = new AreaMeta();
@@ -627,14 +631,23 @@ public sealed partial class VfpInterpreter
                 if (!Visible(srcWa, rec)) continue;
                 sm.RecNo = rec; sm.Cached = null; sm.Eof = false; sm.Bof = false;
                 if (s.For is not null && !Truth(Eval(s.For))) continue;
+                var raw = srcWa.Table.GetRecord(rec - 1);
                 var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                var blank = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var col in srcWa.Table.Columns)
                 {
                     if (col.IsSystem) continue;
                     if (fieldFilter is not null && !fieldFilter.Contains(col.Name)) continue;
-                    map[col.Name] = ReadField(srcWa, col.Name);
+                    object? value = ReadField(srcWa, col.Name);
+                    bool isNull = raw is { } r && r.IsNullFlagSet(col);
+                    if (!isNull && (value is null || (col.Type == 'L' && raw is { } l && l.GetRawField(col)[0] == (byte)' ')))
+                    {
+                        value = null;
+                        blank.Add(col.Name);
+                    }
+                    map[col.Name] = isNull ? null : value;
                 }
-                rows.Add(map);
+                rows.Add((map, blank));
             }
         }
         finally
@@ -649,13 +662,43 @@ public sealed partial class VfpInterpreter
         // instead of landing rows on the live .dbf. No-op in autocommit / EnforceRules=off (path unchanged).
         targetPath = BeginTxWrite(targetPath);
         SnapshotForTxn(targetPath);
-        using (var lease = LeaseWriter(targetPath))
+        try
         {
+            using var lease = LeaseWriter(targetPath);
             var writer = lease.Writer;
-            foreach (var map in rows) writer.AppendRecord(map);
-            writer.Flush();
+            var columns = writer.Schema.Columns;
+            try
+            {
+                // Row by row, as VFP9: a row that would put .NULL. into a NOT NULL field raises 1581 and
+                // stops the APPEND; the rows before it stay appended.
+                foreach (var (values, blank) in rows)
+                    writer.AppendRecord(values, AppendFromBlankMask(targetWa.Alias, columns, values, blank));
+            }
+            finally { writer.Flush(); }
         }
-        ReopenFileAreas(targetPath);   // appended rows changed the count ⇒ rebuild the order cache.
+        finally { ReopenFileAreas(targetPath); }   // appended rows changed the count ⇒ rebuild the order cache.
+    }
+
+    /// <summary>
+    /// The blank mask for one <c>APPEND FROM</c> row, per VFP9 (oracle-pinned by
+    /// MicroVfpAppendBlankFieldsVfp9OracleTests): a target field the source does not supply is an omitted
+    /// INSERT column — blank under <c>SET NULL OFF</c>, <c>.NULL.</c> (or error 1581 when NOT NULL) under
+    /// <c>SET NULL ON</c>; a supplied blank field is written blank; a supplied <c>.NULL.</c> stays
+    /// <c>.NULL.</c> whatever SET NULL says, and raises 1581 when the target field is NOT NULL.
+    /// </summary>
+    private bool[] AppendFromBlankMask(string table, IReadOnlyList<DbfColumn> columns,
+        Dictionary<string, object?> values, HashSet<string> blank)
+    {
+        var mask = DmlExecutor.OmittedColumnsBlankMask(Session, table, columns, values, honourSetNull: true);
+        for (int i = 0; i < columns.Count; i++)
+        {
+            var col = columns[i];
+            if (col.IsSystem || !values.TryGetValue(col.Name, out var v) || v is not null) continue;
+            if (blank.Contains(col.Name)) mask[i] = true;
+            else if (!col.IsNullable && !col.IsAutoIncrement)
+                throw new MicroVfpRuntimeException($"Field {col.Name.ToUpperInvariant()} does not accept null values.", 1581);
+        }
+        return mask;
     }
 
     private void ExecCopyStructure(CopyStructureStmt s)

@@ -296,6 +296,18 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   that microVFP cannot evaluate (for instance a UDF whose stored procedures were not loaded with
   `LoadStoredProceduresFromDatabase()`) now rejects the row; because a microVFP `INSERT` swallows its errors,
   no row lands, where before it landed with that column blank.
+- microVFP `APPEND FROM` wrote `.NULL.` into every NULL-able target field the source table does not have, and
+  turned blank source fields into `.NULL.` (N, D, M) or `.F.` (L). It now writes as VFP9 does: a field the
+  source lacks is blank under `SET NULL OFF` and `.NULL.` under `SET NULL ON`; a blank source field stays
+  blank and a `.NULL.` one stays `.NULL.`. A `.NULL.` that would land in a NOT NULL field (or, under
+  `SET NULL ON`, a NOT NULL field the source lacks) raises error 1581 and stops the APPEND; the rows before it
+  stay appended.
+- A buffered microVFP `INSERT` committed by `TABLEUPDATE` wrote its omitted columns as typed values (`0` in
+  N as `"     0"`, `.F.` in L, an empty memo block in M). They are now written like the unbuffered INSERT's —
+  blank bytes, or `.NULL.` / error 1581 when `SET NULL` was ON at INSERT time.
+- An empty memo or blob (`''`, `0h`) no longer allocates a memo block; it is stored as a 0 pointer, as VFP9
+  stores it on INSERT and REPLACE, and microVFP reads such a memo (null bit clear) as `''`, not `.NULL.`. A
+  Varbinary (`Q`) value shorter than its field is padded with 0x20, as in VFP9, instead of zero bytes.
 
 ## [0.10.0] - 2026-10-22
 

@@ -206,7 +206,7 @@ internal sealed class DmlExecutor
     /// SQL / ADO.NET path, which does not evaluate DEFAULTs, it is written blank.</description></item>
     /// </list>
     /// </summary>
-    private static bool[] OmittedColumnsBlankMask(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
+    internal static bool[] OmittedColumnsBlankMask(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
         IReadOnlyDictionary<string, object?> provided, bool honourSetNull)
     {
         // Session.Context, not SqlContext(): the microVFP interpreter's SET NULL writes Context.NullSetting.

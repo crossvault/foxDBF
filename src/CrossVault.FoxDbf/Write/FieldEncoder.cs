@@ -435,10 +435,9 @@ public static class FieldEncoder
         }
 
         bytes.CopyTo(dest);
-        // Pad the gap (V → spaces to match the fixture layout, Q → zero bytes), then write
+        // Pad the gap with spaces — VFP9 pads a Varbinary with 0x20 too, not zero bytes — then write
         // the effective length into the LAST byte and signal the caller to set the varlen bit.
-        byte pad = t == 'V' ? (byte)' ' : (byte)0x00;
-        dest[bytes.Length..(w - 1)].Fill(pad);
+        dest[bytes.Length..(w - 1)].Fill((byte)' ');
         dest[w - 1] = (byte)bytes.Length;
         return true;
     }

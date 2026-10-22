@@ -1261,10 +1261,9 @@ public sealed partial class VfpInterpreter
         return ReadFieldOnDisk(wa, field);
     }
 
-    // The typed blank an unset appended-row field reads as / is written to disk with: the column type's real
-    // EMPTY() value — blanks of the field's width for C, "" for V/M, 0 for numerics, .F. for logical, an empty
-    // date for D/T — NEVER .NULL. for a non-character column (matching what DbfWriter writes for a column the
-    // INSERT omitted, so the live pre-commit view and the committed on-disk row agree).
+    // The typed blank an unset buffered-append field READS as before the commit: the column type's EMPTY()
+    // value — blanks of the field's width for C, "" for V/M, 0 for numerics, .F. for logical, an empty date for
+    // D/T. The commit writes such a field as VFP's blank bytes (CommitAppend's blank mask), not as this value.
     private static object? BlankFor(DbfColumn col) => col.Type switch
     {
         'C' => new string(' ', col.Length),
@@ -1308,6 +1307,15 @@ public sealed partial class VfpInterpreter
             int end = s.Length;
             while (end > 0 && s[end - 1] == '\0') end--;
             return end == s.Length ? s : string.Concat(s.AsSpan(0, end), new string(' ', s.Length - end));
+        }
+        if (col.Type is 'M' or 'W')
+        {
+            // A 0 memo pointer is an EMPTY memo, not .NULL. — VFP9 stores '' that way, allocating no block —
+            // unless the null bit says .NULL.
+            var memo = rec[idx];
+            if (memo is null && !rec.IsNullFlagSet(col))
+                return col.Type == 'M' ? string.Empty : Array.Empty<byte>();   // a binary M reads as Latin1 text.
+            return memo;
         }
         return rec[idx];
     }

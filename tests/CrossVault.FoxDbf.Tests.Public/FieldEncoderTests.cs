@@ -428,14 +428,15 @@ public sealed class FieldEncoderTests
     }
 
     [Fact]
-    public void Varbinary_Short_ZeroPads_WritesLength_AndCoercesString()
+    public void Varbinary_Short_SpacePads_WritesLength_AndCoercesString()
     {
         var dest = new byte[5];
 
         bool varlenUsed = FieldEncoder.Encode(Col('Q', 5, 0, 0x04), "AB", Encoding.Latin1, dest);
 
         Assert.True(varlenUsed);
-        Assert.Equal(new byte[] { 0x41, 0x42, 0x00, 0x00, 0x02 }, dest);
+        // VFP9 pads a Varbinary with 0x20, as a Varchar (oracle-pinned by MicroVfpAppendBlankFieldsVfp9OracleTests).
+        Assert.Equal(new byte[] { 0x41, 0x42, 0x20, 0x20, 0x02 }, dest);
     }
 
     [Fact]

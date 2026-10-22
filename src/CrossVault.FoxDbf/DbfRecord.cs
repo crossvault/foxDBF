@@ -193,6 +193,16 @@ public readonly struct DbfRecord
         return FieldDecoder.Decode(column, raw, encoding, _table.EncodingIsExplicit);
     }
 
+    /// <summary>
+    /// True when <paramref name="column"/>'s NULL bit is set in <c>_NullFlags</c> — a genuine <c>.NULL.</c>,
+    /// as opposed to a blank field, which the indexer also decodes to <see langword="null"/>.
+    /// </summary>
+    internal bool IsNullFlagSet(DbfColumn column)
+    {
+        var (_, nullBit) = _table.GetVarlenNullBits(column);
+        return nullBit >= 0 && IsNullFlagBitSet(nullBit);
+    }
+
     /// <summary>Test bit <paramref name="bit"/> in the <c>_NullFlags</c> bitmap (LSB-first, §A5b).</summary>
     private bool IsNullFlagBitSet(int bit)
     {
