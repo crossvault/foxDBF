@@ -59,9 +59,15 @@ internal static class CdxIndexBuilder
     /// stays identical. <paramref name="includeDeleted"/> mirrors SET DELETED OFF — when <see langword="true"/>
     /// deleted rows are indexed too (VFP keeps their entries in the CDX until PACK); the default excludes them.
     /// </para>
+    /// <para>
+    /// The leaves carry the 0x04 attribute bit as VFP9's INDEX ON sets it (see <see cref="PackLeaves"/>), unless
+    /// <paramref name="containerIndex"/>: a database container's .dcx, which VFP grows record by record, sets it by the
+    /// entry size (vfp_test/dbctest/ref.DCX).
+    /// </para>
     /// </summary>
     public static void Build(string cdxPath, DbfTable schema, IReadOnlyList<BuildRow> rows, IReadOnlyList<CdxTagDefinition> tags,
-        EvaluationContext? evalContext = null, bool includeDeleted = false, AppendUniqueState? appendUniqueState = null)
+        EvaluationContext? evalContext = null, bool includeDeleted = false, AppendUniqueState? appendUniqueState = null,
+        bool containerIndex = false)
     {
         var sink = new PageSink();
         sink.Reserve();           // page 0: file header (filled last)
@@ -106,7 +112,7 @@ internal static class CdxIndexBuilder
             int headerIndex = sink.Reserve();              // tag header page
             sink.Reserve();                                // its expression-pool page
             long headerOffset = (long)headerIndex * Page;
-            uint treeRoot = BuildTree(sink, () => sink.Reserve(), p.Entries, p.KeyLen, p.Pad, isDataTag: true);
+            uint treeRoot = BuildTree(sink, () => sink.Reserve(), p.Entries, p.KeyLen, p.Pad, indexOn: !containerIndex);
 
             WriteHeaderCommon(sink.At(headerIndex), root: treeRoot, keyLen: p.KeyLen, options: p.Options,
                 signature: p.Signature, sortOrder: p.SortOrder, descending: p.Descending,
@@ -118,7 +124,7 @@ internal static class CdxIndexBuilder
         // the same allocation order CountTreePages counted, so the pre-reserved range matches exactly).
         var dirRange = Enumerable.Range(dirStart, dirPages).GetEnumerator();
         uint dirRoot = BuildTree(sink, () => { dirRange.MoveNext(); return dirRange.Current; },
-            dirEntries, keyLen: 10, pad: 0x20, isDataTag: false);
+            dirEntries, keyLen: 10, pad: 0x20, indexOn: false);
 
         // File header (page 0) + its pool (page 1: keyExprLen=1, forExprLen=1 → 2 NUL bytes).
         var fileHeader = sink.At(0);
@@ -160,7 +166,7 @@ internal static class CdxIndexBuilder
         sink.Reserve();                      // its expression-pool page
         long headerOffset = (long)headerIndex * Page;
 
-        uint treeRoot = BuildTree(sink, () => sink.Reserve(), plan.Entries, plan.KeyLen, plan.Pad, isDataTag: true);
+        uint treeRoot = BuildTree(sink, () => sink.Reserve(), plan.Entries, plan.KeyLen, plan.Pad, indexOn: true);
 
         WriteHeaderCommon(sink.At(headerIndex), root: treeRoot, keyLen: plan.KeyLen, options: plan.Options,
             signature: plan.Signature, sortOrder: plan.SortOrder, descending: plan.Descending,
@@ -498,32 +504,25 @@ internal static class CdxIndexBuilder
     }
 
     /// <summary>Build the compact B-tree for <paramref name="entries"/> and return the root page offset.
-    /// Pages are taken from <paramref name="alloc"/> (either fresh reservations or a pre-reserved range).</summary>
-    private static uint BuildTree(PageSink sink, Func<int> alloc, List<Entry> entries, int keyLen, byte pad, bool isDataTag)
+    /// Pages are taken from <paramref name="alloc"/> (either fresh reservations or a pre-reserved range).
+    /// <paramref name="indexOn"/>: the leaves carry the 0x04 bit as INDEX ON sets it (see <see cref="PackLeaves"/>).</summary>
+    private static uint BuildTree(PageSink sink, Func<int> alloc, List<Entry> entries, int keyLen, byte pad, bool indexOn)
     {
-        var leaves = PackLeaves(entries, keyLen, pad);
+        var leaves = PackLeaves(entries, keyLen, pad, indexOn);
 
         // Assign page offsets to every leaf first (so siblings can reference each other).
         foreach (var leaf in leaves)
             leaf.Index = alloc();
 
-        // The 0x04 "data" leaf-attribute bit is NOT a per-tag property — it is a function of the leaf
-        // GEOMETRY: VFP9 sets it exactly when a leaf entry's packed record-number+dup+trail info block
-        // fits in ONE or TWO bytes (BytesPerEntry ≤ 2). Verified byte-for-byte against every FRESHLY
-        // built VFP9 golden: vfp_test/dbctest/ref.DCX (the wide composite tag BytesPerEntry=3 ⇒ 0x03;
-        // the str(parentid)+objecttype tag BytesPerEntry=2 ⇒ 0x07), vfp_test/ligtest.CDX (C(10) GENERAL,
-        // BytesPerEntry=2 ⇒ 0x07) and a live INDEX ON over a small free table (C(10) MACHINE / I keys,
-        // 4 records ⇒ BytesPerEntry=2 ⇒ 0x07). The tag directory (BytesPerEntry=3 for realistic tag
-        // counts) therefore correctly clears it. The earlier `RecnoBits < 8` rule coincided with this on
-        // the wide-key fixtures but mis-cleared 0x04 on small tables whose record field pads up to exactly
-        // 8 bits while the entry still packs into two bytes (e.g. a 4-record C(10)/I tag: RecnoBits=8 but
-        // BytesPerEntry=2). BytesPerEntry ≤ 2 is the exact rule and is read-invariant (the reader keys
-        // only off bits 0x01/0x02 — IndexNodeHeader.IsRoot/IsLeaf — never 0x04).
+        // The 0x04 bit: see PackLeaves. Without indexOn it is set exactly when an entry's info block packs into one
+        // or two bytes (BytesPerEntry <= 2), which every freshly VFP9-built .dcx golden shows: vfp_test/dbctest/ref.DCX
+        // (its wide composite tag BytesPerEntry=3 => 0x03, the str(parentid)+objecttype tag BytesPerEntry=2 => 0x07).
+        // The reader keys only off bits 0x01/0x02, never 0x04.
         // Single leaf → it is also the root (root | leaf).
         if (leaves.Count == 1)
         {
             var only = leaves[0];
-            WriteLeaf(sink.At(only.Index), only, keyLen, (ushort)(AttrRoot | LeafAttr(only.Geom)),
+            WriteLeaf(sink.At(only.Index), only, keyLen, (ushort)(AttrRoot | AttrLeaf | only.AttrExtra),
                 left: NoPtr, right: NoPtr);
             return (uint)(only.Index * Page);
         }
@@ -533,7 +532,7 @@ internal static class CdxIndexBuilder
             var leaf = leaves[i];
             uint left = i > 0 ? (uint)(leaves[i - 1].Index * Page) : NoPtr;
             uint right = i < leaves.Count - 1 ? (uint)(leaves[i + 1].Index * Page) : NoPtr;
-            WriteLeaf(sink.At(leaf.Index), leaf, keyLen, LeafAttr(leaf.Geom), left, right);
+            WriteLeaf(sink.At(leaf.Index), leaf, keyLen, (ushort)(AttrLeaf | leaf.AttrExtra), left, right);
         }
 
         // Build branch levels until a single root node remains.
@@ -597,18 +596,40 @@ internal static class CdxIndexBuilder
 
     // ---- leaf packing (mirror of CompactLeaf.Decode / r4reinde.c) ---------------
 
-    // Every leaf carries its OWN record-number geometry, sized by the highest record number IN THAT LEAF
-    // (VFP9: a leaf holding records 1..48 packs them in two bytes per entry even when the table has 1297
-    // records, its neighbour holding record 1297 in three). INDEX ON grows the tree by appending the sorted
-    // keys one by one, so a leaf takes entries greedily until the next one — at that leaf's widened geometry —
-    // no longer fits.
-    private static List<LeafNode> PackLeaves(List<Entry> entries, int keyLen, byte pad)
+    /// <summary>
+    /// Pack the sorted <paramref name="entries"/> into compact leaves the way VFP9's INDEX ON does, which appends the
+    /// sorted keys one by one.
+    /// <para>
+    /// Each leaf has its OWN geometry, the narrowest whose record-number field holds the largest recno in that leaf.
+    /// The first leaf starts with the narrowest geometry of all; an entry whose recno does not fit the current
+    /// leaf's field widens the whole leaf if the leaf, re-encoded, still fits the page, else a new leaf starts with
+    /// that entry (sized for its recno). Heavily duplicated short keys show it: sorted by key then recno, a key's
+    /// recnos climb within its run, so leaves holding only small recnos pack 2-byte entries where a table-wide
+    /// geometry needs 3 (VFP9: C(1), 17983 rows over 36 values give 92 leaves, not 112). An entry whose key is all
+    /// pad (an empty C field) needs one byte more room than it takes. An empty tag gets the default geometry, the
+    /// narrowest with a 12-bit record-number field, whatever the record count.
+    /// </para>
+    /// <para>
+    /// With <paramref name="indexOn"/> the 0x04 attribute bit marks a leaf packed narrower than the geometry it was
+    /// opened with: the first leaf is opened with the default geometry, every other leaf with the geometry of the
+    /// leaf before it. It is decided when the leaf opens and again whenever it widens, and closing changes it: a
+    /// leaf the next recno would have widened past the page gets it, any other leaf but the first loses it.
+    /// Without, it follows the entry size (<see cref="DataBit"/>). Derived from VFP9 over 60 tables (C keys of
+    /// length 1-200 under MACHINE and GENERAL, I and N keys, ascending, descending and unique, up to 70000 rows,
+    /// all-blank keys, empty tags, hand-made recno runs): every leaf page reproduces byte for byte.
+    /// </para>
+    /// </summary>
+    private static List<LeafNode> PackLeaves(List<Entry> entries, int keyLen, byte pad, bool indexOn = true)
     {
         var leaves = new List<LeafNode>();
+        var standard = LeafGeometry.For(keyLen, EmptyTagMaxRecno);
         if (entries.Count == 0)
         {
-            // INDEX ON over no rows sizes the empty root leaf for record numbers of 12 bits (VFP9, key lengths 1..240).
-            leaves.Add(new LeafNode { Items = new List<LeafItem>(), FreeSpace = (ushort)LeafBudget, Geom = LeafGeometry.For(keyLen, EmptyTagMaxRecno) });
+            leaves.Add(new LeafNode
+            {
+                Items = new List<LeafItem>(), FreeSpace = (ushort)LeafBudget, Geom = standard,
+                AttrExtra = indexOn ? (ushort)0 : DataBit(standard),
+            });
             return leaves;
         }
 
@@ -617,21 +638,36 @@ internal static class CdxIndexBuilder
         uint maxRecno = 0;
         byte[]? prev = null;
         int prevTrail = keyLen;
+        var geom = LeafGeometry.For(keyLen, 1);
+        var opened = standard;             // the geometry the current leaf was opened with
+        ushort attr = Narrower(geom, opened);
 
         foreach (var e in entries)
         {
             var (dup, trail) = DupTrail(e.Key, prev, prevTrail, keyLen, pad);
             int len = keyLen - dup - trail;
             uint max = Math.Max(maxRecno, e.Recno);
-            if (cur.Count > 0 && used + len + (cur.Count + 1) * LeafGeometry.For(keyLen, max).BytesPerEntry > LeafBudget)
+            var need = LeafGeometry.For(keyLen, max);
+            bool widen = need.RecnoBits > geom.RecnoBits;
+            if (cur.Count > 0 && used + Room(len, trail, keyLen) + (cur.Count + 1) * need.BytesPerEntry > LeafBudget)
             {
                 // Current leaf is full: flush it and start a fresh one (dup resets to 0).
-                leaves.Add(MakeLeafNode(cur, used, maxRecno, keyLen, prev!));
+                if (widen) attr = AttrData;
+                else if (leaves.Count > 0) attr = 0;
+                Flush();
+                opened = geom;
                 cur = new List<LeafItem>();
                 used = 0;
                 (dup, trail) = DupTrail(e.Key, null, keyLen, keyLen, pad);
                 len = keyLen - dup - trail;
                 max = e.Recno;
+                geom = LeafGeometry.For(keyLen, max);
+                attr = Narrower(geom, opened);
+            }
+            else if (widen)
+            {
+                geom = need;
+                attr = Narrower(geom, opened);
             }
 
             var fresh = new byte[len];
@@ -643,9 +679,22 @@ internal static class CdxIndexBuilder
             prevTrail = trail;
         }
 
-        leaves.Add(MakeLeafNode(cur, used, maxRecno, keyLen, prev!));
+        Flush();
         return leaves;
+
+        void Flush()
+        {
+            var leaf = MakeLeafNode(cur, used, maxRecno, keyLen, prev!);
+            leaf.AttrExtra = indexOn ? attr : DataBit(leaf.Geom);
+            leaves.Add(leaf);
+        }
+
+        static ushort Narrower(LeafGeometry geom, LeafGeometry than) => geom.RecnoBits < than.RecnoBits ? AttrData : (ushort)0;
     }
+
+    /// <summary>The room an entry needs in a leaf: its distinct key bytes, one more for an all-pad key (VFP9 leaves
+    /// 2 bytes free where one more 2-byte blank entry would fit).</summary>
+    private static int Room(int len, int trail, int keyLen) => trail == keyLen ? len + 1 : len;
 
     private static LeafNode MakeLeafNode(List<LeafItem> items, int used, uint maxRecno, int keyLen, byte[] lastKey)
     {
@@ -675,8 +724,9 @@ internal static class CdxIndexBuilder
         return (dup, trail);
     }
 
-    /// <summary>Leaf attribute: the leaf bit, plus the 0x04 "data" bit when the entry info packs into two bytes.</summary>
-    private static ushort LeafAttr(LeafGeometry geom) => (ushort)(AttrLeaf | (geom.BytesPerEntry <= 2 ? AttrData : 0));
+    /// <summary>The 0x04 bit by the entry size: set when the entry info packs into one or two bytes (the .dcx goldens'
+    /// rule, kept outside INDEX ON).</summary>
+    private static ushort DataBit(LeafGeometry geom) => geom.BytesPerEntry <= 2 ? AttrData : (ushort)0;
 
     private static void WriteLeaf(byte[] page, LeafNode leaf, int keyLen, ushort attr, uint left, uint right)
     {
@@ -720,8 +770,9 @@ internal static class CdxIndexBuilder
     internal readonly record struct BranchChild(byte[] SepKey, uint SepRecno, uint Child);
 
     /// <summary>Bytes a compact leaf holding <paramref name="count"/> sorted entries from <paramref name="start"/>
-    /// would use (distinct key bytes + entry info at that leaf's own record-number geometry). The leaf fits when
-    /// the result is at most <see cref="LeafCapacity"/>.</summary>
+    /// needs (distinct key bytes + entry info at that leaf's own record-number geometry, plus the extra byte an
+    /// all-pad last key needs, see <see cref="PackLeaves"/>). The leaf fits when the result is at most
+    /// <see cref="LeafCapacity"/>.</summary>
     internal static int LeafUsedBytes(IReadOnlyList<(byte[] Key, uint Recno)> entries, int start, int count, int keyLen, byte pad)
     {
         if (count <= 0)
@@ -739,7 +790,8 @@ internal static class CdxIndexBuilder
             prev = key;
             prevTrail = trail;
         }
-        return used + count * LeafGeometry.For(keyLen, maxRecno).BytesPerEntry;
+        // The last entry is the one that had to fit: an all-pad key needs one byte more room than it takes.
+        return used + (prevTrail == keyLen ? 1 : 0) + count * LeafGeometry.For(keyLen, maxRecno).BytesPerEntry;
     }
 
     /// <summary>The key/entry-info budget of one compact leaf page (512 − 24 header bytes).</summary>
@@ -779,7 +831,7 @@ internal static class CdxIndexBuilder
             ? new LeafNode { Items = items, FreeSpace = (ushort)LeafBudget, Geom = LeafGeometry.For(keyLen, isRoot ? EmptyTagMaxRecno : 0) }
             : MakeLeafNode(items, used, maxRecno, keyLen, prev!);
         var page = new byte[Page];
-        WriteLeaf(page, leaf, keyLen, (ushort)((isRoot ? AttrRoot : 0) | LeafAttr(leaf.Geom)), left, right);
+        WriteLeaf(page, leaf, keyLen, (ushort)((isRoot ? AttrRoot : 0) | AttrLeaf | DataBit(leaf.Geom)), left, right);
         return page;
     }
 
@@ -1092,6 +1144,7 @@ internal static class CdxIndexBuilder
     {
         public List<LeafItem> Items = new();
         public LeafGeometry Geom;
+        public ushort AttrExtra;          // the 0x04 attribute bit, or 0
         public ushort FreeSpace;
         public byte[] LastKey = Array.Empty<byte>();
         public uint LastRecno;

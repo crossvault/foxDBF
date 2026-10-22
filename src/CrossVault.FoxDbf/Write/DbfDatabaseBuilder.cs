@@ -234,6 +234,6 @@ public static class DbfDatabaseBuilder
         foreach (var rec in table.EnumerateAll(includeDeleted: true))
             rows.Add(new CdxIndexBuilder.BuildRow(++recNo, rec));
 
-        CdxIndexBuilder.Build(dcxPath, table, rows, tags);
+        CdxIndexBuilder.Build(dcxPath, table, rows, tags, containerIndex: true);
     }
 }
