@@ -8,6 +8,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- Expressions and SQL accept Unicode letters in identifiers, so VFP field names such as `razónSoc` or the DBC
+  long name `razónSocial` no longer fail with "Unexpected character" (#2, thanks @rubenrovira). Field names
+  in `.dbf` headers are decoded in the table's code page instead of ASCII, which had turned them into
+  `RAZ?NSOC` and made such a column read as `null`.
+- A qualified field reference in the WHERE of a single-table `SELECT`, `UPDATE` or `DELETE`
+  (`SELECT … FROM person p WHERE p.id = 3`, `WHERE person.id = 3`) silently matched no rows, because the
+  qualifier reached the row evaluator as part of the column name; it now resolves to the query's own source
+  (subqueries and UNION branches included). Qualifiers of other aliases are left alone, so correlated
+  subqueries resolve as before.
 - Non-ASCII names (VFP9 accepts field names such as `razónSoc`) now work beyond the SQL read path. Field
   names in created/altered `.dbf` headers, CDX tag names and CDX/IDX KEY/FOR expressions are written and
   read in the TABLE's code page, as VFP9 does (`RAZÓNSOC` carries 'Ó' as `0xD3` in CP1252 and `0xE0` in
@@ -29,7 +38,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
-- A field name, tag name, KEY/FOR expression or backlink path that the table's code page cannot represent
+- JOIN queries apply WHERE conjuncts that read only the driving table to that table before the join runs, so
+  a selective WHERE no longer pays one inner-side lookup per driving row (≈283 s → ≈7 s on a 593k-row LEFT
+  JOIN in the contributor's benchmark; #1, thanks @rubenrovira). The full WHERE is still evaluated after the
+  join, RIGHT/FULL chains are never pushed, and only deterministic conjuncts that read a driving-table field
+  are pushed.
+- BREAKING: A field name, tag name, KEY/FOR expression or backlink path that the table's code page cannot represent
   now throws (`DbfSchemaException` / `DbfWriteException`) instead of being written with `?`. Name length
   limits count encoded bytes, and a CDX tag name longer than 10 bytes now throws instead of being clipped
   silently (VFP9 raises error 1888, "Tag name is too long").
