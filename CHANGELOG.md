@@ -236,8 +236,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - microVFP `INDEX ON` (also `TO` an `.idx` and with `FOR`), `REINDEX`, `DELETE TAG`, `COPY TAG` and
   `COPY INDEXES` on a DBC table use its long field names. `INDEX ON customer_name TAG x` built a tag that no
   `SEEK` found, and the existing tags whose KEY names the long fields (`CUSTOMER_NAME`, as VFP9 stores it)
-  were no longer seekable after it or after `REINDEX`. `PACK`, `ZAP` and `PACK DATABASE` open the table under
-  the same names.
+  were no longer seekable after it or after `REINDEX`.
 
 ## [0.10.0] - 2026-10-22
 
