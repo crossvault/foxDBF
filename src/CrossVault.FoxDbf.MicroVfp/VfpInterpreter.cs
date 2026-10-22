@@ -1187,11 +1187,13 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── name / field resolution ───────────────────────────
 
-    /// <summary>Resolve a name for the expression engine: qualified <c>alias.field</c> → that area's
-    /// current record; <c>m.var</c> → memvar; bare → CURRENT area field, else memvar, else #DEFINE.</summary>
+    // Qualifier heads that name an (unmodeled) object, never a work area: their members read as undefined.
     private static readonly HashSet<string> ObjectHeads = new(StringComparer.OrdinalIgnoreCase)
         { "THIS", "THISFORM", "THISFORMSET", "_SCREEN", "_VFP" };
 
+    /// <summary>Resolve a name for the expression engine: qualified <c>alias.field</c> → that area's
+    /// current record (blank at EOF; an unknown field is error 12, an unknown alias error 13);
+    /// <c>m.var</c> → memvar; bare → CURRENT area field, else memvar, else #DEFINE.</summary>
     internal object? ResolveName(string name)
     {
         if (name.Equals("_triggerlevel", StringComparison.OrdinalIgnoreCase))
