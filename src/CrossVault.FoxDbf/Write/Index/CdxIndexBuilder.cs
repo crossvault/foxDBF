@@ -327,6 +327,8 @@ internal static class CdxIndexBuilder
         public required bool IsChar;
         public required byte Pad;
         public required IVfpCollation Collation;
+        /// <summary>The code page a MACHINE character key is stored in (<see cref="IndexKey.ResolveCharacterEncoding"/>).</summary>
+        public required Encoding CharacterEncoding;
         public required Func<IRowContext, VfpValue> KeyFn;
         public required Func<IRowContext, VfpValue>? ForFn;
         public required bool Unique;
@@ -352,7 +354,7 @@ internal static class CdxIndexBuilder
                 }
             }
             var value = KeyFn(rc);
-            key = EncodeKey(value, KeyType, KeyLen, Collation, Pad);
+            key = EncodeKey(value, KeyType, KeyLen, Collation, CharacterEncoding, Pad);
             return true;
         }
     }
@@ -372,7 +374,10 @@ internal static class CdxIndexBuilder
             Exact = evalContext?.Exact ?? false,
             Ansi = evalContext?.Ansi ?? false,
             Culture = evalContext?.Culture,
-            Encoding = evalContext?.Encoding,
+            // CHR()/ASC() inside KEY/FOR map bytes in the TABLE code page — the same encoding the key is
+            // stored in (VFP9: INDEX ON CHR(130) on a CP850 table stores 0x82), and identical for the bulk
+            // build and the incremental maintenance (which has no live evaluation context).
+            Encoding = schema.Encoding,
         };
 
         var (keyType, baseLen, isChar) = ResolveKey(schema, def.KeyExpression);
@@ -391,6 +396,7 @@ internal static class CdxIndexBuilder
             IsChar = isChar,
             Pad = pad,
             Collation = collation,
+            CharacterEncoding = IndexKey.ResolveCharacterEncoding(schema, def.KeyExpression),
             KeyFn = keyFn,
             ForFn = forFn,
             Unique = def.Unique,
@@ -736,15 +742,19 @@ internal static class CdxIndexBuilder
     private static bool IsIdentityCollation(IVfpCollation collation)
         => string.Equals(collation.Name, "MACHINE", StringComparison.OrdinalIgnoreCase);
 
-    private static byte[] EncodeKey(VfpValue value, IndexKeyType type, int keyLen, IVfpCollation collation, byte pad)
+    private static byte[] EncodeKey(VfpValue value, IndexKeyType type, int keyLen, IVfpCollation collation,
+        Encoding characterEncoding, byte pad)
     {
         if (type == IndexKeyType.Character)
         {
             // Space-pad (0x20) the NATURAL collated key up to the (already collation-expanded) keyLen.
+            // MACHINE stores the raw TABLE code-page bytes (VFP9: CP850 'Peñarol' = 50 65 A4 ...).
             // For GENERAL the natural key is the head+tail weight run, which for accented / ligature
             // data is LONGER than the field width — keyLen is 2× the base width precisely so it is not
             // truncated here. The Math.Min is only a hard safety bound for a pathological over-long key.
-            var natural = value.IsNull ? Array.Empty<byte>() : collation.GetCollatedKey(value.AsString.AsSpan());
+            var natural = value.IsNull
+                ? Array.Empty<byte>()
+                : IndexKey.EncodeCharacterKey(value.AsString.AsSpan(), collation, characterEncoding);
             var key = new byte[keyLen];
             for (int i = 0; i < keyLen; i++) key[i] = pad;
             int copy = Math.Min(natural.Length, keyLen);

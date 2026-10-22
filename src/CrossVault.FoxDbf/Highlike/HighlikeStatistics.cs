@@ -351,7 +351,7 @@ public static class HighlikeStatistics
     private static string? FormatCharacterKey(CdxTag tag, byte[] keyBytes)
     {
         if (IsIdentityCollation(tag.Collation))
-            return Encoding.Latin1.GetString(keyBytes).TrimEnd(' ', '\0');
+            return tag.CharacterEncoding.GetString(keyBytes).TrimEnd(' ', '\0');
 
         // Non-MACHINE collation: weight bytes. Trim the trailing 0x20 char-key pad (and any trailing
         // 0x00) before hex-encoding so equal-but-differently-padded bounds compare equal.

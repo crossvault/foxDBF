@@ -507,24 +507,20 @@ public sealed partial class VfpInterpreter
     }
 
     /// <summary>The natural stored byte needle for a character order. Standalone IDX uses its
-    /// resolved table/direct-field encoding; CDX retains its existing collation encoding.</summary>
+    /// resolved table/direct-field encoding; a CDX tag its own stored-key form (MACHINE: table
+    /// code-page bytes, GENERAL: collation weights).</summary>
     private static byte[] NaturalCharacterKey(OrderSource src, VfpValue value)
     {
         string text = value.AsString ?? string.Empty;
         if (src.Idx is not null)
             return src.IdxCharacterEncoding.GetBytes(text);
-        var tag = src.CdxTag!;
-        return !string.Equals(tag.Collation, "MACHINE", StringComparison.OrdinalIgnoreCase)
-            ? VfpCollations.FromSortSequence(tag.Collation).GetCollatedKey(text.AsSpan())
-            : Encoding.Latin1.GetBytes(text);
+        return src.CdxTag!.EncodeCharacterKey(text);
     }
 
-    /// <summary>The natural (unpadded) byte needle used by interpreter character seeks. GENERAL and other
-    /// non-MACHINE CDX tags store collation weights; MACHINE tags retain their existing Latin-1 bytes.</summary>
+    /// <summary>The natural (unpadded) byte needle used by interpreter character seeks on a CDX tag:
+    /// exactly the bytes the CDX builder stored for that value (see <see cref="CdxTag.EncodeCharacterKey"/>).</summary>
     private static byte[] NaturalCharacterSeekNeedle(CdxTag tag, VfpValue key)
-        => tag.IsCharacterKey && !string.Equals(tag.Collation, "MACHINE", StringComparison.OrdinalIgnoreCase)
-            ? VfpCollations.FromSortSequence(tag.Collation).GetCollatedKey(key.AsString.AsSpan())
-            : Encoding.Latin1.GetBytes(key.AsString);
+        => tag.EncodeCharacterKey(key.AsString ?? string.Empty);
 
     /// <summary>Whether one stored CHARACTER key falls in the active SET KEY range, compared on collated
     /// key bytes. Single-value: SET EXACT ON ⇒ full byte-equality against the padded bound; SET EXACT OFF ⇒

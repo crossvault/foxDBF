@@ -149,7 +149,8 @@ public sealed class CdxFile : IDisposable
                 hdr.Root,
                 isChar,
                 keyType,
-                hdr.IsUnique);
+                hdr.IsUnique,
+                IndexKey.ResolveCharacterEncoding(_table, hdr.KeyExpression));
 
             _tagNames.Add(name);
             _tags[name] = tag;

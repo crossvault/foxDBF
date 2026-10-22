@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Text;
 using CrossVault.FoxDbf;
+using CrossVault.FoxDbf.Expressions;
 
 namespace CrossVault.FoxDbf.Index;
 
@@ -118,6 +119,19 @@ public readonly struct IndexKey
         }
 
         return new IndexKey(type, raw, value);
+    }
+
+    /// <summary>
+    /// Decodes a MACHINE character key stored in <paramref name="encoding"/> (the table code page): the
+    /// value is the trailing-pad-trimmed string. Never throws.
+    /// </summary>
+    internal static IndexKey DecodeCharacter(ReadOnlySpan<byte> keyBytes, Encoding encoding)
+    {
+        var raw = keyBytes.ToArray();
+        object? value;
+        try { value = encoding.GetString(raw).TrimEnd(' '); }
+        catch { value = null; }
+        return new IndexKey(IndexKeyType.Character, raw, value);
     }
 
     /// <summary>Character key: trailing spaces are significant; the value is the trailing-trimmed string.</summary>
@@ -252,6 +266,42 @@ public readonly struct IndexKey
 
     private static byte[]? EncodeCharacter(object value)
         => value is string s ? Encoding.Latin1.GetBytes(s) : null;
+
+    /// <summary>
+    /// The byte encoding a CHARACTER index key over <paramref name="keyExpr"/> stores and compares in
+    /// (VFP9: the TABLE code page — 'ñ' is 0xA4 in a CP850 table, 0xF1 in a CP1252 one). A bare
+    /// binary/NOCPTRANS field is byte-identity Latin-1 (its value is decoded 1:1); every other field and
+    /// every expression uses the table encoding. No table → the library default code page (CP1252).
+    /// </summary>
+    internal static Encoding ResolveCharacterEncoding(DbfTable? table, string? keyExpr)
+    {
+        if (table is null)
+            return Encodings.ResolveEncoding(0);
+        string field = (keyExpr ?? string.Empty).Trim();
+        foreach (var col in table.Columns)
+            if (string.Equals(col.Name, field, StringComparison.OrdinalIgnoreCase))
+                return col.IsBinary ? Encoding.Latin1 : table.Encoding;
+        return table.Encoding;
+    }
+
+    /// <summary>
+    /// The NATURAL (unpadded) stored bytes of a CHARACTER key value: under MACHINE the raw code-page
+    /// bytes in <paramref name="encoding"/>; under any other collation the collation weight key. The
+    /// SINGLE producer shared by the CDX builder, incremental maintenance, SEEK and Rushmore, so the
+    /// written keys and every needle compared against them stay in lock-step.
+    /// </summary>
+    internal static byte[] EncodeCharacterKey(ReadOnlySpan<char> s, IVfpCollation collation, Encoding encoding)
+    {
+        if (!IsMachineCollation(collation))
+            return collation.GetCollatedKey(s);
+        var bytes = new byte[encoding.GetByteCount(s)];
+        encoding.GetBytes(s, bytes);
+        return bytes;
+    }
+
+    /// <summary>True for the identity (MACHINE) collation, whose keys are raw code-page bytes.</summary>
+    internal static bool IsMachineCollation(IVfpCollation collation)
+        => string.Equals(collation.Name, VfpCollations.Machine.Name, StringComparison.OrdinalIgnoreCase);
 
     private static byte[] EncodeInteger(object value)
     {

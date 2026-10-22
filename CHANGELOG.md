@@ -19,6 +19,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   as in VFP).
 - ADO.NET: `FoxDbfCommandBuilder` recognises non-ASCII column names, and the advertised
   `DataSourceInformation.IdentifierPattern` accepts Unicode letters.
+- CHARACTER CDX key data under MACHINE collation is stored in the TABLE's code page, as VFP9 does
+  (`'Peñarol'` in a CP850 table is `50 65 A4 …`, not the CP1252 `50 65 F1 …`); a bare NOCPTRANS field keeps
+  its raw bytes, and `CHR()` inside a KEY/FOR maps bytes in the table code page. The bulk build, incremental
+  row maintenance, `CdxTag.Seek`/`DecodeKey`, Rushmore character bounds and microVFP `SEEK`/`SET KEY` use the
+  same encoding, so VFP9 finds rows in our CDX and we find rows in VFP's (an indexed `WHERE name = 'Peñarol'`
+  on a VFP-built CP850 CDX used to return no rows). CDX files for non-CP1252 tables that an earlier version of
+  this library wrote hold CP1252 key bytes: REINDEX them.
 
 ### Changed
 

@@ -119,6 +119,16 @@ public sealed class MicroVfpUnicodeIdentifierTests : IDisposable
     }
 
     [Fact]
+    public void VfpBuiltCdx_Cp850_SeekNonAsciiKey_Finds()
+    {
+        // VFP9 stores the CP850 key 'Peñarol' as 50 65 A4 ...; the needle must be encoded the same way.
+        _interp.Execute("USE uni850 ORDER razón");
+        Assert.True(_interp.EvalExpression("SEEK('Peñarol')").AsLogical);
+        Assert.True(_interp.EvalExpression("SEEK('Peña')").AsLogical);
+        Assert.False(_interp.EvalExpression("SEEK('Peñb')").AsLogical);
+    }
+
+    [Fact]
     public void VfpBuiltCdx_TagNamesAndOrder_ReadThroughMicroVfp()
     {
         _interp.Execute("USE uniidx ORDER ŠUP");

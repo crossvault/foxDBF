@@ -1544,12 +1544,12 @@ public static class QueryOptimizer
             // the residual handles it correctly on the full universe.
             if (op == CmpOp.Ne) return null;
 
-            IVfpCollation coll;
+            // The literal in the tag's OWN stored-key form (MACHINE: the table code-page bytes; GENERAL:
+            // the weight key) — the same producer the CDX builder used for the stored keys.
             byte[] lit;
             try
             {
-                coll = VfpCollations.ByName(tag.Collation);
-                lit = coll.GetCollatedKey(literal);
+                lit = tag.EncodeCharacterKey(literal);
             }
             catch { return null; }
             // Empty literal: EXACT OFF makes every row match and EXACT ON makes it the empty
@@ -1558,7 +1558,7 @@ public static class QueryOptimizer
 
             // SELECTIVE equality upper bound (the literal's head run byte-incremented); NULL ⇒
             // widen to the open first-byte fallback (historical coarse-but-correct behaviour).
-            byte[]? eqUpper = op == CmpOp.Eq ? CharEqUpperBound(coll, literal, lit) : null;
+            byte[]? eqUpper = op == CmpOp.Eq ? CharEqUpperBound(tag, literal, lit) : null;
 
             // The contiguous collated-byte WINDOW [lo, hi) that is a SUPERSET of the matches,
             // proven per op so the predicate's true-set is entirely contained in [lo, hi):
@@ -1799,13 +1799,13 @@ public static class QueryOptimizer
         /// collated keys share EXACTLY the literal's head run, then diverge at the next head.
         /// </para>
         /// </summary>
-        private static byte[]? CharEqUpperBound(IVfpCollation coll, string literal, byte[] lit)
+        private static byte[]? CharEqUpperBound(CdxTag tag, string literal, byte[] lit)
         {
             byte[] a, b;
             try
             {
-                a = coll.GetCollatedKey((literal + "A").AsSpan());
-                b = coll.GetCollatedKey((literal + "B").AsSpan());
+                a = tag.EncodeCharacterKey(literal + "A");
+                b = tag.EncodeCharacterKey(literal + "B");
             }
             catch { return null; }                       // uncertain → widen
 

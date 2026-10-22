@@ -135,13 +135,7 @@ internal static class IdxIndexBuilder
     /// binary/NOCPTRANS field is byte-identity Latin-1; a normal direct field and every character
     /// expression use the table encoding.</summary>
     internal static Encoding ResolveCharacterEncoding(DbfTable schema, string keyExpr)
-    {
-        string field = (keyExpr ?? string.Empty).Trim();
-        foreach (var col in schema.Columns)
-            if (string.Equals(col.Name, field, StringComparison.OrdinalIgnoreCase))
-                return col.IsBinary ? Encoding.Latin1 : schema.Encoding;
-        return schema.Encoding;
-    }
+        => IndexKey.ResolveCharacterEncoding(schema, keyExpr);
 
     // ---- B-tree bulk loader ----------------------------------------------------
 

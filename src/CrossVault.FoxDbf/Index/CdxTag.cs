@@ -64,6 +64,15 @@ public sealed class CdxTag
     /// </summary>
     public IndexKeyType KeyType { get; }
 
+    /// <summary>
+    /// The code page a MACHINE character key of this tag is stored in: the table encoding (Latin-1 for a
+    /// bare binary/NOCPTRANS field), or the library default (CP1252) when no table was supplied. See
+    /// <see cref="IndexKey.ResolveCharacterEncoding"/>.
+    /// </summary>
+    internal System.Text.Encoding CharacterEncoding { get; }
+
+    private readonly IVfpCollation _collation;
+
     /// <summary>Sentinel meaning "no matching record" for <see cref="Seek(object)"/> — <see langword="null"/>.</summary>
     public static readonly uint? NotFound = null;
 
@@ -78,7 +87,8 @@ public sealed class CdxTag
         uint rootPageOffset,
         bool isCharacterKey,
         IndexKeyType keyType,
-        bool isUnique = false)
+        bool isUnique = false,
+        System.Text.Encoding? characterEncoding = null)
     {
         _index = index;
         Name = name;
@@ -91,14 +101,26 @@ public sealed class CdxTag
         RootPageOffset = rootPageOffset;
         IsCharacterKey = isCharacterKey;
         KeyType = keyType;
+        CharacterEncoding = characterEncoding ?? IndexKey.ResolveCharacterEncoding(null, null);
+        _collation = VfpCollations.FromSortSequence(collation);
     }
+
+    /// <summary>
+    /// The NATURAL (unpadded) stored bytes of the character value <paramref name="s"/> in this tag: the
+    /// raw <see cref="CharacterEncoding"/> bytes under MACHINE, the collation weight key otherwise —
+    /// exactly what the CDX builder wrote, so it is the needle for SEEK / Rushmore / SET KEY.
+    /// </summary>
+    internal byte[] EncodeCharacterKey(string s)
+        => IndexKey.EncodeCharacterKey(s.AsSpan(), _collation, CharacterEncoding);
 
     /// <summary>
     /// Decodes raw key bytes into an <see cref="IndexKey"/> using this tag's
     /// <see cref="KeyType"/> (plan §C5). Never throws.
     /// </summary>
     public IndexKey DecodeKey(ReadOnlySpan<byte> keyBytes)
-        => IndexKey.Decode(keyBytes, KeyType);
+        => KeyType == IndexKeyType.Character && IndexKey.IsMachineCollation(_collation)
+            ? IndexKey.DecodeCharacter(keyBytes, CharacterEncoding)
+            : IndexKey.Decode(keyBytes, KeyType);
 
     /// <summary>
     /// Seeks a record whose key matches <paramref name="keyBytes"/> by
@@ -185,11 +207,7 @@ public sealed class CdxTag
     public uint? Seek(object value)
     {
         if (KeyType == IndexKeyType.Character && value is string s)
-        {
-            var collation = VfpCollations.FromSortSequence(Collation);
-            if (!string.Equals(collation.Name, VfpCollations.Machine.Name, StringComparison.OrdinalIgnoreCase))
-                return Seek(collation.GetCollatedKey(s.AsSpan()).AsSpan());
-        }
+            return Seek(EncodeCharacterKey(s).AsSpan());
 
         var keyBytes = IndexKey.Encode(value, KeyType);
         return keyBytes is null ? NotFound : Seek(keyBytes.AsSpan());
