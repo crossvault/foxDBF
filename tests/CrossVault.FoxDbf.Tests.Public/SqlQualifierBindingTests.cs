@@ -88,6 +88,8 @@ public sealed class SqlQualifierBindingTests : IDisposable
         Assert.Equal(1, s.Execute("UPDATE person SET amount = 1 WHERE person->id = 3")!.AffectedRecords);
         Assert.Equal(1, s.Execute("UPDATE person SET person->amount = 2 WHERE person -> id = 4")!.AffectedRecords);
         Assert.Equal(1, s.Execute("DELETE FROM person WHERE person->name = 'Jones'")!.AffectedRecords);
+        // A bare NULL in SET is the null literal, not an unknown column (VFP9: SqlDmlDbcLongNamesVfp9OracleTests UP_NULL).
+        Assert.Equal(1, s.Execute("UPDATE person SET city = NULL WHERE id = 3")!.AffectedRecords);
         Assert.Equal(new[] { 3 }, Ids(s, "SELECT id FROM person WHERE amount = 1"));
         Assert.Empty(Ids(s, "SELECT id FROM person WHERE id = 4"));
     }

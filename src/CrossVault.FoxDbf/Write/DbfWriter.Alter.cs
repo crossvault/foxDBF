@@ -81,6 +81,11 @@ public sealed partial class DbfWriter
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(newColumns);
+        // A writer opened with a column-name view (DBC long names) would migrate rows by, and write header
+        // descriptors from, names that are not the physical ones. Only the SQL DML target opens one; it never alters.
+        if (_columnTransform is not null)
+            throw new InvalidOperationException(
+                "This writer presents a column-name view (DBC long names); open the table with DbfWriter.Open(path) to alter it.");
 
         var defs = newColumns.ToList();
 
@@ -294,7 +299,7 @@ public sealed partial class DbfWriter
             // and valid — leave the writer exactly as it was.
             if (handlesClosed)
             {
-                ApplyState(OpenComponentsFor(path, reopenOptions));
+                ApplyState(OpenComponentsFor(path, reopenOptions, columnTransform: null));
                 if (dbfCommitted && hadStructuralCdx)
                 {
                     _hasStructuralCdx = true;

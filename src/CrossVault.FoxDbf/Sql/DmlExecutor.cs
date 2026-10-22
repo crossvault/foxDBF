@@ -260,9 +260,9 @@ internal sealed class DmlExecutor
     /// <summary>Bind-time check of the names in an UPDATE/DELETE: only the target itself is a source
     /// (VFP9: an unknown alias in WHERE or SET is error 13, an unknown column — qualified or bare — 1806),
     /// so neither can read null any more and silently match nothing / write .NULL.. The check runs against
-    /// the WRITER's columns, the names the WHERE/SET row adapters actually resolve: for a DBC member with
-    /// long field names (&gt; 10 chars) those are the short physical names, so such a statement now fails
-    /// loudly instead of matching nothing (follow-up: long names on the write path).</summary>
+    /// the WRITER's columns, the names the WHERE/SET row adapters actually resolve: for a DBC member those
+    /// are its long field names (<see cref="VfpSession.OpenWritableTarget"/>), so — as in VFP9 — the long
+    /// name works and the 10-char physical name of a longer field is unknown (1806).</summary>
     private QualifierBinder TargetBinder(string table, IReadOnlyList<DbfColumn> columns)
         => new(_session,
             new[] { new QualifierBinder.Source(table, table,

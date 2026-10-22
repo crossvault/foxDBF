@@ -49,6 +49,10 @@ public sealed partial class DbfWriter : IDisposable
     private int _recordCount;
     private bool _disposed;
 
+    // The column-name view the schema was opened with (DBC long field names over the 10-char physical
+    // names), or null for the physical names. Alter refuses a writer that has one.
+    private Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? _columnTransform;
+
     // §D3 locking: the concurrency mode and the precomputed structural-scheme discriminator
     // (header byte 28 bit 0 set OR version 0x30). _heldLocks tracks every byte-range lock
     // currently held through the PUBLIC surface (Lock/LockFile/scopes) so Dispose can release
@@ -101,14 +105,28 @@ public sealed partial class DbfWriter : IDisposable
     public static DbfWriter Open(string path) => Open(path, new DbfOptions());
 
     /// <summary>Open <paramref name="path"/> for record writing with explicit <paramref name="options"/>.</summary>
-    public static DbfWriter Open(string path, DbfOptions options)
+    public static DbfWriter Open(string path, DbfOptions options) => Open(path, options, columnTransform: null);
+
+    /// <summary>
+    /// Open <paramref name="path"/> for record writing with the column names of <see cref="Schema"/> passed
+    /// through <paramref name="columnTransform"/> — the SQL DML target of a DBC member uses it to present the
+    /// DBC long field names, exactly like the read path (<see cref="DbfDatabase.ApplyLongNames"/>), so
+    /// SET / WHERE / INSERT column lists and the structural <c>.cdx</c> tags (whose KEY text VFP stores with
+    /// the long names) resolve. Geometry stays physical: writes are positional and the header is never
+    /// rewritten from these names (<see cref="Alter"/> refuses such a writer).
+    /// </summary>
+    internal static DbfWriter Open(string path, DbfOptions options,
+        Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? columnTransform)
     {
         ArgumentNullException.ThrowIfNull(path);
         ArgumentNullException.ThrowIfNull(options);
         if (!File.Exists(path))
             throw new DbfFileNotFoundException($"DBF file not found: {path}");
 
-        return new DbfWriter(OpenComponentsFor(path, options), options.LockMode);
+        return new DbfWriter(OpenComponentsFor(path, options, columnTransform), options.LockMode)
+        {
+            _columnTransform = columnTransform,
+        };
     }
 
     /// <summary>
@@ -117,7 +135,8 @@ public sealed partial class DbfWriter : IDisposable
     /// sidecar. Shared by the public <see cref="Open(string, DbfOptions)"/> and the §D5
     /// rebuild-then-reopen path so both produce identical state.
     /// </summary>
-    private static OpenComponents OpenComponentsFor(string path, DbfOptions options)
+    private static OpenComponents OpenComponentsFor(string path, DbfOptions options,
+        Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? columnTransform)
     {
         // Single read/write handle; the schema DbfTable rides the SAME stream (leaveOpen)
         // so we never trip a Windows sharing violation by opening a second handle.
@@ -130,7 +149,7 @@ public sealed partial class DbfWriter : IDisposable
         bool hasStructuralCdx;
         try
         {
-            schema = DbfTable.Open(stream, options, leaveOpen: true);
+            schema = DbfTable.Open(stream, options, leaveOpen: true, dbfPath: null, columnTransform);
 
             // §D3 discriminator: structural .cdx (header byte 28 bit 0) OR version byte 0x30.
             // Read byte 28 straight off the raw header on our own stream. hasStructuralCdx is the

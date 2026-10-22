@@ -744,23 +744,31 @@ public sealed class VfpSession : IDisposable
 
         string path;
         ReopenInfo? reopen = null;
+        // The column names the session READS this table under (a DBC member: its long field names); the
+        // writer presents the same names so SET / WHERE / INSERT column lists and the .cdx tag expressions
+        // resolve exactly as in a SELECT. Taken from the read handle that is released below, else from the
+        // DBC member itself — never keyed by path (a transaction redirects the write to a private copy).
+        IReadOnlyList<DbfColumn> readColumns;
         if (existing is not null)
         {
             path = existing.Table.SourcePath
                    ?? throw new FoxDbfSqlException($"Open table '{name}' has no source path on disk to write to.");
+            readColumns = existing.Table.Columns;
             reopen = new ReopenInfo(existing.Area, existing.Table.SourcePath!, existing.Alias, existing.Exclusive, existing.NoUpdate);
             _areas.Remove(existing.Area);
             existing.Dispose(); // release the read handle so the writer can open the file.
         }
         else
         {
-            path = Path.GetFullPath(ResolveWritablePath(name));
+            (path, readColumns) = ResolveWritablePath(name);
+            path = Path.GetFullPath(path);
             // The table may be open under a CUSTOM alias (alias != name): match by the RESOLVED file
             // path so its stale read handle is released for the write and re-opened on dispose —
             // otherwise the write opens a second handle and the aliased area keeps a stale view.
             if (FindAreaByPath(path) is { } aliased)
             {
                 exclusive = aliased.Exclusive;
+                readColumns = aliased.Table.Columns;
                 reopen = new ReopenInfo(aliased.Area, path, aliased.Alias, aliased.Exclusive, aliased.NoUpdate);
                 _areas.Remove(aliased.Area);
                 aliased.Dispose();
@@ -782,7 +790,7 @@ public sealed class VfpSession : IDisposable
             writer = DbfWriter.Open(path, new DbfOptions
             {
                 LockMode = exclusive ? Write.LockMode.Exclusive : Write.LockMode.Shared,
-            });
+            }, NamesOf(readColumns));
         }
         catch
         {
@@ -793,20 +801,41 @@ public sealed class VfpSession : IDisposable
     }
 
     /// <summary>Resolve the on-disk path of a writable table: the open DBC's long table names FIRST,
-    /// else a free <c>&lt;name&gt;.dbf</c> in the data directory.</summary>
-    private string ResolveWritablePath(string name)
+    /// else a free <c>&lt;name&gt;.dbf</c> in the data directory. Also returns the column names the table
+    /// reads under (a DBC member's long field names; empty for a free table, whose physical names stand).</summary>
+    private (string Path, IReadOnlyList<DbfColumn> ReadColumns) ResolveWritablePath(string name)
     {
         if (_db is not null && TryDbcName(name, out var objectName))
         {
             using var t = _db.OpenTable(objectName);
-            return t.SourcePath
-                   ?? throw new FoxDbfSqlException($"DBC table '{name}' has no source path on disk.");
+            return (t.SourcePath
+                    ?? throw new FoxDbfSqlException($"DBC table '{name}' has no source path on disk."), t.Columns);
         }
         string? path = ResolveFreePath(name);
         if (path is null)
             throw new FoxDbfSqlException(
                 $"Table '{name}' was not found in the open database or data directory.") { VfpErrorNumber = 1 }; // VFP err 1 "does not exist".
-        return path;
+        return (path, Array.Empty<DbfColumn>());
+    }
+
+    /// <summary>The writer's column-name view: rename the PHYSICAL user columns positionally to the user
+    /// columns of <paramref name="readColumns"/> (the hidden <c>_NullFlags</c> system column, which the
+    /// public column list does not carry, keeps its name — <see cref="DbfDatabase.ApplyLongNames"/>).
+    /// Applied only when the read handle has the same geometry as the file the writer opens; otherwise (or
+    /// for a free table) the physical names stand.</summary>
+    private static Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? NamesOf(IReadOnlyList<DbfColumn> readColumns)
+    {
+        var read = readColumns.Where(c => !c.IsSystem).ToList();
+        if (read.Count == 0) return null;
+        return physical =>
+        {
+            var user = physical.Where(c => !c.IsSystem).ToList();
+            if (user.Count != read.Count) return physical;
+            for (int i = 0; i < user.Count; i++)
+                if (user[i].Offset != read[i].Offset || user[i].Type != read[i].Type || user[i].Length != read[i].Length)
+                    return physical;
+            return DbfDatabase.ApplyLongNames(physical, read.Select(c => c.Name).ToList());
+        };
     }
 
     /// <summary>Re-open a work area that <see cref="OpenWritableTarget"/> temporarily closed, in the

@@ -58,7 +58,11 @@ internal sealed class QualifierBinder
             int dot = name.IndexOf('.');
             if (dot < 0)
             {
-                if (_checkBare && !_sources.Any(s => s.Columns.Contains(name))) throw ColumnNotFound(name);
+                // A bare NULL is SQL's null literal (UPDATE … SET f = NULL), not a column; the expression
+                // engine only knows .NULL. and parses it as a name that reads null.
+                if (_checkBare && !name.Equals("NULL", StringComparison.OrdinalIgnoreCase)
+                    && !_sources.Any(s => s.Columns.Contains(name)))
+                    throw ColumnNotFound(name);
                 continue;
             }
             if (dot == 0 || dot != name.LastIndexOf('.')) continue;

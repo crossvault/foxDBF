@@ -206,7 +206,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   ("Alias 'ZZ' is not found."), a column the alias does not have, an undefined `m.` variable and a bad
   qualifier in ORDER BY / GROUP BY raise 1806. Previously `WHERE zz.id = 3` silently matched no rows and
   `SELECT zz.id FROM person` silently returned `person.id`. `UPDATE` / `DELETE` also reject an unknown
-  unqualified name (1806); it used to read `.NULL.` and match nothing or write `.NULL.`.
+  unqualified name (1806); it used to read `.NULL.` and match nothing or write `.NULL.`. A bare `NULL`
+  (`SET field = NULL`) stays the null literal.
+- `UPDATE`, `DELETE` and `INSERT` on a DBC table no longer accept the truncated 10-character physical name of
+  a longer field (`customer_n` for `customer_name`): it is error 1806, as in VFP9. It used to be the only name
+  these statements knew (see Fixed); use the long name.
 - A qualifier naming another open work area, or the table name under a local alias
   (`SELECT … FROM person p WHERE person.id = 3`), reads that work area's current record in microVFP, a
   constant for the whole query, as in VFP9. The pure SQL `VfpSession` keeps no record pointer and now raises
@@ -215,10 +219,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `.NULL.`; `alias.field` naming no open work area raises error 13 and an unknown field of an open alias
   error 12; a field read at EOF returns the blank value (0, empty string, .F.) instead of `.NULL.`.
 
-### Known limitations
+### Fixed
 
-- `UPDATE` / `DELETE` on a DBC table only know the short (10-character) physical field names. A long field
-  name in such a statement now fails with 1806 instead of silently matching no rows.
+- SQL `UPDATE`, `DELETE` and `INSERT` on a DBC table use its long field names, as VFP9 does: in SET, WHERE,
+  `table.long_name`, the INSERT column list and through a work-area alias. Previously a field name longer than
+  10 characters was unknown (`UPDATE customer_accounts SET customer_name = …` failed with "does not exist", a
+  long name in WHERE matched no rows). The structural `.cdx` of such a table is now maintained by these
+  statements: VFP9 stores the tag KEY with the long names (`CUSTOMER_NAME`), which the write path could not
+  resolve, so an `UPDATE` or `INSERT` deleted the `.cdx` and VFP had to rebuild it.
 
 ## [0.10.0] - 2026-10-22
 

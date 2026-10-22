@@ -371,7 +371,7 @@ public sealed partial class DbfTable : IDisposable
     public static DbfTable Open(Stream stream, DbfOptions options, bool leaveOpen = false)
         => Open(stream, options, leaveOpen, dbfPath: null);
 
-    private static DbfTable Open(Stream stream, DbfOptions options, bool leaveOpen, string? dbfPath,
+    internal static DbfTable Open(Stream stream, DbfOptions options, bool leaveOpen, string? dbfPath,
         Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? columnTransform = null)
     {
         ArgumentNullException.ThrowIfNull(stream);
