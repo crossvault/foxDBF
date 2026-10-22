@@ -8,6 +8,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP file commands wrote and read UTF-8. `COPY MEMO … TO` now writes the memo in the table's code page
+  (a binary memo byte for byte), `COPY PROCEDURES TO` / `APPEND PROCEDURES FROM` round-trip the stored-procedure
+  source byte for byte (an APPEND used to store mangled non-ASCII text in the DBC), and `LIST/DISPLAY MEMORY`,
+  `DISPLAY STRUCTURE` and `DISPLAY TABLES` `TO FILE` use the interpreter's byte model, the table's or the
+  container's code page.
+- Identifiers in `.prg` source may use the CP1252 letters 0x80–0x9F (`Š Œ š œ Ÿ ƒ`), which the byte-per-char
+  (Latin-1) reader used to turn into control characters, so such a variable or a field like `ŠUMA` was not
+  recognised. String literals and `TEXT … ENDTEXT` blocks keep their raw bytes.
 - CDX tags whose KEY is an expression (`cust+STR(no,4)`, `DTOS(d)`, `UPPER(name)`, `no*2`, `YEAR(d)`, …) now get
   their key type from the expression's static type, as the index builder already did and as VFP9 stores them
   (`id+1` on an Integer field is an 8-byte Numeric key). Previously such a tag was `IndexKeyType.Unknown` and

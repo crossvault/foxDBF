@@ -306,7 +306,8 @@ public sealed partial class VfpInterpreter
                   .Append(TypeChar(v)).Append("  ").Append(DumpValue(v)).AppendLine();
             }
         }
-        File.WriteAllText(ResolveDataPath(NameOf(s.ToFile)), sb.ToString());
+        // Memory variables are byte-per-char (Latin-1) strings in microVFP, so Latin-1 writes their bytes back.
+        File.WriteAllBytes(ResolveDataPath(NameOf(s.ToFile)), Encoding.Latin1.GetBytes(sb.ToString()));
     }
 
     private static char TypeChar(VfpValue v) => v.Type switch
@@ -340,13 +341,15 @@ public sealed partial class VfpInterpreter
         if (!s.Append)
         {
             string outPath = ResolveDataPath(NameOf(s.File));
-            File.WriteAllText(outPath, db.StoredProcedureSource ?? string.Empty);
+            // The CODE memo is NOCPTRANS and decodes byte-per-char (Latin-1); write those bytes back as stored.
+            File.WriteAllBytes(outPath, Encoding.Latin1.GetBytes(db.StoredProcedureSource ?? string.Empty));
             return;
         }
 
         string srcPath = ResolveDataPath(NameOf(s.File));
         if (!File.Exists(srcPath)) return;
-        string appended = File.ReadAllText(srcPath);
+        // Byte-per-char like the .prg reader and the CODE memo: no UTF-8 decoding, no BOM detection.
+        string appended = Encoding.Latin1.GetString(File.ReadAllBytes(srcPath));
         string existing = db.StoredProcedureSource ?? string.Empty;
         string combined = existing.Length == 0 || existing.EndsWith('\n')
             ? existing + appended
@@ -460,7 +463,7 @@ public sealed partial class VfpInterpreter
               .Append(col.Length.ToString(CultureInfo.InvariantCulture).PadLeft(5)).Append("  ")
               .Append(dec.PadLeft(5)).Append("      No").AppendLine();
         }
-        File.WriteAllText(ResolveDataPath(NameOf(s.ToFile)), sb.ToString());
+        File.WriteAllBytes(ResolveDataPath(NameOf(s.ToFile)), wa.Table.Encoding.GetBytes(sb.ToString()));
     }
 
     /// <summary>DISPLAY | LIST TABLES [TO FILE cFile] — list the current DBC's member tables + resolved paths.
@@ -476,7 +479,7 @@ public sealed partial class VfpInterpreter
         sb.AppendLine("  Name  Source");
         foreach (var name in db.TableNames)
             sb.Append("  ").Append(name).Append("  ").AppendLine(db.GetTablePath(name) ?? string.Empty);
-        File.WriteAllText(ResolveDataPath(NameOf(s.ToFile)), sb.ToString());
+        File.WriteAllBytes(ResolveDataPath(NameOf(s.ToFile)), db.ContainerEncoding.GetBytes(sb.ToString()));
     }
 
     /// <summary>Map a DBF field-type code to VFP's DISPLAY STRUCTURE "Type" word (letters only, so the shared

@@ -21,17 +21,68 @@ public static class PrgParser
     public static PrgProgram Parse(string source)
     {
         if (source is null) throw new ArgumentNullException(nameof(source));
-        var lines = PreprocessConditionals(BuildLogicalLines(source));
+        var lines = PreprocessConditionals(BuildLogicalLines(NormalizeC1Letters(source)));
         return new Impl(lines).ParseProgram();
     }
 
     /// <summary>Reads <paramref name="path"/> (Windows-1252 / Latin-1, as VFP exports it) and
     /// parses it. Deliberately Latin-1, not CP1252: the interpreter models a VFP string as one char per byte
     /// (CHR(135) is U+0087), and source literals must match that — real stored-procedure code compares CHR()
-    /// output with a #DEFINE of raw 0x87… bytes. The price: CP1252 letters in 0x80–0x9F (Š Œ š œ Ÿ ƒ) used in an
-    /// IDENTIFIER inside a .prg file decode to C1 controls and do not scan as letters.</summary>
+    /// output with a #DEFINE of raw 0x87… bytes. CP1252 letters in 0x80–0x9F (Š Œ š œ Ÿ ƒ) therefore decode to
+    /// C1 controls; <see cref="Parse"/> maps them back to the letters OUTSIDE literals (see NormalizeC1Letters).</summary>
     public static PrgProgram ParseFile(string path)
         => Parse(File.ReadAllText(path, Encoding.Latin1));
+
+    /// <summary>
+    /// Maps the C1 controls U+0080–U+009F that a Latin-1-decoded .prg carries for the CP1252 LETTERS Š Œ Ž š œ ž
+    /// Ÿ ƒ (and the modifier ˆ) back to those letters — but only OUTSIDE string literals (<c>'…'</c>, <c>"…"</c>,
+    /// a <c>[…]</c> that does not follow a name, <c>)</c> or <c>]</c>) and outside <c>TEXT … ENDTEXT</c> blocks,
+    /// which keep the interpreter's byte-per-char model (<c>'Š' == CHR(138)</c>). Identifiers then match table
+    /// fields decoded in the table code page (<c>ŠUMA</c> is U+0160). Text without C1 characters is returned
+    /// unchanged; a literal never spans lines in VFP, so every literal state ends at the line break.
+    /// </summary>
+    internal static string NormalizeC1Letters(string source)
+    {
+        int first = -1;
+        for (int k = 0; k < source.Length; k++)
+            if (source[k] is >= '\u0080' and <= '\u009F') { first = k; break; }
+        if (first < 0) return source;
+
+        var sb = new StringBuilder(source);
+        char quote = '\0';
+        bool inText = false, lineStart = true;
+        char prev = '\0';  // last non-blank char outside a literal on this line
+        for (int i = 0; i < sb.Length; i++)
+        {
+            char c = sb[i];
+            if (c is '\r' or '\n') { quote = '\0'; lineStart = true; prev = '\0'; continue; }
+            if (lineStart && c is not (' ' or '\t'))
+            {
+                lineStart = false;
+                string word = FirstWord(sb, i);
+                if (inText) { if (word.Equals("ENDTEXT", StringComparison.OrdinalIgnoreCase)) inText = false; else continue; }
+                else if (word.Equals("TEXT", StringComparison.OrdinalIgnoreCase)) inText = true;
+            }
+            if (inText) continue;
+            if (quote != '\0') { if (c == quote) quote = '\0'; continue; }
+            if (c is '\'' or '"') { quote = c; continue; }
+            if (c == '[' && !(VfpIdentifier.IsPart(prev) || prev is ')' or ']')) { quote = ']'; continue; }
+            if (c is >= '\u0080' and <= '\u009F')
+            {
+                char letter = Cp1252.ToChar((byte)c);
+                if (char.IsLetter(letter)) sb[i] = letter;
+            }
+            if (c is not (' ' or '\t')) prev = sb[i];
+        }
+        return sb.ToString();
+    }
+
+    private static string FirstWord(StringBuilder sb, int start)
+    {
+        int end = start;
+        while (end < sb.Length && VfpIdentifier.IsPart(sb[end])) end++;
+        return sb.ToString(start, end - start);
+    }
 
     // ── logical-line model ───────────────────────────────────────────────────
 

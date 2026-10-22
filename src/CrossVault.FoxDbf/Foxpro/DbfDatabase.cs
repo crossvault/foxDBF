@@ -41,6 +41,9 @@ public sealed partial class DbfDatabase : IDisposable
     }
 
     private readonly DbfTable _dbc;
+
+    /// <summary>The container's own code page — the encoding its object names (table names) decode with.</summary>
+    internal System.Text.Encoding ContainerEncoding => _dbc.Encoding;
     private readonly DbfDatabaseOptions _options;
     private readonly string _dbcDir;
     private readonly List<TableNode> _tables = new();

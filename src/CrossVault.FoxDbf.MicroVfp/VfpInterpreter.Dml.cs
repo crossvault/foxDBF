@@ -725,7 +725,11 @@ public sealed partial class VfpInterpreter
             ? target
             : Path.Combine(Session.DataDirectory ?? Directory.GetCurrentDirectory(), target);
         if (!Path.HasExtension(path)) path += ".txt";
-        try { File.WriteAllText(path, content); } catch { /* best-effort export */ }
+        // VFP writes the memo's bytes as stored: re-encode with the encoding the value was decoded with
+        // (the table code page, or Latin-1 byte identity for a binary / NOCPTRANS memo), never UTF-8.
+        var column = wa.Table.Columns.FirstOrDefault(c => string.Equals(c.Name, field, StringComparison.OrdinalIgnoreCase));
+        var encoding = column is { IsBinary: true } ? Encoding.Latin1 : wa.Table.Encoding;
+        try { File.WriteAllBytes(path, encoding.GetBytes(content)); } catch { /* best-effort export */ }
     }
 
     private void ExecTotal(TotalStmt s)
