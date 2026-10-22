@@ -38,8 +38,9 @@ the rest of this project (byte-compatible reads/writes, the same Rushmore-optimi
 - **Error handling**: `TRY … CATCH [TO oErr] [WHEN …] … FINALLY … ENDTRY` and `THROW` with VFP9 semantics,
   `ON ERROR`, `AERROR()` (full 7-column result-array contract), `MESSAGE()`/`ERROR()`/`LINENO()`. A statement
   microVFP cannot execute raises a catchable VFP error (16 unknown verb, 36 unparsed clause, 1 unknown `DO`
-  target, 10 unparseable expression) instead of being skipped; only a documented list of UI/console-only
-  commands is ignored headless.
+  target, 10 unparseable expression) instead of being skipped, and a call of a function nobody implements
+  raises VFP9's error 1 "File 'name.prg' does not exist." instead of evaluating to `.NULL.`; only a
+  documented list of UI/console-only commands is ignored headless.
 - A broad runtime function library: string/date/math built-ins (`TRANSFORM`, `PROPER`, `STREXTRACT`,
   `GETWORDNUM`, `SOUNDEX`, `STRCONV`, `TEXTMERGE`, …), array functions (`ACOPY`/`ADEL`/`AINS`/`ASORT`/
   `AELEMENT`/`AFIELDS`/…), and session/database state (`RECNO()`, `RECCOUNT()`, `ALIAS()`, `SELECT()`,

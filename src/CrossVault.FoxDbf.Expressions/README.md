@@ -20,6 +20,10 @@ sits alongside `CrossVault.FoxDbf.dll` in the same package).
   date (`DTOC`, `DTOS`, `GOMONTH`, …), numeric (`ROUND`, `INT`, `MOD`, …), and logical/type functions
   (`IIF`, `EMPTY`, `ISNULL`, `ISBLANK`, `TYPE`, `BETWEEN`, `INLIST`, …), growing towards full VFP9
   coverage.
+- **Host hook** — a row that also implements `IVfpFunctionHost` handles functions the engine does not
+  (`TryInvoke`) and decides what a call of an unknown function means (`UnknownFunction`; the default, and
+  the behaviour without a host, is `.NULL.` — microVFP raises VFP error 1). `AND` / `OR` short-circuit as
+  in VFP9.
 - **Byte-exact MACHINE / GENERAL collation** — the same two collating sequences Visual FoxPro uses
   for indexing and comparisons, reverse-engineered against real VFP9 CDX keys.
 

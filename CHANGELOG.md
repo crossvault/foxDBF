@@ -113,9 +113,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   non-object name 1924, on an unknown name 1923. Not modelled and therefore raising now: 4-letter function
   abbreviations (`SUBS()`, `RECC()` — VFP accepts them) and `CREATEOBJECT()`. `TYPE()` of such a call is
   `"U"`; `TYPE()` of a built-in call now reports its result type (`TYPE("FILE('x')")` is `"L"`; it was
-  `"U"`). Expressions evaluated without the microVFP host are unchanged — an unknown function there is still
-  `.NULL.`: the SQL / ADO.NET path, index keys, and inside microVFP embedded SQL, `INDEX ON` and
-  `SET FILTER`. `IVfpFunctionHost` gains `UnknownFunction(name, args)` with a default implementation that
+  `"U"`). Stored procedures and RI triggers that microVFP runs for the ADO.NET enforced write model raise
+  the error too; a DBC `RULE` calling an unknown function was already reported as a violation and still is,
+  a field `DEFAULT` still evaluates to `.NULL.`. Expressions evaluated without an attached interpreter are
+  unchanged — an unknown function there is still `.NULL.`: the plain SQL / ADO.NET path, index keys, and
+  inside microVFP embedded SQL, `INDEX ON` and `SET FILTER`. `IVfpFunctionHost` gains `UnknownFunction(name, args)` with a default implementation that
   returns `.NULL.`, so existing hosts keep their behaviour.
 - `AND` / `OR` short-circuit like VFP9 in every expression path (microVFP, SQL, filters, compiled
   delegates): a logical `.F.` left of `AND` or `.T.` left of `OR` decides the result and the right operand is
