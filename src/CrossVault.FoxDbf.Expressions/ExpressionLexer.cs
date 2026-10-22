@@ -242,6 +242,22 @@ internal sealed class ExpressionLexer
             while (i < s.Length && (VfpIdentifier.IsPart(s[i]))) i++;
         }
 
+        // The classic xBase qualifier alias->field (also m->var) is the same reference as alias.field and
+        // is folded into the identical "alias.field" token. VFP9 accepts blanks on either side of the arrow
+        // but not inside it ("a- >b" is error 1231), and only one arrow per reference ("a->b->c" is an
+        // error); "a - b > c" never contains the adjacent pair, so arithmetic/comparison is unaffected.
+        if (TryArrowQualifier(s, i, out int fieldStart))
+        {
+            string alias = s.Slice(start, i - start).ToString();
+            if (alias.Contains('.'))
+                throw new ExpressionException($"'{alias}' is not an alias for a '->' qualifier.", start);
+            i = fieldStart;
+            while (i < s.Length && VfpIdentifier.IsPart(s[i])) i++;
+            if (TryArrowQualifier(s, i, out _))
+                throw new ExpressionException("Only one '->' qualifier is allowed in a field reference.", i);
+            return new(TokenType.Identifier, start, alias + "." + s.Slice(fieldStart, i - fieldStart).ToString());
+        }
+
         string text = s.Slice(start, i - start).ToString();
         if (arrow) text = text.Replace("->", ".", StringComparison.Ordinal);
         return text.ToUpperInvariant() switch
@@ -251,6 +267,24 @@ internal sealed class ExpressionLexer
             "NOT" => new(TokenType.Not, start),
             _ => new(TokenType.Identifier, start, text),
         };
+    }
+
+    /// <summary>
+    /// True when <paramref name="i"/> (just past an identifier) starts an xBase <c>-&gt;</c> qualifier:
+    /// optional blanks, the adjacent pair <c>-&gt;</c>, optional blanks, then an identifier start, whose
+    /// index is returned in <paramref name="fieldStart"/>.
+    /// </summary>
+    internal static bool TryArrowQualifier(ReadOnlySpan<char> s, int i, out int fieldStart)
+    {
+        fieldStart = -1;
+        int j = i;
+        while (j < s.Length && s[j] is ' ' or '\t') j++;
+        if (j + 1 >= s.Length || s[j] != '-' || s[j + 1] != '>') return false;
+        j += 2;
+        while (j < s.Length && s[j] is ' ' or '\t') j++;
+        if (j >= s.Length || !VfpIdentifier.IsStart(s[j])) return false;
+        fieldStart = j;
+        return true;
     }
 
     /// <summary>

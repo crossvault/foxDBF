@@ -85,6 +85,50 @@ internal sealed class SelectExecutor
     /// so the microVFP host answers the functions the engine does not implement when microVFP runs the query.</summary>
     private IRowContext Bind(IRowContext row) => _host is null ? row : new HostedRow(row, _host);
 
+    /// <summary>The bind-time qualifier check for this query level: its own sources, plus whatever the
+    /// enclosing scope (<see cref="_outer"/>: a correlated parent row and/or the interpreter) resolves.</summary>
+    private QualifierBinder Binder(IReadOnlyList<QualifierBinder.Source> sources)
+    {
+        if (_outer is null && _host is null) return new QualifierBinder(_session, sources, null, hostBound: false);
+        // Host-bound when microVFP runs the query: a hosted executor, or an outer chain ending in the interpreter.
+        bool host = _host is not null;
+        for (IRowContext? o = _outer; o is not null && !host; )
+        {
+            if (o is RowContext rc) o = rc.Outer;
+            else if (o is CompositeRowContext cc) o = cc.Outer;
+            else host = true;
+        }
+        return new QualifierBinder(_session, sources, OuterKnows, host);
+    }
+
+    private bool OuterKnows(string q)
+    {
+        for (IRowContext? o = _outer; o is not null; )
+        {
+            switch (o)
+            {
+                case RowContext rc:
+                    if (rc.HasAlias(q)) return true;
+                    o = rc.Outer;
+                    break;
+                case CompositeRowContext cc:
+                    if (cc.HasAlias(q)) return true;
+                    o = cc.Outer;
+                    break;
+                case HostedRow hr:
+                    o = hr.Inner;          // a microVFP-hosted outer row: look through the wrapper.
+                    break;
+                default:
+                    // The interpreter: an open work area (read at its current record), or a defined
+                    // variable such as an object reference. m. is handled by the binder itself.
+                    return _session.FindAreaByAlias(q) is not null || o.GetField(q) is not null;
+            }
+        }
+        // An uncorrelated hosted subquery has no outer row: the interpreter itself still resolves names.
+        return _outer is null && _host is IRowContext interp
+            && (_session.FindAreaByAlias(q) is not null || interp.GetField(q) is not null);
+    }
+
     public SqlResult Run(SelectStatement sel)
     {
         PushdownFilters = Array.Empty<string>(); // reset: RunSingle / RunUnion never push
@@ -322,6 +366,9 @@ internal sealed class SelectExecutor
         try
         {
             string rowAlias = from.Alias ?? existing?.Alias ?? from.Table;
+            Binder(new[] { new QualifierBinder.Source(rowAlias, from.Table,
+                new HashSet<string>(table.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase)) })
+                .CheckSelect(sel);
             return Execute(table, ctx, sel, rowAlias);
         }
         finally
@@ -828,6 +875,10 @@ internal sealed class SelectExecutor
                 if (!seenAlias.Add(s.Alias))
                     throw new FoxDbfSqlException(
                         $"Duplicate source alias '{s.Alias}' in FROM/JOIN; give each table a distinct alias.");
+
+            var fromTables = sel.From.Select(f => f.Table).Concat(sel.Joins.Select(j => j.Source.Table)).ToArray();
+            Binder(src.Select((s, i) => new QualifierBinder.Source(s.Alias, fromTables[i], s.ColNames)).ToArray())
+                .CheckSelect(sel);
 
             // Per-step descriptor for sources[1..]: comma-FROM entries are an inner cross join
             // (ON is implicitly .T.); each explicit JOIN carries its own type + ON predicate.
@@ -2142,6 +2193,8 @@ internal sealed class SelectExecutor
         public int RecNo { get; }
         public int RecCount { get; }
         public bool Deleted => _rec.IsDeleted;
+        public IRowContext? Outer => _outer;
+        public bool HasAlias(string q) => string.Equals(q, _alias, StringComparison.OrdinalIgnoreCase);
 
         public object? GetField(string name)
         {
@@ -2174,6 +2227,7 @@ internal sealed class SelectExecutor
         private readonly IRowContext _row;
         private readonly IVfpFunctionHost _host;
         public HostedRow(IRowContext row, IVfpFunctionHost host) { _row = row; _host = host; }
+        public IRowContext Inner => _row;
         public int RecNo => _row.RecNo;
         public int RecCount => _row.RecCount;
         public bool Deleted => _row.Deleted;
@@ -2281,6 +2335,9 @@ internal sealed class SelectExecutor
         private readonly IRowContext? _outer;
         public CompositeRowContext(JoinSource[] src, DbfRecord?[] recs, IRowContext? outer = null)
         { _src = src; _recs = recs; _outer = outer; }
+        public IRowContext? Outer => _outer;
+        public bool HasAlias(string q)
+            => Array.Exists(_src, s => string.Equals(s.Alias, q, StringComparison.OrdinalIgnoreCase));
         public int RecNo => 0;
         public int RecCount => 0;
         public bool Deleted => false;

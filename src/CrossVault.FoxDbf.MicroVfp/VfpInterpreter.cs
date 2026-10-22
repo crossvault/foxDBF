@@ -1189,6 +1189,9 @@ public sealed partial class VfpInterpreter
 
     /// <summary>Resolve a name for the expression engine: qualified <c>alias.field</c> → that area's
     /// current record; <c>m.var</c> → memvar; bare → CURRENT area field, else memvar, else #DEFINE.</summary>
+    private static readonly HashSet<string> ObjectHeads = new(StringComparer.OrdinalIgnoreCase)
+        { "THIS", "THISFORM", "THISFORMSET", "_SCREEN", "_VFP" };
+
     internal object? ResolveName(string name)
     {
         if (name.Equals("_triggerlevel", StringComparison.OrdinalIgnoreCase))
@@ -1206,10 +1209,17 @@ public sealed partial class VfpInterpreter
                 // Batch 4: an alias.field read observes this area — flush any deferred fast-append refresh
                 // first (and re-fetch, since the reopen replaces the WorkArea). No-op when nothing pending.
                 if (_pendingAppendPaths is { Count: > 0 }) { FlushPendingAppends(wa.Area); wa = Session.FindAreaByAlias(head); }
-                return wa is not null ? ReadField(wa, rest) : null;
+                if (wa is null) return null;
+                if (ColumnIndex(wa.Table, rest) < 0 && rest.IndexOf('.') < 0)
+                    throw new MicroVfpRuntimeException($"Variable '{rest.ToUpperInvariant()}' is not found.", 12);
+                return ReadField(wa, rest);
             }
             if (TryResolveObjectMember(head, rest, out var member)) return member;   // CATCH TO oErr → oErr.ErrorNo
-            return null;                                  // object property / DBC!table.field → undefined.
+            // An object reference (a defined variable) or THIS/THISFORM member: not modeled → undefined.
+            if (Memory.IsDefined(head) || Memory.FindArray(head) is not null || ObjectHeads.Contains(head))
+                return null;
+            // VFP9: alias.field / alias->field naming no open work area is error 13, never a silent .NULL.
+            throw new MicroVfpRuntimeException($"Alias '{head.ToUpperInvariant()}' is not found.", 13);
         }
 
         var cur = Session.AreaAt(Session.CurrentArea);
@@ -1271,7 +1281,8 @@ public sealed partial class VfpInterpreter
         if (idx < 0) return null;
         var m = Meta(wa.Area);
         int rc = wa.Table.RecordCount;
-        if (m.RecNo < 1 || m.RecNo > rc) return _probing ? BlankFor(wa.Table.Columns[idx]) : null;
+        // At EOF/BOF VFP9 reads the BLANK record — 0 / "" / .F., not .NULL. (oracle: TN_EOF_PROJ).
+        if (m.RecNo < 1 || m.RecNo > rc) return BlankFor(wa.Table.Columns[idx]);
 
         DbfRecord rec;
         if (m.Cached is { } c && m.CachedRec == m.RecNo) rec = c;
@@ -1441,15 +1452,6 @@ public sealed partial class VfpInterpreter
         // so dynamically-evaluated strings (TYPE/EVAL/macro/DIMENSION dimension expressions) resolve arrays.
         if (text.IndexOf('&') >= 0) text = ExpandMacrosInLine(text);
         return ParseExpressionCached(MicroVfpExprRewrite.Normalize(text)).Evaluate(_row, _ctx);
-    }
-
-    /// <summary>EVALUATE(): a VFP runtime error raised while evaluating (error 1 for an unknown function, an
-    /// error inside a called UDF, …) propagates as in VFP9. Anything else — notably text the expression engine
-    /// cannot parse — still yields .NULL. (unchanged).</summary>
-    private VfpValue EvaluateFn(string text)
-    {
-        try { return EvalTextLoud(text); }
-        catch (Exception ex) when (ex is not IVfpErrorCode { VfpErrorNumber: not null }) { return VfpValue.Null; }
     }
 
     private static bool Truth(VfpValue v) => v.Type == VfpType.Logical && v.AsLogical;

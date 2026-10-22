@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace CrossVault.FoxDbf.Sql;
@@ -138,6 +139,68 @@ internal static class SqlLexer
 
         tokens.Add(new Token(TokKind.Eof, string.Empty, n, n));
         return tokens;
+    }
+
+    /// <summary>
+    /// Rewrites every xBase <c>alias-&gt;field</c> qualifier (blanks allowed around the arrow, as in VFP9)
+    /// to the equivalent <c>alias.field</c>, outside string / bracket / date literals and <c>&amp;&amp;</c>
+    /// comments. The SQL layer then sees ONE spelling of a qualified reference, so every textual consumer
+    /// (alias stripping for the optimizer, column naming, source resolution) treats both forms alike.
+    /// An arrow after an already dotted name (<c>m.a-&gt;b</c>) or a second arrow (<c>a-&gt;b-&gt;c</c>) is
+    /// left in place for the expression lexer to reject. Text without "-&gt;" is returned unchanged;
+    /// otherwise source positions after a folded arrow refer to the rewritten text.
+    /// </summary>
+    internal static string NormalizeArrowQualifiers(string s)
+    {
+        if (s.IndexOf("->", StringComparison.Ordinal) < 0) return s;
+        var sb = new System.Text.StringBuilder(s.Length);
+        int i = 0, n = s.Length;
+        while (i < n)
+        {
+            char c = s[i];
+            if (c == '&' && i + 1 < n && s[i + 1] == '&')
+            {
+                int e = s.IndexOf('\n', i);
+                if (e < 0) e = n;
+                sb.Append(s, i, e - i);
+                i = e;
+                continue;
+            }
+            char close = c switch { '\'' => '\'', '"' => '"', '[' => ']', '{' => '}', _ => '\0' };
+            if (close != '\0')
+            {
+                int e = s.IndexOf(close, i + 1);
+                e = e < 0 ? n : e + 1;
+                sb.Append(s, i, e - i);
+                i = e;
+                continue;
+            }
+            if (IsIdentStart(c) && (i == 0 || (!IsIdentPart(s[i - 1]) && s[i - 1] != '.')))
+            {
+                int start = i;
+                while (i < n && IsIdentPart(s[i])) i++;
+                sb.Append(s, start, i - start);
+                if (i < n && s[i] == '.') continue;   // dotted name: never an arrow alias
+                int j = i;
+                while (j < n && s[j] is ' ' or '\t') j++;
+                if (j + 1 < n && s[j] == '-' && s[j + 1] == '>')
+                {
+                    int f = j + 2;
+                    while (f < n && s[f] is ' ' or '\t') f++;
+                    if (f < n && IsIdentStart(s[f]))
+                    {
+                        int fe = f;
+                        while (fe < n && IsIdentPart(s[fe])) fe++;
+                        sb.Append('.').Append(s, f, fe - f);
+                        i = fe;
+                    }
+                }
+                continue;
+            }
+            sb.Append(c);
+            i++;
+        }
+        return sb.ToString();
     }
 
     private static bool IsIdentStart(char c) => char.IsLetter(c) || c == '_';

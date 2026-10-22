@@ -327,6 +327,49 @@ public sealed class ExpressionCollationAndEdgeTests
         Assert.Equal("Smith", Eval("m.lname", row).AsString);
     }
 
+    // alias->field is the classic xBase spelling of alias.field (VFP9 oracle: SqlArrowQualifierVfp9OracleTests).
+    [Theory]
+    [InlineData("person->name")]
+    [InlineData("PERSON->NAME")]
+    [InlineData("person ->name")]
+    [InlineData("person-> name")]
+    [InlineData("person -> name")]
+    [InlineData("UPPER(person->name)")]
+    public void ArrowQualifier_IsAliasDotField(string expr)
+    {
+        var row = new TestRow().Set("person.name", "SMITH");
+        Assert.Equal("SMITH", Eval(expr, row).AsString);
+    }
+
+    [Fact]
+    public void ArrowQualifier_MemoryVariable()
+    {
+        var row = new TestRow().Set("m.x", 5m);
+        Assert.Equal(5m, Eval("m->x", row).AsNumber);
+        Assert.Equal(5m, Eval("M->X", row).AsNumber);
+    }
+
+    [Fact]
+    public void ArrowQualifier_DoesNotSwallowArithmetic()
+    {
+        var row = new TestRow().Set("a", 10m).Set("b", 3m).Set("c", 5m).Set("person.amount", 30m);
+        Assert.True(Eval("a - b > c", row).AsLogical);
+        Assert.True(Eval("a-b>c", row).AsLogical);
+        Assert.Equal(13m, Eval("a- -b", row).AsNumber);
+        Assert.Equal(29m, Eval("person->amount-1", row).AsNumber);
+        Assert.Equal(-30m, Eval("-person->amount", row).AsNumber);
+    }
+
+    [Theory]
+    [InlineData("person- >name")]       // VFP9: error 1231 (arrow must be adjacent)
+    [InlineData("5->3")]                // VFP9: error 10
+    [InlineData("person->1")]           // VFP9: error 10
+    [InlineData("person->amount->1")]   // VFP9: error 10
+    [InlineData("person->name->x")]     // VFP9: error 1923
+    [InlineData("m.person->name")]      // VFP9: error 13
+    public void ArrowQualifier_MalformedShapes_Throw(string expr)
+        => Assert.Throws<ExpressionException>(() => Eval(expr, new TestRow()));
+
     [Theory]
     [InlineData("[hello]", "hello")]
     [InlineData("[a]+[b]", "ab")]

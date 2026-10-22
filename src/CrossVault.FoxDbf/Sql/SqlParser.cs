@@ -16,6 +16,7 @@ public static class SqlParser
     public static SqlStatement Parse(string sql)
     {
         if (sql is null) throw new FoxDbfSqlException("SQL text is null.");
+        sql = SqlLexer.NormalizeArrowQualifiers(sql);
         var p = new State(sql, SqlLexer.Tokenize(sql));
         var stmt = p.ParseStatement();
         p.SkipSemicolons();
@@ -28,6 +29,7 @@ public static class SqlParser
     public static IReadOnlyList<SqlStatement> ParseScript(string sql)
     {
         if (sql is null) throw new FoxDbfSqlException("SQL text is null.");
+        sql = SqlLexer.NormalizeArrowQualifiers(sql);
         var p = new State(sql, SqlLexer.Tokenize(sql));
         var list = new List<SqlStatement>();
         p.SkipSemicolons();

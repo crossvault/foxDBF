@@ -632,8 +632,9 @@ public static class PrgParser
             if (kw is not ("=" or "&" or "#"))
             {
                 int eqPos = PrgScan.IndexOfAssign(text);
-                if (eqPos > 0 && IsAssignTarget(text.Substring(0, eqPos)))
-                    return new Assignment(text.Substring(0, eqPos).Trim(),
+                string lhs = eqPos > 0 ? PrgScan.FoldArrowTarget(text.Substring(0, eqPos)) : string.Empty;
+                if (eqPos > 0 && IsAssignTarget(lhs))
+                    return new Assignment(lhs.Trim(),
                                           PrgExpr.Parse(text.Substring(eqPos + 1))) { Line = line };
             }
             PrgStatement node = kw switch
@@ -708,9 +709,10 @@ public static class PrgParser
         private static PrgStatement BuildDefault(string text, string kw)
         {
             int eq = PrgScan.IndexOfAssign(text);
-            if (eq > 0 && IsAssignTarget(text.Substring(0, eq)))
+            string lhs = eq > 0 ? PrgScan.FoldArrowTarget(text.Substring(0, eq)) : string.Empty;
+            if (eq > 0 && IsAssignTarget(lhs))
             {
-                string target = text.Substring(0, eq).Trim();
+                string target = lhs.Trim();
                 return new Assignment(target, PrgExpr.Parse(text.Substring(eq + 1)));
             }
             return new UnknownCommand(kw, PrgScan.AfterFirstWord(text));
@@ -831,7 +833,7 @@ public static class PrgParser
                 return new StoreStmt(PrgExpr.Parse(rest), Array.Empty<string>());
             string value = rest.Substring(0, toPos);
             var targets = PrgScan.SplitTopCommas(rest.Substring(toPos + 2))
-                .Select(p => p.Trim()).Where(p => p.Length > 0).ToList();
+                .Select(p => PrgScan.FoldArrowTarget(p).Trim()).Where(p => p.Length > 0).ToList();
             return new StoreStmt(PrgExpr.Parse(value), targets);
         }
 
@@ -1206,7 +1208,7 @@ public static class PrgParser
                 if (piece.Trim().Length == 0) continue;
                 int withPos = PrgScan.IndexOfKeyword(piece, "WITH");
                 if (withPos < 0) continue;
-                var field = ToNameRef(piece.Substring(0, withPos).Trim());
+                var field = ToNameRef(PrgScan.FoldArrowTarget(piece.Substring(0, withPos)).Trim());   // alias->f = alias.f
                 string valText = piece.Substring(withPos + 4).Trim();
                 bool additive = false;
                 int addPos = PrgScan.IndexOfKeyword(valText, "ADDITIVE");

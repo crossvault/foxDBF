@@ -280,19 +280,21 @@ public sealed class SqlJoinPushdownTests : IDisposable
     }
 
     [Fact]
-    public void Does_Not_Push_When_The_Qualifier_Names_Another_Alias()
+    public void Rejects_The_Table_Name_Under_A_Local_Alias()
     {
-        // 'emp' is not the driving alias (the driving alias is 'e'), so the conjunct is left entirely
-        // to the post-join residual — exactly how CompositeRowContext would have resolved it.
-        var pushed = Pushed("SELECT e.ename, d.dname FROM emp e LEFT JOIN dept d ON e.deptid = d.deptid " +
-                            "WHERE emp.empid = 3");
-        Assert.Empty(pushed);
+        // 'emp' is not a source alias (the driving alias is 'e'). It used to be left to the post-join
+        // residual, which read null and silently matched nothing; VFP9 resolves it against an OPEN work
+        // area 'emp' or, with none open, raises 1806 — now raised at bind time, before any push.
+        var ex = Assert.Throws<FoxDbfSqlException>(() =>
+            Pushed("SELECT e.ename, d.dname FROM emp e LEFT JOIN dept d ON e.deptid = d.deptid " +
+                   "WHERE emp.empid = 3"));
+        Assert.Equal(1806, ex.VfpErrorNumber);
     }
 
     [Fact]
     public void Does_Not_Push_A_Conjunct_Read_Only_By_The_Secondary_Table()
     {
-        var pushed = Pushed("SELECT f.idfactura, c.nombre FROM facturas " +
+        var pushed = Pushed("SELECT facturas.idfactura, clientes.nombre FROM facturas " +
                             "LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente " +
                             "WHERE clientes.nombre = 'Ana'");
         Assert.Empty(pushed);
@@ -311,7 +313,7 @@ public sealed class SqlJoinPushdownTests : IDisposable
     [Fact]
     public void Pushes_Every_Driving_Conjunct_Of_A_Pure_And()
     {
-        var pushed = Pushed("SELECT f.idfactura, c.nombre FROM facturas " +
+        var pushed = Pushed("SELECT facturas.idfactura, clientes.nombre FROM facturas " +
                             "LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente " +
                             "WHERE facturas.idfactura = 'F0000003' AND facturas.importe > 100");
         Assert.Equal(2, pushed.Count);
@@ -460,14 +462,14 @@ public sealed class SqlJoinPushdownTests : IDisposable
     // ---- the reported workload shape: CHARACTER driving key + LEFT JOIN -----------------------
 
     [Theory]
-    [InlineData("SELECT f.idfactura, c.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.idfactura = 'F0000003'")]
+    [InlineData("SELECT facturas.idfactura, clientes.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.idfactura = 'F0000003'")]
     [InlineData("SELECT f.idfactura, c.nombre FROM facturas f LEFT JOIN clientes c ON f.clienteid = c.idcliente WHERE f.idfactura = 'F0000006'")]
-    [InlineData("SELECT f.idfactura, c.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.clienteid = 3")]
-    [InlineData("SELECT f.idfactura, c.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.importe > 400")]
-    [InlineData("SELECT f.idfactura, c.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.idfactura = 'F0000003' AND facturas.importe > 100")]
-    [InlineData("SELECT f.idfactura, c.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.idfactura = 'ZZZZZZZZ'")]
+    [InlineData("SELECT facturas.idfactura, clientes.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.clienteid = 3")]
+    [InlineData("SELECT facturas.idfactura, clientes.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.importe > 400")]
+    [InlineData("SELECT facturas.idfactura, clientes.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.idfactura = 'F0000003' AND facturas.importe > 100")]
+    [InlineData("SELECT facturas.idfactura, clientes.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.idfactura = 'ZZZZZZZZ'")]
     // the orphan factura (clienteid 99) must survive a passing WHERE with NULL inner fields.
-    [InlineData("SELECT f.idfactura, c.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.idfactura = 'F0000006'")]
+    [InlineData("SELECT facturas.idfactura, clientes.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente WHERE facturas.idfactura = 'F0000006'")]
     public void CharacterKeyDriving_WithWhere_Matches_Oracle(string sql) => CheckBoth(sql);
 
     // ---- comma cross join --------------------------------------------------------------------
@@ -534,7 +536,7 @@ public sealed class SqlJoinPushdownTests : IDisposable
     [InlineData(false)]
     public void SetDeleted_CharacterKey_Where_Matches_Oracle(bool deleted)
     {
-        const string sql = "SELECT f.idfactura, c.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente " +
+        const string sql = "SELECT facturas.idfactura, clientes.nombre FROM facturas LEFT JOIN clientes ON facturas.clienteid = clientes.idcliente " +
                            "WHERE facturas.idfactura = 'F0000003'";
         Check(_indexed.Path, sql, deleted: deleted);
         Check(_plain.Path, sql, deleted: deleted);

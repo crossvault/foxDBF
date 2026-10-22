@@ -60,7 +60,9 @@ public sealed partial class VfpInterpreter
             case "PCOUNT": case "PARAMETERS": r = VfpValue.Integer(CurrentCall.PassedCount); return true;
             case "PROGRAM": r = FnProgram(a); return true;
             case "TYPE": r = VfpValue.Character(TypeOf(a.Length > 0 ? a[0].AsString : string.Empty)); return true;
-            case "EVALUATE": case "EVAL": r = a.Length > 0 ? EvaluateFn(a[0].AsString) : VfpValue.Null; return true;
+            // EVALUATE raises like VFP9 (a malformed expression, an unknown alias …) — unlike TYPE()/macro
+            // probing, which rely on EvalText's swallow-to-.NULL.
+            case "EVALUATE": case "EVAL": r = a.Length > 0 ? EvalTextLoud(a[0].AsString) : VfpValue.Null; return true;
             case "SET": r = FnSet(a); return true;
             case "RELATION": r = FnRelation(a); return true;
             case "TARGET": r = FnTarget(a); return true;

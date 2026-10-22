@@ -312,6 +312,25 @@ internal static class PrgScan
         return -1;
     }
 
+    /// <summary>Folds a leading xBase <c>alias-&gt;name</c> qualifier of an assignment TARGET (<c>m-&gt;x = 1</c>,
+    /// <c>STORE 1 TO m-&gt;x</c>) into the equivalent <c>alias.name</c> — VFP9 accepts both spellings, blanks
+    /// around the arrow included. Only the isolated target text is rewritten, never a whole line. Anything
+    /// else is returned unchanged.</summary>
+    public static string FoldArrowTarget(string target)
+    {
+        string t = target.Trim();
+        int i = 0;
+        if (t.Length == 0 || !IsIdentStart(t[0])) return target;
+        while (i < t.Length && IsIdentChar(t[i])) i++;
+        int head = i;
+        while (i < t.Length && t[i] is ' ' or '	') i++;
+        if (i + 1 >= t.Length || t[i] != '-' || t[i + 1] != '>') return target;
+        i += 2;
+        while (i < t.Length && t[i] is ' ' or '	') i++;
+        if (i >= t.Length || !IsIdentStart(t[i])) return target;
+        return t[..head] + "." + t[i..];
+    }
+
     /// <summary>Strips the trailing inline <c>&amp;&amp;</c> comment (string-aware) and reports
     /// whether the resulting code ends with a <c>;</c> line-continuation (which is removed).</summary>
     public static (string Code, bool Continues) StripCommentAndContinuation(string line)

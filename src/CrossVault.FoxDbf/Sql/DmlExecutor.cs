@@ -200,6 +200,10 @@ internal sealed class DmlExecutor
             setColumns.Add(idx);
         }
 
+        var binder = TargetBinder(st.Table, columns);
+        binder.Check(st.Where);
+        foreach (var (_, val) in assigns) binder.Check(val);
+
         // §D3: ONE whole-file lock spans candidate selection AND every write, so a concurrent shared
         // writer cannot slip a change between the match and the recno-targeted write (lost update).
         // No-op when the target was opened EXCLUSIVE; each per-record UpdateRecord/Delete re-enters
@@ -238,6 +242,8 @@ internal sealed class DmlExecutor
         using var target = _session.OpenWritableTarget(st.Table);
         var writer = target.Writer;
 
+        TargetBinder(st.Table, writer.Schema.Columns).Check(st.Where);
+
         // §D3: ONE whole-file lock spans candidate selection AND the deletes so they are atomic with
         // respect to other shared writers (no-op under EXCLUSIVE).
         using var lockScope = writer.LockFileScope();
@@ -250,6 +256,18 @@ internal sealed class DmlExecutor
     }
 
     // ---- candidate-set helpers ------------------------------------------------------------
+
+    /// <summary>Bind-time check of the names in an UPDATE/DELETE: only the target itself is a source
+    /// (VFP9: an unknown alias in WHERE or SET is error 13, an unknown column — qualified or bare — 1806),
+    /// so neither can read null any more and silently match nothing / write .NULL.. The check runs against
+    /// the WRITER's columns, the names the WHERE/SET row adapters actually resolve: for a DBC member with
+    /// long field names (&gt; 10 chars) those are the short physical names, so such a statement now fails
+    /// loudly instead of matching nothing (follow-up: long names on the write path).</summary>
+    private QualifierBinder TargetBinder(string table, IReadOnlyList<DbfColumn> columns)
+        => new(_session,
+            new[] { new QualifierBinder.Source(table, table,
+                new HashSet<string>(columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase)) },
+            null, hostBound: false, checkBare: true);
 
     /// <summary>The records (1-based recno + the record) matching <paramref name="whereText"/> — no
     /// WHERE means ALL rows (<c>.T.</c>). <c>SET DELETED ON</c> excludes already-deleted rows via the
