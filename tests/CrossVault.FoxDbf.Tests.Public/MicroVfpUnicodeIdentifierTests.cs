@@ -81,13 +81,14 @@ public sealed class MicroVfpUnicodeIdentifierTests : IDisposable
     }
 
     [Fact]
-    public void LoadFile_DecodesCp1252_SoA0x8ALetterStillScans()
+    public void LoadFile_Cp1252Prg_WithLatinLetterIdentifiers_Runs()
     {
-        // 'Š' is 0x8A in CP1252 — a letter to VFP9, but a C1 control character if the file were read as Latin-1.
-        string prg = _dir.File("cp1252.prg");
-        File.WriteAllBytes(prg, Encodings.ResolveEncoding(0x03).GetBytes("FUNCTION dobleŠ(tn)\r\n  lnŠ = tn * 2\r\n  RETURN lnŠ\r\nENDFUNC\r\n"));
+        // A .prg saved by VFP (CP1252) with 'ó'/'Ñ' (0xF3/0xD1) in names. ParseFile reads Latin-1 on purpose
+        // (one char per byte, see PrgParser.ParseFile), which agrees with CP1252 for every letter >= 0xA0.
+        string prg = _dir.File("latin.prg");
+        File.WriteAllBytes(prg, Encodings.ResolveEncoding(0x03).GetBytes("FUNCTION dobleÑ(tn)\r\n  lnó = tn * 2\r\n  RETURN lnó\r\nENDFUNC\r\n"));
         _interp.LoadFile(prg);
-        Assert.Equal(8m, _interp.EvalExpression("dobleŠ(4)").AsNumber);
+        Assert.Equal(8m, _interp.EvalExpression("dobleÑ(4)").AsNumber);
     }
 
     [Fact]

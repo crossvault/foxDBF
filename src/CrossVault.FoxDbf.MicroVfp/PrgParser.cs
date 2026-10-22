@@ -25,11 +25,13 @@ public static class PrgParser
         return new Impl(lines).ParseProgram();
     }
 
-    /// <summary>Reads <paramref name="path"/> in the default code page (Windows-1252, as VFP saves it) and
-    /// parses it. Not Latin-1: that would decode CP1252's 0x80–0x9F letters (Š Œ š œ Ÿ ƒ, which VFP9 accepts in
-    /// names) as C1 control characters, so an identifier such as <c>ŠUP</c> would no longer scan.</summary>
+    /// <summary>Reads <paramref name="path"/> (Windows-1252 / Latin-1, as VFP exports it) and
+    /// parses it. Deliberately Latin-1, not CP1252: the interpreter models a VFP string as one char per byte
+    /// (CHR(135) is U+0087), and source literals must match that — real stored-procedure code compares CHR()
+    /// output with a #DEFINE of raw 0x87… bytes. The price: CP1252 letters in 0x80–0x9F (Š Œ š œ Ÿ ƒ) used in an
+    /// IDENTIFIER inside a .prg file decode to C1 controls and do not scan as letters.</summary>
     public static PrgProgram ParseFile(string path)
-        => Parse(File.ReadAllText(path, CodePageText.DefaultEncoding));
+        => Parse(File.ReadAllText(path, Encoding.Latin1));
 
     // ── logical-line model ───────────────────────────────────────────────────
 

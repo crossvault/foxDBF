@@ -70,6 +70,24 @@ public sealed class UnicodeNameWriteTests : IDisposable
     }
 
     [Fact]
+    public void Alter_VfpCp850Table_KeepsItsCodePageForNames()
+    {
+        // Alter rebuilds the header through the same name encoder; it must reuse the table's own code page
+        // (CP850: 'Ó' = 0xE0) and accept a new non-ASCII column in it.
+        string dbf = Path("uni850.dbf");
+        File.Copy(Fixture("uni850.dbf"), dbf);
+        using (var w = DbfWriter.Open(dbf, new DbfOptions { LockMode = LockMode.Exclusive }))
+            w.AddColumn(new DbfColumnDef("AÑO", 'N', 4));
+
+        byte[] raw = File.ReadAllBytes(dbf);
+        Assert.Equal(0x02, raw[29]);
+        Assert.Equal(0xE0, raw[32 + 3]);
+        using var table = DbfTable.Open(dbf);
+        Assert.Equal(new[] { "RAZÓNSOC", "ID", "AÑO" }, table.Columns.Select(c => c.Name).ToArray());
+        Assert.Equal("Peñarol", table.GetRecord(0)?["RAZÓNSOC"]?.ToString()?.TrimEnd());
+    }
+
+    [Fact]
     public void Create_NameTheCodePageCannotHold_IsRefused_NotWrittenAsQuestionMark()
     {
         string dbf = Path("bad.dbf");

@@ -16,8 +16,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - microVFP scans identifiers (fields, variables, arrays, procedures, macros, `#DEFINE`s) with the same
   Unicode-letter rule as the expression lexer, so `REPLACE razónSoc …`, `DIMENSION arró[2]` and
   `FUNCTION sumaÑ` work; `INDEX ON … TAG razón` stores `RAZÓN` (upper-cased per code page, so `ƒ` stays `ƒ`
-  as in VFP). `.prg` files are read as Windows-1252 rather than Latin-1, so CP1252 letters such as `Š`/`Œ`
-  scan as letters.
+  as in VFP).
 - ADO.NET: `FoxDbfCommandBuilder` recognises non-ASCII column names, and the advertised
   `DataSourceInformation.IdentifierPattern` accepts Unicode letters.
 
