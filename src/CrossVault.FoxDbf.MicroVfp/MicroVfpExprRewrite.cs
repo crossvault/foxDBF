@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using CrossVault.FoxDbf.Expressions;
 
 namespace CrossVault.FoxDbf.MicroVfp;
 
@@ -32,7 +33,7 @@ namespace CrossVault.FoxDbf.MicroVfp;
 /// arrays (bracket subscripts → parens; ALEN/AERROR array-name argument → quoted name).</summary>
 internal static class MicroVfpExprRewrite
 {
-    private static bool IsIdentChar(char c) => char.IsAsciiLetterOrDigit(c) || c == '_';
+    private static bool IsIdentChar(char c) => VfpIdentifier.IsPart(c);
 
     /// <summary>Apply both array rewrites to <paramref name="s"/>; a no-op for text with neither a
     /// subscript bracket nor an ALEN/AERROR call.</summary>
@@ -84,7 +85,7 @@ internal static class MicroVfpExprRewrite
                 i++;
                 continue;
             }
-            if (char.IsAsciiLetter(c) || c == '_')
+            if (VfpIdentifier.IsStart(c))
             {
                 int start = i; i++;
                 while (i < s.Length && IsIdentChar(s[i])) i++;
@@ -163,7 +164,7 @@ internal static class MicroVfpExprRewrite
                 i++;
                 continue;
             }
-            if (char.IsAsciiLetter(c) || c == '_')            // an identifier run.
+            if (VfpIdentifier.IsStart(c))            // an identifier run.
             {
                 int start = i;
                 i++;
@@ -198,7 +199,7 @@ internal static class MicroVfpExprRewrite
                 i++;
                 continue;
             }
-            if (char.IsAsciiLetter(c) || c == '_')            // an identifier run.
+            if (VfpIdentifier.IsStart(c))            // an identifier run.
             {
                 int start = i;
                 i++;
@@ -235,7 +236,7 @@ internal static class MicroVfpExprRewrite
         {
             int save = q;
             while (q < s.Length && char.IsWhiteSpace(s[q])) q++;
-            if (q >= s.Length || !(char.IsAsciiLetter(s[q]) || s[q] == '_')) break;  // arg not bare.
+            if (q >= s.Length || !(VfpIdentifier.IsStart(s[q]))) break;  // arg not bare.
             int idStart = q; q++;
             while (q < s.Length && IsIdentChar(s[q])) q++;
             int idEnd = q;
@@ -276,7 +277,7 @@ internal static class MicroVfpExprRewrite
                 i++;
                 continue;
             }
-            if (char.IsAsciiLetter(c) || c == '_')
+            if (VfpIdentifier.IsStart(c))
             {
                 int start = i; i++;
                 while (i < s.Length && IsIdentChar(s[i])) i++;
@@ -311,7 +312,7 @@ internal static class MicroVfpExprRewrite
     private static string QuoteIfBareField(string part)
     {
         string t = part.Trim();
-        if (t.Length == 0 || !(char.IsAsciiLetter(t[0]) || t[0] == '_')) return part;
+        if (t.Length == 0 || !(VfpIdentifier.IsStart(t[0]))) return part;
         foreach (char ch in t)
             if (!(IsIdentChar(ch) || ch == '.')) return part;
         return "'" + t + "'";
@@ -361,7 +362,7 @@ internal static class MicroVfpExprRewrite
         int open = p;
         p++;
         while (p < s.Length && char.IsWhiteSpace(s[p])) p++;
-        if (p >= s.Length || !(char.IsAsciiLetter(s[p]) || s[p] == '_')) return i;  // first arg not bare.
+        if (p >= s.Length || !(VfpIdentifier.IsStart(s[p]))) return i;  // first arg not bare.
         int idStart = p;
         p++;
         while (p < s.Length && IsIdentChar(s[p])) p++;

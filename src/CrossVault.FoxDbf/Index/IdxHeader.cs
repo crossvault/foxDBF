@@ -48,7 +48,13 @@ public readonly struct IdxHeader
     }
 
     /// <summary>Parses the 512-byte legacy IDX header from the start of a page span.</summary>
-    public static IdxHeader Parse(ReadOnlySpan<byte> page)
+    public static IdxHeader Parse(ReadOnlySpan<byte> page) => Parse(page, null);
+
+    /// <summary>
+    /// As <see cref="Parse(ReadOnlySpan{byte})"/>, decoding the KEY/FOR expressions with
+    /// <paramref name="textEncoding"/> — the table code page they were written in (null = library default).
+    /// </summary>
+    public static IdxHeader Parse(ReadOnlySpan<byte> page, System.Text.Encoding? textEncoding)
     {
         uint root = BinaryPrimitives.ReadUInt32LittleEndian(page);
         uint freeRaw = BinaryPrimitives.ReadUInt32LittleEndian(page[4..]);
@@ -56,8 +62,8 @@ public readonly struct IdxHeader
         ushort keyLength = BinaryPrimitives.ReadUInt16LittleEndian(page[12..]);
         byte options = page[14];
 
-        string keyExpression = IndexText.ReadAsciiZ(page, 16, 220);   // @16..235
-        string forExpression = IndexText.ReadAsciiZ(page, 236, 220);  // @236..455
+        string keyExpression = IndexText.ReadZ(page, 16, 220, textEncoding);   // @16..235
+        string forExpression = IndexText.ReadZ(page, 236, 220, textEncoding);  // @236..455
 
         return new IdxHeader(
             root,

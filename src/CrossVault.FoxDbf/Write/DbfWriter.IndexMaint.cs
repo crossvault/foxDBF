@@ -148,7 +148,7 @@ public sealed partial class DbfWriter
         {
             rw = OpenCdxReadWrite();
             FailCdxMaintEditorForTests?.Invoke();   // test seam: simulate a CdxTreeEditor ctor throw (else no-op).
-            editor = new CdxTreeEditor(rw);
+            editor = new CdxTreeEditor(rw, _schema.Encoding);
             if (mode == CdxMaintMode.Append)
                 editor.BeginAppendRun();
             if (!TryResolveComputers(editor, out var plans))
@@ -252,7 +252,7 @@ public sealed partial class DbfWriter
         {
             ThrowIfInjectedFault();
             using (var rw = OpenCdxReadWrite())
-            using (var editor = new CdxTreeEditor(rw))
+            using (var editor = new CdxTreeEditor(rw, _schema.Encoding))
             {
                 if (!TryResolveComputers(editor, out var plans))
                     deferred = true;

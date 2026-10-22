@@ -367,7 +367,7 @@ public sealed partial class VfpInterpreter
     { "AND", "OR", "NOT", "T", "F", "Y", "N", "NULL" };
 
     /// <summary>Enumerate the BARE identifiers of a filter expression eligible to be a field/variable
-    /// reference: a maximal <c>[A-Za-z_][A-Za-z0-9_]*</c> run that is OUTSIDE a string literal
+    /// reference: a maximal identifier run (<see cref="CrossVault.FoxDbf.Expressions.VfpIdentifier"/>) that is OUTSIDE a string literal
     /// (<c>"…"</c>/<c>'…'</c>/<c>[…]</c>), NOT immediately followed by <c>(</c> (a function call), NOT
     /// immediately preceded by <c>.</c> or <c>-&gt;</c> (a dotted operator / an <c>alias-&gt;field</c> tail),
     /// NOT the alias part of an <c>alias.field</c> qualifier, and not a reserved logical word.</summary>
@@ -383,10 +383,10 @@ public sealed partial class VfpInterpreter
                 while (i < expr.Length && expr[i] != close) i++;
                 continue;
             }
-            if (char.IsAsciiLetter(c) || c == '_')
+            if (VfpIdentifier.IsStart(c))
             {
                 int start = i;
-                while (i < expr.Length && (char.IsAsciiLetterOrDigit(expr[i]) || expr[i] == '_')) i++;
+                while (i < expr.Length && (VfpIdentifier.IsPart(expr[i]))) i++;
                 string ident = expr.Substring(start, i - start);
                 // Look one char ahead (skipping spaces) for a call '(' or a member '.'/alias qualifier — those
                 // make the ident a function name or an alias, not a bare field/variable reference.

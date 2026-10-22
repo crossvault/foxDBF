@@ -431,7 +431,7 @@ public sealed partial class VfpInterpreter
         var defs = new List<CdxTagDefinition>(idxPaths.Count);
         foreach (var idxPath in idxPaths)
         {
-            using var idx = IdxFile.Open(idxPath);
+            using var idx = IdxFile.Open(idxPath, wa.Table.Encoding);
             var h = idx.Header;
             string forExpr = h.ForExpression.Trim();
             defs.Add(new CdxTagDefinition(

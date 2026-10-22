@@ -28,6 +28,17 @@ public sealed class IdxFile : IDisposable
     /// <summary>Opens a legacy single index from an <c>.idx</c> path.</summary>
     public static IdxFile Open(string path) => new(IndexFile.Open(path));
 
+    /// <summary>
+    /// Opens a legacy single index from an <c>.idx</c> path, decoding its KEY/FOR expressions with
+    /// <paramref name="textEncoding"/> — the code page of the table it indexes (null = library default).
+    /// </summary>
+    public static IdxFile Open(string path, System.Text.Encoding? textEncoding)
+    {
+        var index = IndexFile.Open(path);
+        index.TextEncoding = textEncoding;
+        return new(index);
+    }
+
     /// <summary>Opens a legacy single index over an existing seekable stream.</summary>
     public static IdxFile Open(Stream stream, bool leaveOpen = false)
         => new(IndexFile.Open(stream, leaveOpen));

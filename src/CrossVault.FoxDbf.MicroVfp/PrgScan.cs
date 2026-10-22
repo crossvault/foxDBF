@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using CrossVault.FoxDbf.Expressions;
 
 namespace CrossVault.FoxDbf.MicroVfp;
 
@@ -12,8 +13,8 @@ namespace CrossVault.FoxDbf.MicroVfp;
 /// </summary>
 internal static class PrgScan
 {
-    private static bool IsIdentStart(char c) => char.IsAsciiLetter(c) || c == '_';
-    private static bool IsIdentChar(char c) => char.IsAsciiLetterOrDigit(c) || c == '_';
+    private static bool IsIdentStart(char c) => VfpIdentifier.IsStart(c);
+    private static bool IsIdentChar(char c) => VfpIdentifier.IsPart(c);
 
     internal static bool IsBracketLiteralStart(string s, int index)
     {

@@ -34,7 +34,7 @@ internal sealed class PrgExpr
     // VFP's by-reference marker '@var' is legal only in argument position; it is a no-op for
     // PARSE-structure, so we strip it as a fallback when the raw fragment won't parse. The
     // scanner must leave @ characters in all literal forms untouched.
-    private static bool IsIdentifierStart(char c) => char.IsAsciiLetter(c) || c == '_';
+    private static bool IsIdentifierStart(char c) => VfpIdentifier.IsStart(c);
 
     private static string StripByRefMarkers(string text)
     {

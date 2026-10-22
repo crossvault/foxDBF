@@ -51,6 +51,10 @@ internal static class IdxIndexBuilder
         string keyExpr, string? forExpr, bool unique,
         EvaluationContext? evalContext = null, bool includeDeleted = false)
     {
+        // KEY/FOR text lives in the TABLE's code page (as VFP writes it) — never substituted, never clipped.
+        byte[] keyText = EncodeExpression(keyExpr, schema.Encoding, "KEY");
+        byte[] forText = EncodeExpression(forExpr ?? string.Empty, schema.Encoding, "FOR");
+
         var ctx = new EvaluationContext
         {
             Collation = VfpCollations.Machine,
@@ -93,7 +97,7 @@ internal static class IdxIndexBuilder
         if (unique) options |= 0x01;
         if (forFn is not null) options |= 0x08;
 
-        WriteFile(idxPath, entries, keyLen, options, keyExpr, forExpr ?? string.Empty);
+        WriteFile(idxPath, entries, keyLen, options, keyText, forText);
     }
 
     // ---- key encoding (legacy IDX == raw MACHINE bytes) ------------------------
@@ -142,7 +146,7 @@ internal static class IdxIndexBuilder
     // ---- B-tree bulk loader ----------------------------------------------------
 
     private static void WriteFile(string idxPath, List<Entry> entries, int keyLen, byte options,
-        string keyExpr, string forExpr)
+        byte[] keyText, byte[] forText)
     {
         int entrySize = keyLen + 4;
         int perLeaf = Math.Max(1, (Page - StdHeader) / entrySize);
@@ -188,7 +192,7 @@ internal static class IdxIndexBuilder
         }
 
         long eof = (long)sink.PageCount * Page;
-        WriteHeader(sink.At(0), root, (ushort)keyLen, options, keyExpr, forExpr, (uint)eof);
+        WriteHeader(sink.At(0), root, (ushort)keyLen, options, keyText, forText, (uint)eof);
         File.WriteAllBytes(idxPath, sink.ToArray());
     }
 
@@ -251,7 +255,7 @@ internal static class IdxIndexBuilder
     }
 
     private static void WriteHeader(byte[] page, uint root, ushort keyLen, byte options,
-        string keyExpr, string forExpr, uint eof)
+        byte[] keyExpr, byte[] forExpr, uint eof)
     {
         BinaryPrimitives.WriteUInt32LittleEndian(page.AsSpan(0), root);
         BinaryPrimitives.WriteUInt32LittleEndian(page.AsSpan(4), NoPtr);   // free list = none
@@ -260,16 +264,17 @@ internal static class IdxIndexBuilder
         page[14] = options;
         page[15] = 0x01;                                                   // signature (verified vs VFP9)
 
-        WriteAsciiZ(page, 16, keyExpr, 220);                              // @16..235
-        WriteAsciiZ(page, 236, forExpr, 220);                            // @236..455
+        keyExpr.CopyTo(page, 16);                                         // @16..235 (NUL already zero)
+        forExpr.CopyTo(page, 236);                                        // @236..455
     }
 
-    private static void WriteAsciiZ(byte[] page, int offset, string text, int max)
+    /// <summary>Encode an IDX KEY/FOR expression in the table code page; it must fit its 220-byte slot with a NUL.</summary>
+    private static byte[] EncodeExpression(string text, Encoding encoding, string what)
     {
-        byte[] bytes = Encoding.ASCII.GetBytes(text ?? string.Empty);
-        int n = Math.Min(bytes.Length, max - 1);
-        bytes.AsSpan(0, n).CopyTo(page.AsSpan(offset, n));
-        // trailing bytes already zero (NUL terminator + pad).
+        byte[] bytes = CodePageText.Encode(text, encoding, $"IDX {what} expression", m => new DbfWriteException(m));
+        if (bytes.Length > 219)
+            throw new DbfWriteException($"IDX {what} expression needs {bytes.Length} bytes; the header slot holds 219.");
+        return bytes;
     }
 
     // ---- helpers ---------------------------------------------------------------

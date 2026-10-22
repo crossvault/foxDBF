@@ -113,8 +113,9 @@ public sealed partial class VfpInterpreter
             throw new MicroVfpRuntimeException("INDEX ON: a TAG name is required.");
 
         // VFP UPPERCASES the tag name in the .cdx directory (verified byte-for-byte vs VFP9); the KEY /
-        // FOR expression case is PRESERVED as typed (matches the reverse-engineered DBC .dcx).
-        string tagName = NameOf(ix.Tag).Trim().ToUpperInvariant();
+        // FOR expression case is PRESERVED as typed (matches the reverse-engineered DBC .dcx). Upper-casing is
+        // per code page: VFP9 maps razón → RAZÓN and ÿ → Ÿ, but leaves ƒ alone (CP1252 has no 'Ƒ').
+        string tagName = CodePageText.ToUpperInCodePage(NameOf(ix.Tag).Trim(), wa.Table.Encoding);
         if (tagName.Length == 0)
             throw new MicroVfpRuntimeException("INDEX ON: a TAG name is required.");
 
@@ -308,7 +309,7 @@ public sealed partial class VfpInterpreter
                 if (IsIdxPath(p))
                     try
                     {
-                        using var idx = IdxFile.Open(p);
+                        using var idx = IdxFile.Open(p, wa.Table.Encoding);
                         var h = idx.Header;
                         slots.Add(new IndexSlot
                         {
@@ -419,7 +420,7 @@ public sealed partial class VfpInterpreter
             {
                 if (string.Equals(IdxOrderName(p), identity, StringComparison.OrdinalIgnoreCase))
                 {
-                    var idx = IdxFile.Open(p);
+                    var idx = IdxFile.Open(p, wa.Table.Encoding);
                     return new OrderSource(idx)
                     {
                         Idx = idx, Name = IdxOrderName(p),

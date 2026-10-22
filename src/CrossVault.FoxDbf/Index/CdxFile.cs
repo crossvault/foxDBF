@@ -29,6 +29,10 @@ public sealed class CdxFile : IDisposable
     {
         _index = index;
         _table = table;
+        // Tag names and KEY/FOR expressions are stored in the table's code page (VFP9: RAZÓN = 0xD3 in
+        // CP1252, 0xE0 in CP850); without a table the library default code page decodes them.
+        if (table is not null)
+            _index.TextEncoding = table.Encoding;
         _leaveOpen = leaveOpen;
         try
         {
@@ -116,7 +120,7 @@ public sealed class CdxFile : IDisposable
         foreach (var (headerOffset, nameBytes) in
                  IndexTraversal.EnumerateCompact(_index, file.Root, dirKeyLength, isCharacter: true))
         {
-            string name = TrimName(nameBytes);
+            string name = TrimName(nameBytes, _index.TextEncoding);
             if (name.Length == 0 || _tags.ContainsKey(name))
                 continue;
 
@@ -189,12 +193,12 @@ public sealed class CdxFile : IDisposable
         return true;
     }
 
-    private static string TrimName(byte[] raw)
+    private static string TrimName(byte[] raw, System.Text.Encoding? encoding)
     {
         int len = raw.Length;
         while (len > 0 && (raw[len - 1] == 0x20 || raw[len - 1] == 0x00))
             len--;
-        return len == 0 ? string.Empty : System.Text.Encoding.ASCII.GetString(raw, 0, len);
+        return CodePageText.Decode(raw.AsSpan(0, len), encoding);
     }
 
     public void Dispose()

@@ -32,6 +32,13 @@ public sealed class IndexFile : IDisposable
     /// </summary>
     public string? SourcePath => _sourcePath;
 
+    /// <summary>
+    /// The code page tag names and KEY/FOR expressions are decoded with — the owning TABLE's encoding, since
+    /// VFP stores that text in the table code page (RAZÓN = 0xD3 in CP1252, 0xE0 in CP850). Null = the
+    /// library default code page (no table known).
+    /// </summary>
+    internal System.Text.Encoding? TextEncoding { get; set; }
+
     /// <summary>Opens an index file from a path (.cdx or .idx).</summary>
     public static IndexFile Open(string path)
         => Open(path, DbfReadBackend.FileStream, DbfDriveKind.Auto);
@@ -104,14 +111,14 @@ public sealed class IndexFile : IDisposable
         if (tail > 0 && !ReadExact(byteOffset + PageSize, buf.AsSpan(PageSize, tail)))
             return default;
 
-        return CdxHeader.Parse(buf);
+        return CdxHeader.Parse(buf, TextEncoding);
     }
 
     /// <summary>Reads and parses a legacy single-IDX header (offset 0).</summary>
     public IdxHeader ReadIdxHeader(long byteOffset = 0)
     {
         var page = ReadPage(byteOffset);
-        return page is null ? default : IdxHeader.Parse(page);
+        return page is null ? default : IdxHeader.Parse(page, TextEncoding);
     }
 
     /// <summary>

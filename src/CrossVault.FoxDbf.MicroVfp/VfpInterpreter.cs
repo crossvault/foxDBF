@@ -778,8 +778,8 @@ public sealed partial class VfpInterpreter
     private static bool IsBareVariable(string text)
     {
         string t = text.Trim();
-        if (t.Length == 0 || !(char.IsAsciiLetter(t[0]) || t[0] == '_')) return false;
-        foreach (var ch in t) if (!(char.IsAsciiLetterOrDigit(ch) || ch == '_')) return false;
+        if (t.Length == 0 || !(VfpIdentifier.IsStart(t[0]))) return false;
+        foreach (var ch in t) if (!(VfpIdentifier.IsPart(ch))) return false;
         return true; // a single identifier ⇒ BY REFERENCE (a literal/expr/(parens)/a.b is not).
     }
 
@@ -1094,10 +1094,10 @@ public sealed partial class VfpInterpreter
                     do { sb.Append(line[i]); } while (++i < line.Length && line[i - 1] != ']');
                     continue;
                 }
-                if (c == '&' && i + 1 < line.Length && (char.IsAsciiLetter(line[i + 1]) || line[i + 1] == '_'))
+                if (c == '&' && i + 1 < line.Length && (VfpIdentifier.IsStart(line[i + 1])))
                 {
                     int j = i + 1;
-                    while (j < line.Length && (char.IsAsciiLetterOrDigit(line[j]) || line[j] == '_')) j++;
+                    while (j < line.Length && (VfpIdentifier.IsPart(line[j]))) j++;
                     string name = line.Substring(i + 1, j - (i + 1));
                     if (j < line.Length && line[j] == '.') j++;   // consume the '.' terminator.
                     sb.Append(Memory.Get(name).AsString);
@@ -1119,7 +1119,7 @@ public sealed partial class VfpInterpreter
     private static bool IsSubscriptBracket(string text, int index)
     {
         char prev = index > 0 ? text[index - 1] : '\0';
-        return prev == ')' || prev == ']' || char.IsAsciiLetterOrDigit(prev) || prev == '_';
+        return prev == ')' || prev == ']' || VfpIdentifier.IsPart(prev);
     }
 
     // CLEAR MEMORY / CLEAR ALL. MEMORY releases every memvar + array; ALL additionally closes every open
@@ -1408,9 +1408,9 @@ public sealed partial class VfpInterpreter
     private static string LeadingIdentOf(string s)
     {
         s = s.TrimStart();
-        if (s.Length == 0 || !(char.IsAsciiLetter(s[0]) || s[0] == '_')) return string.Empty;
+        if (s.Length == 0 || !(VfpIdentifier.IsStart(s[0]))) return string.Empty;
         int j = 1;
-        while (j < s.Length && (char.IsAsciiLetterOrDigit(s[j]) || s[j] == '_')) j++;
+        while (j < s.Length && (VfpIdentifier.IsPart(s[j]))) j++;
         return s.Substring(0, j);
     }
 
@@ -1457,7 +1457,7 @@ public sealed partial class VfpInterpreter
         if (!t.StartsWith("define", StringComparison.OrdinalIgnoreCase)) return;
         string rest = t[6..].TrimStart();
         int j = 0;
-        while (j < rest.Length && (char.IsAsciiLetterOrDigit(rest[j]) || rest[j] == '_')) j++;
+        while (j < rest.Length && (VfpIdentifier.IsPart(rest[j]))) j++;
         if (j == 0) return;
         string name = rest[..j];
         string valText = rest[j..].Trim();

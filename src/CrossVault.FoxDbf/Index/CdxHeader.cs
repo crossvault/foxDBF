@@ -74,7 +74,13 @@ public readonly struct CdxHeader
     /// page plus the trailing expression pool
     /// (length &gt;= 512 + KeyExprLength + ForExprLength).
     /// </summary>
-    public static CdxHeader Parse(ReadOnlySpan<byte> headerAndPool)
+    public static CdxHeader Parse(ReadOnlySpan<byte> headerAndPool) => Parse(headerAndPool, null);
+
+    /// <summary>
+    /// As <see cref="Parse(ReadOnlySpan{byte})"/>, decoding the KEY/FOR expressions with
+    /// <paramref name="textEncoding"/> — the table code page they were written in (null = library default).
+    /// </summary>
+    public static CdxHeader Parse(ReadOnlySpan<byte> headerAndPool, System.Text.Encoding? textEncoding)
     {
         var b = headerAndPool;
 
@@ -91,8 +97,8 @@ public readonly struct CdxHeader
         ushort keyExprLength = BinaryPrimitives.ReadUInt16LittleEndian(b[510..]);
 
         // Expression pool at offset 512: KEY string then FOR string.
-        string keyExpression = IndexText.ReadAsciiZ(b, 512, keyExprLength);
-        string forExpression = IndexText.ReadAsciiZ(b, 512 + keyExprLength, forExprLength);
+        string keyExpression = IndexText.ReadZ(b, 512, keyExprLength, textEncoding);
+        string forExpression = IndexText.ReadZ(b, 512 + keyExprLength, forExprLength, textEncoding);
 
         return new CdxHeader(
             root,

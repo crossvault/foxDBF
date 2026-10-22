@@ -4,6 +4,33 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- Non-ASCII names (VFP9 accepts field names such as `razónSoc`) now work beyond the SQL read path. Field
+  names in created/altered `.dbf` headers, CDX tag names and CDX/IDX KEY/FOR expressions are written and
+  read in the TABLE's code page, as VFP9 does (`RAZÓNSOC` carries 'Ó' as `0xD3` in CP1252 and `0xE0` in
+  CP850), instead of ASCII, which turned every such letter into `?`. The CDX tag directory sorts on those
+  bytes, matching VFP's order.
+- microVFP scans identifiers (fields, variables, arrays, procedures, macros, `#DEFINE`s) with the same
+  Unicode-letter rule as the expression lexer, so `REPLACE razónSoc …`, `DIMENSION arró[2]` and
+  `FUNCTION sumaÑ` work; `INDEX ON … TAG razón` stores `RAZÓN` (upper-cased per code page, so `ƒ` stays `ƒ`
+  as in VFP). `.prg` files are read as Windows-1252 rather than Latin-1, so CP1252 letters such as `Š`/`Œ`
+  scan as letters.
+- ADO.NET: `FoxDbfCommandBuilder` recognises non-ASCII column names, and the advertised
+  `DataSourceInformation.IdentifierPattern` accepts Unicode letters.
+
+### Changed
+
+- A field name, tag name, KEY/FOR expression or backlink path that the table's code page cannot represent
+  now throws (`DbfSchemaException` / `DbfWriteException`) instead of being written with `?`. Name length
+  limits count encoded bytes, and a CDX tag name longer than 10 bytes now throws instead of being clipped
+  silently (VFP9 raises error 1888, "Tag name is too long").
+- New overloads `CdxHeader.Parse(span, Encoding)`, `IdxHeader.Parse(span, Encoding)` and
+  `IdxFile.Open(path, Encoding)` decode index expressions in a given table code page; the existing
+  overloads use the library default code page (Windows-1252) instead of ASCII.
+
 ## [0.9.0] - 2026-07-05
 
 ### Changed

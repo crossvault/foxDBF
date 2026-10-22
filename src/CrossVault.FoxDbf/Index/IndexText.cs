@@ -4,16 +4,16 @@ namespace CrossVault.FoxDbf.Index;
 
 /// <summary>
 /// Internal byte-decoding helpers shared by the CDX/IDX header parsers
-/// (plan §C2). All index expression text is uncompiled ASCII.
+/// (plan §C2). Index expression text is stored uncompiled in the TABLE's code page.
 /// </summary>
 internal static class IndexText
 {
     /// <summary>
-    /// Reads a NUL-terminated ASCII string from <paramref name="span"/> starting
-    /// at <paramref name="start"/>, scanning at most <paramref name="maxLength"/>
-    /// bytes. Returns the empty string when out of range or empty.
+    /// Reads a NUL-terminated string from <paramref name="span"/> starting at <paramref name="start"/>,
+    /// scanning at most <paramref name="maxLength"/> bytes, decoded with <paramref name="encoding"/> (the
+    /// table code page; null = the library default). Returns the empty string when out of range or empty.
     /// </summary>
-    public static string ReadAsciiZ(ReadOnlySpan<byte> span, int start, int maxLength)
+    public static string ReadZ(ReadOnlySpan<byte> span, int start, int maxLength, Encoding? encoding)
     {
         if (start < 0 || start >= span.Length || maxLength <= 0)
             return string.Empty;
@@ -25,7 +25,7 @@ internal static class IndexText
         if (nul >= 0)
             region = region[..nul];
 
-        return region.IsEmpty ? string.Empty : Encoding.ASCII.GetString(region);
+        return CodePageText.Decode(region, encoding);
     }
 
     /// <summary>

@@ -488,7 +488,7 @@ public sealed partial class VfpInterpreter
         return false;
     }
 
-    private static bool IsIdentChar(char c) => char.IsAsciiLetterOrDigit(c) || c == '_';
+    private static bool IsIdentChar(char c) => VfpIdentifier.IsPart(c);
 
     /// <summary>
     /// 5.5 write hot-path: refresh read views after an IN-PLACE write (REPLACE / DELETE / RECALL — the

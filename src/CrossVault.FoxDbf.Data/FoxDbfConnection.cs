@@ -373,7 +373,7 @@ public sealed class FoxDbfConnection : DbConnection
         row["DataSourceProductMinorVersion"] = 0;
         row["DataSourceProductBuildVersion"] = 0;
         row["DataSourceProductComments"] = "A .NET 10 Visual FoxPro / dBase file format provider";
-        row["IdentifierPattern"] = @"^[A-Za-z_][A-Za-z0-9_]*$";
+        row["IdentifierPattern"] = @"^[\p{L}_][\p{L}\p{Nd}_]*$";   // Unicode letters, as VFP9 field names allow
         row["IdentifierCase"] = 2; // Case insensitive
         row["InitialCatalog"] = _dataSource ?? "";
         row["SchemaPattern"] = DBNull.Value;

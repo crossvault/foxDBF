@@ -99,7 +99,7 @@ public sealed partial class DbfWriter
             return;
         }
 
-        var tags = fastFallbackTags ?? ReadTagDefinitionsFrom(cdxPath);
+        var tags = fastFallbackTags ?? ReadTagDefinitionsFrom(cdxPath, _schema.Encoding);
         tags.RemoveAll(t => string.Equals(t.Name, definition.Name, StringComparison.OrdinalIgnoreCase));
         tags.Add(definition);
 
@@ -124,7 +124,7 @@ public sealed partial class DbfWriter
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(cdxPath);
 
-        var existing = ReadTagDefinitionsFrom(cdxPath);
+        var existing = ReadTagDefinitionsFrom(cdxPath, _schema.Encoding);
         if (existing.Count == 0)
             return 0;
 
@@ -164,7 +164,7 @@ public sealed partial class DbfWriter
         // surviving tags are neither re-read nor rewritten, and NO table row is materialized. Taken only when
         // every requested name actually exists (else fall back, which also matches today's silent-ignore of a
         // non-existent tag) and the sidecar is a fast-editable standard compound index.
-        if (everyRequestedExists && toRemove.Count > 0 && TryFastUnlinkTags(cdxPath, toRemove))
+        if (everyRequestedExists && toRemove.Count > 0 && TryFastUnlinkTags(cdxPath, toRemove, _schema.Encoding))
         {
             InvalidateTagComputerCache();
             return survivors.Count;
@@ -182,20 +182,21 @@ public sealed partial class DbfWriter
     /// <summary>Read the tag definitions currently in the compound <c>.cdx</c> at
     /// <paramref name="cdxPath"/> (empty when the file is missing). Throws only when the file exists but
     /// cannot be parsed.</summary>
-    private static List<CdxTagDefinition> ReadTagDefinitionsFrom(string cdxPath)
+    private static List<CdxTagDefinition> ReadTagDefinitionsFrom(string cdxPath, System.Text.Encoding textEncoding)
     {
         var result = new List<CdxTagDefinition>();
         if (!File.Exists(cdxPath))
             return result;
 
         using var index = IndexFile.Open(cdxPath);
+        index.TextEncoding = textEncoding;
         var fileHeader = index.ReadCdxHeader(0);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var byOffset = new List<(uint Offset, CdxTagDefinition Def)>();
         foreach (var (headerOffset, nameBytes) in
                  IndexTraversal.EnumerateCompact(index, fileHeader.Root, fileHeader.KeyLength, isCharacter: true))
         {
-            string name = TrimName(nameBytes);
+            string name = TrimName(nameBytes, textEncoding);
             if (name.Length == 0 || !seen.Add(name))
                 continue;
             var hdr = index.ReadCdxHeader(headerOffset);
@@ -247,7 +248,9 @@ public sealed partial class DbfWriter
 
         try
         {
+            var textEncoding = _schema.Encoding;
             using var index = IndexFile.Open(cdx);
+            index.TextEncoding = textEncoding;
             var fileHeader = index.ReadCdxHeader(0);
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -259,7 +262,7 @@ public sealed partial class DbfWriter
             foreach (var (headerOffset, nameBytes) in
                      IndexTraversal.EnumerateCompact(index, fileHeader.Root, fileHeader.KeyLength, isCharacter: true))
             {
-                string name = TrimName(nameBytes);
+                string name = TrimName(nameBytes, textEncoding);
                 if (name.Length == 0 || !seen.Add(name))
                     continue;
 
@@ -294,12 +297,12 @@ public sealed partial class DbfWriter
         return result;
     }
 
-    private static string TrimName(byte[] raw)
+    private static string TrimName(byte[] raw, System.Text.Encoding? encoding)
     {
         int len = raw.Length;
         while (len > 0 && (raw[len - 1] == 0x20 || raw[len - 1] == 0x00))
             len--;
-        return len == 0 ? string.Empty : System.Text.Encoding.ASCII.GetString(raw, 0, len);
+        return CodePageText.Decode(raw.AsSpan(0, len), encoding);
     }
 
     /// <summary>Bulk-build the structural <c>.cdx</c> for <paramref name="tags"/> over the live table.</summary>
@@ -380,7 +383,7 @@ public sealed partial class DbfWriter
         try
         {
             using var probe = new FileStream(cdxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            dir = ReadDirectoryEntries(probe);
+            dir = ReadDirectoryEntries(probe, _schema.Encoding);
         }
         catch { return false; }
         if (dir is null)
@@ -399,7 +402,7 @@ public sealed partial class DbfWriter
             if (baseOffset <= 0 || baseOffset % IndexFile.PageSize != 0)
                 return false;   // not a page-aligned compound index → fall back
 
-            preMutationDefinitions = ReadTagDefinitionsFrom(cdxPath);
+            preMutationDefinitions = ReadTagDefinitionsFrom(cdxPath, _schema.Encoding);
 
             var block = CdxIndexBuilder.BuildTagBlock(_schema, rows, def, baseOffset, evalContext, includeDeleted);
             rw.Seek(baseOffset, SeekOrigin.Begin);
@@ -414,8 +417,8 @@ public sealed partial class DbfWriter
             // unlink). The new entry's own (larger) offset is folded in by LeafGeometry on the Insert, which
             // SPLITS safely if it must; the Delete only ever narrows, so it can never overflow.
             long basis = DirectoryRecnoBasis(dir);
-            byte[] nameKey = CdxIndexBuilder.DirectoryKey(def.Name);
-            using (var editor = new CdxTreeEditor(rw))
+            byte[] nameKey = CdxIndexBuilder.DirectoryKey(def.Name, _schema.Encoding);
+            using (var editor = new CdxTreeEditor(rw, _schema.Encoding))
             {
                 var old = dir.FirstOrDefault(e => string.Equals(e.Name, def.Name, StringComparison.OrdinalIgnoreCase));
                 if (old.Name is not null)
@@ -445,13 +448,13 @@ public sealed partial class DbfWriter
     /// rebuild) when the sidecar is not a fast-editable standard compound index or a requested tag is not present
     /// in the directory. Never materializes table rows on the success path.
     /// </summary>
-    private static bool TryFastUnlinkTags(string cdxPath, IReadOnlyList<string> removeNames)
+    private static bool TryFastUnlinkTags(string cdxPath, IReadOnlyList<string> removeNames, System.Text.Encoding textEncoding)
     {
         FileStream? rw = null;
         try
         {
             rw = new FileStream(cdxPath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
-            var dir = ReadDirectoryEntries(rw);
+            var dir = ReadDirectoryEntries(rw, textEncoding);
             if (dir is null)
                 return false;
 
@@ -461,7 +464,7 @@ public sealed partial class DbfWriter
                 var hit = dir.FirstOrDefault(e => string.Equals(e.Name, nm, StringComparison.OrdinalIgnoreCase));
                 if (hit.Name is null)
                     return false;   // a requested tag is not in the directory → fall back (matches today)
-                targets.Add((CdxIndexBuilder.DirectoryKey(nm), (uint)hit.HeaderOffset));
+                targets.Add((CdxIndexBuilder.DirectoryKey(nm, textEncoding), (uint)hit.HeaderOffset));
             }
 
             // Size the directory leaf's recno field from the DATA (max tag-header offset), NOT rw.Length — the
@@ -470,7 +473,7 @@ public sealed partial class DbfWriter
             // near-full directory leaf and silently losing surviving tags (project-review 5.6 MUST-FIX). Header
             // offsets never move, so this basis can only leave the delete re-pack equal-or-narrower.
             long basis = DirectoryRecnoBasis(dir);
-            using (var editor = new CdxTreeEditor(rw))
+            using (var editor = new CdxTreeEditor(rw, textEncoding))
             {
                 foreach (var (key, recno) in targets)
                     editor.Delete(0, key, recno, DirKeyLen, DirPad, basis);
@@ -507,11 +510,12 @@ public sealed partial class DbfWriter
     /// offset) pairs, or <see langword="null"/> when the file is not a fast-editable STANDARD compound index
     /// (directory key length ≠ 10, unreadable, or no tags) — the signal for the tag-DDL fast paths to fall back
     /// to a whole-file rebuild. Reads only index pages; never touches the table.</summary>
-    private static List<(string Name, long HeaderOffset)>? ReadDirectoryEntries(FileStream stream)
+    private static List<(string Name, long HeaderOffset)>? ReadDirectoryEntries(FileStream stream, System.Text.Encoding textEncoding)
     {
         try
         {
             using var index = IndexFile.Open(stream, leaveOpen: true);
+            index.TextEncoding = textEncoding;
             var fileHeader = index.ReadCdxHeader(0);
             if (fileHeader.KeyLength != DirKeyLen)
                 return null;   // not the 10-byte tag-name directory scheme → not fast-editable here
@@ -520,7 +524,7 @@ public sealed partial class DbfWriter
             foreach (var (headerOffset, nameBytes) in
                      IndexTraversal.EnumerateCompact(index, fileHeader.Root, fileHeader.KeyLength, isCharacter: true))
             {
-                string name = TrimName(nameBytes);
+                string name = TrimName(nameBytes, textEncoding);
                 if (name.Length == 0 || !seen.Add(name))
                     continue;
                 result.Add((name, headerOffset));

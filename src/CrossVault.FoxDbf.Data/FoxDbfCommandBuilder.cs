@@ -46,7 +46,9 @@ namespace CrossVault.FoxDbf.Data;
 /// </summary>
 public sealed class FoxDbfCommandBuilder : DbCommandBuilder
 {
-    private static readonly Regex s_identifier = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
+    // The same identifier rule as the expression lexer / SQL executor: any Unicode letter (VFP9 accepts
+    // razónSoc as a field name), decimal digits and '_'.
+    private static readonly Regex s_identifier = new(@"^[\p{L}_][\p{L}\p{Nd}_]*$", RegexOptions.Compiled);
     private static readonly Regex s_whitespace = new(@"\s+", RegexOptions.Compiled);
 
     private bool _schemaParsed;

@@ -65,14 +65,24 @@ public sealed partial class DbfWriter
         // The hidden VFP null-bitmap column is auto-added by name; a USER column may not claim it,
         // else the file would carry two physical descriptors named "_NullFlags" — a layout the real
         // VFP9 runtime rejects and which corrupts the reader's system-column bitmap detection.
+        // Field names are stored in the TABLE's code page, exactly like VFP9 does (a CP1252 'Ó' is 0xD3,
+        // the same byte vfp_test/uninames/unifree.dbf carries) and exactly how the reader decodes them.
+        var nameEncoding = options.Encoding ?? Encodings.ResolveEncoding(options.CodePage);
+        var nameBytes = new byte[defs.Count][];
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "_NullFlags" };
-        foreach (var c in defs)
+        for (int i = 0; i < defs.Count; i++)
         {
+            var c = defs[i];
             if (string.IsNullOrWhiteSpace(c.Name))
                 throw new DbfSchemaException("A column name must be a non-empty string.");
             if (c.Name.Length > 10)
                 throw new DbfSchemaException(
                     $"Column name '{c.Name}' exceeds the 10-character DBF field-name limit.");
+            nameBytes[i] = CodePageText.Encode(c.Name, nameEncoding, "Column name", m => new DbfSchemaException(m));
+            if (nameBytes[i].Length > 10)
+                throw new DbfSchemaException(
+                    $"Column name '{c.Name}' needs {nameBytes[i].Length} bytes in code page {nameEncoding.CodePage}; " +
+                    "the DBF field-name slot holds 10.");
             if (StringComparer.OrdinalIgnoreCase.Equals(c.Name, "_NullFlags"))
                 throw new DbfSchemaException(
                     "Column name '_NullFlags' is reserved for the VFP null-bitmap system column.");
@@ -136,9 +146,10 @@ public sealed partial class DbfWriter
 
         int descPos = CreateHeaderSize;
         int fieldOffset = 0; // prefix-sum of prior field lengths (record byte = offset + 1)
-        foreach (var c in defs)
+        for (int i = 0; i < defs.Count; i++)
         {
-            WriteNullableName(buffer.AsSpan(descPos, 11), c.Name);
+            var c = defs[i];
+            WriteNullableName(buffer.AsSpan(descPos, 11), nameBytes[i]);
             buffer[descPos + 11] = (byte)c.Type;
             BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(descPos + 12, 4), (uint)(fieldOffset + 1)); // displacement
             buffer[descPos + 16] = (byte)c.Length;
@@ -164,7 +175,7 @@ public sealed partial class DbfWriter
         {
             // The hidden _NullFlags system column: type '0', system+binary flags (0x05) — the
             // exact byte real VFP writes (verified against data/*.dbf fixtures).
-            WriteNullableName(buffer.AsSpan(descPos, 11), "_NullFlags");
+            WriteNullableName(buffer.AsSpan(descPos, 11), "_NullFlags"u8.ToArray());
             buffer[descPos + 11] = (byte)'0';
             BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(descPos + 12, 4), (uint)(fieldOffset + 1));
             buffer[descPos + 16] = (byte)nullFlagsLen;
@@ -176,12 +187,14 @@ public sealed partial class DbfWriter
         buffer[descPos] = 0x0D; // descriptor-array terminator
         int backlinkPos = descPos + 1;
 
-        // 263-byte backlink: all-zero = free table, or the relative .dbc path (ASCII, NUL-padded).
+        // 263-byte backlink: all-zero = free table, or the relative .dbc path (table code page, NUL-padded).
         if (!string.IsNullOrEmpty(options.BacklinkPath))
         {
-            byte[] link = Encoding.ASCII.GetBytes(options.BacklinkPath);
-            int n = Math.Min(link.Length, CreateBacklinkSize - 1);
-            link.AsSpan(0, n).CopyTo(buffer.AsSpan(backlinkPos, n));
+            byte[] link = CodePageText.Encode(options.BacklinkPath, nameEncoding, "Backlink path", m => new DbfSchemaException(m));
+            if (link.Length > CreateBacklinkSize - 1)
+                throw new DbfSchemaException(
+                    $"Backlink path '{options.BacklinkPath}' needs {link.Length} bytes; the backlink holds {CreateBacklinkSize - 1}.");
+            link.CopyTo(buffer.AsSpan(backlinkPos, link.Length));
         }
 
         // VFP 0x30/0x31/0x32 carry a trailing 0x1A EOF byte even when empty.
@@ -341,13 +354,11 @@ public sealed partial class DbfWriter
         catch { /* best-effort temp cleanup */ }
     }
 
-    /// <summary>Write <paramref name="name"/> NUL-padded into an 11-byte descriptor name slot.</summary>
-    private static void WriteNullableName(Span<byte> slot, string name)
+    /// <summary>Write the already-encoded (≤ 10 byte) <paramref name="name"/> NUL-padded into an 11-byte descriptor name slot.</summary>
+    private static void WriteNullableName(Span<byte> slot, byte[] name)
     {
         slot.Clear();
-        byte[] bytes = Encoding.ASCII.GetBytes(name);
-        int n = Math.Min(bytes.Length, slot.Length - 1); // always leave at least one NUL terminator
-        bytes.AsSpan(0, n).CopyTo(slot);
+        name.CopyTo(slot); // validated ≤ 10 bytes, so at least one NUL terminator remains
     }
 
     /// <summary>

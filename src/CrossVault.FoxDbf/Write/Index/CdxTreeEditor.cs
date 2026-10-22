@@ -30,11 +30,14 @@ internal sealed class CdxTreeEditor : IDisposable
     private readonly IndexFile _reader;   // page reads over the SAME stream (leaveOpen)
     private long _end;                     // next free byte offset (== file length); new pages land here
     private Dictionary<long, byte[]>? _appendPageCache;
+    private readonly System.Text.Encoding? _textEncoding;   // the table code page tag names/expressions are stored in
 
-    public CdxTreeEditor(FileStream rw)
+    public CdxTreeEditor(FileStream rw, System.Text.Encoding? textEncoding = null)
     {
         _rw = rw;
+        _textEncoding = textEncoding;
         _reader = IndexFile.Open(rw, leaveOpen: true);
+        _reader.TextEncoding = textEncoding;
         _end = rw.Length;
     }
 
@@ -52,7 +55,7 @@ internal sealed class CdxTreeEditor : IDisposable
         foreach (var (headerOffset, nameBytes) in
                  EnumerateCompact(fileHeader.Root, fileHeader.KeyLength, isCharacter: true))
         {
-            string name = TrimName(nameBytes);
+            string name = TrimName(nameBytes, _textEncoding);
             if (name.Length == 0 || !seen.Add(name))
                 continue;
             var hdr = ReadCdxHeader(headerOffset);
@@ -484,7 +487,7 @@ internal sealed class CdxTreeEditor : IDisposable
         if (tail > 0 && !ReadExact(byteOffset + PageSize, buf.AsSpan(PageSize, tail)))
             return default;
 
-        return CdxHeader.Parse(buf);
+        return CdxHeader.Parse(buf, _textEncoding);
     }
 
     private IndexNodeHeader? ReadNodeHeader(long byteOffset)
@@ -664,11 +667,11 @@ internal sealed class CdxTreeEditor : IDisposable
         return true;
     }
 
-    private static string TrimName(byte[] raw)
+    private static string TrimName(byte[] raw, System.Text.Encoding? encoding)
     {
         int len = raw.Length;
         while (len > 0 && (raw[len - 1] == 0x20 || raw[len - 1] == 0x00))
             len--;
-        return len == 0 ? string.Empty : System.Text.Encoding.ASCII.GetString(raw, 0, len);
+        return CodePageText.Decode(raw.AsSpan(0, len), encoding);
     }
 }

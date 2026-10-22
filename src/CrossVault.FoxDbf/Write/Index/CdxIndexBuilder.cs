@@ -14,7 +14,7 @@ namespace CrossVault.FoxDbf.Write;
 /// </summary>
 /// <remarks>
 /// The on-disk format is the exact inverse of <see cref="CompactLeaf"/>.Decode /
-/// <see cref="CdxHeader.Parse"/> / <see cref="IndexFile.ReadBranchEntries"/>, and the
+/// <see cref="CdxHeader.Parse(ReadOnlySpan{byte}, Encoding)"/> / <see cref="IndexFile.ReadBranchEntries"/>, and the
 /// leaf bit-width algorithm mirrors CodeBase <c>r4reinde.c</c> (validated byte-for-byte
 /// against VFP9 fixtures such as <c>vfp_test/ligtest.CDX</c>). Page layout (per VFP9):
 /// page0 = file header, page1 = its expression pool, then for each tag a header page +
@@ -87,7 +87,7 @@ internal static class CdxIndexBuilder
             foreach (var p in plans)
             {
                 long headerOffset = (long)page * Page;
-                dirEntries.Add(new Entry(MakeNameKey(p.Name), (uint)headerOffset));
+                dirEntries.Add(new Entry(p.NameKey, (uint)headerOffset));
                 page += 2 + p.TreePageCount;               // header + pool + B-tree pages
             }
             dirEntries.Sort(EntryComparer.Instance);
@@ -125,7 +125,7 @@ internal static class CdxIndexBuilder
         WriteHeaderCommon(fileHeader, root: dirRoot, keyLen: 10,
             options: (byte)0xE0,           // structural | compound | compact
             signature: 1, sortOrder: null, descending: false,
-            keyExpr: string.Empty, forExpr: string.Empty);
+            keyExpr: Array.Empty<byte>(), forExpr: Array.Empty<byte>());
 
         File.WriteAllBytes(cdxPath, sink.ToArray());
     }
@@ -173,7 +173,7 @@ internal static class CdxIndexBuilder
     /// <summary>The 10-byte, space-padded tag-directory key for <paramref name="name"/> — the exact bytes the
     /// compound-index directory tree sorts and stores. Shared with the incremental tag-DDL fast paths so an
     /// unlink/insert targets the same key bytes the bulk builder wrote.</summary>
-    internal static byte[] DirectoryKey(string name) => MakeNameKey(name);
+    internal static byte[] DirectoryKey(string name, Encoding encoding) => MakeNameKey(name, encoding);
 
     // ---- per-tag build ---------------------------------------------------------
 
@@ -182,6 +182,7 @@ internal static class CdxIndexBuilder
     private sealed class TagPlan
     {
         public required string Name;
+        public required byte[] NameKey;
         public required List<Entry> Entries;
         public LeafGeometry Geom;
         public int KeyLen;
@@ -191,8 +192,8 @@ internal static class CdxIndexBuilder
         public byte Signature;
         public string? SortOrder;
         public bool Descending;
-        public string KeyExpr = string.Empty;
-        public string ForExpr = string.Empty;
+        public byte[] KeyExpr = Array.Empty<byte>();
+        public byte[] ForExpr = Array.Empty<byte>();
     }
 
     private static TagPlan PlanTag(DbfTable schema, IReadOnlyList<BuildRow> rows, CdxTagDefinition def,
@@ -201,7 +202,14 @@ internal static class CdxIndexBuilder
         string keyExpr = def.KeyExpression ?? string.Empty;
         bool hasFor = !string.IsNullOrWhiteSpace(def.ForExpression);
         string forExpr = hasFor ? def.ForExpression! : string.Empty;
-        if (Encoding.ASCII.GetByteCount(keyExpr) + Encoding.ASCII.GetByteCount(forExpr) + 2 > Page)
+
+        // Tag name and KEY/FOR text are stored in the TABLE's code page, as VFP9 does ('ó' of razónsoc is
+        // 0xF3 in a CP1252 table, 0xA2 in a CP850 one) — never as '?'.
+        var textEncoding = schema.Encoding;
+        byte[] nameKey = MakeNameKey(def.Name, textEncoding);
+        byte[] keyText = CodePageText.Encode(keyExpr, textEncoding, "CDX tag KEY expression", m => new DbfWriteException(m));
+        byte[] forText = CodePageText.Encode(forExpr, textEncoding, "CDX tag FOR expression", m => new DbfWriteException(m));
+        if (keyText.Length + forText.Length + 2 > Page)
             throw new DbfWriteException("CDX tag KEY + FOR expressions exceed the 512-byte expression pool.");
 
         // The per-row KEY/FOR derivation (collation, key type/length, FOR filter, encoding) is factored
@@ -252,6 +260,7 @@ internal static class CdxIndexBuilder
         return new TagPlan
         {
             Name = def.Name,
+            NameKey = nameKey,
             Entries = entries,
             Geom = geom,
             KeyLen = computer.KeyLen,
@@ -261,8 +270,8 @@ internal static class CdxIndexBuilder
             Signature = tagSig,
             SortOrder = computer.Collation.Name,
             Descending = def.Descending,
-            KeyExpr = keyExpr,
-            ForExpr = forExpr,
+            KeyExpr = keyText,
+            ForExpr = forText,
         };
     }
 
@@ -804,7 +813,7 @@ internal static class CdxIndexBuilder
     // ---- header / pool writers -------------------------------------------------
 
     private static void WriteHeaderCommon(byte[] page, uint root, int keyLen, byte options, byte signature,
-        string? sortOrder, bool descending, string keyExpr, string forExpr)
+        string? sortOrder, bool descending, byte[] keyExpr, byte[] forExpr)
     {
         BinaryPrimitives.WriteUInt32LittleEndian(page.AsSpan(0), root);
         BinaryPrimitives.WriteUInt32LittleEndian(page.AsSpan(4), 0u);    // free list (unused)
@@ -825,8 +834,8 @@ internal static class CdxIndexBuilder
         }
 
         BinaryPrimitives.WriteUInt16LittleEndian(page.AsSpan(502), (ushort)(descending ? 1 : 0));
-        ushort forLen = (ushort)((forExpr?.Length ?? 0) + 1);  // includes terminating NUL
-        ushort keyLenExpr = (ushort)((keyExpr?.Length ?? 0) + 1);
+        ushort forLen = (ushort)(forExpr.Length + 1);  // encoded BYTES, includes terminating NUL
+        ushort keyLenExpr = (ushort)(keyExpr.Length + 1);
         // @504 mirrors the KEY-expression length (VFP writes it alongside the @510 copy the reader uses).
         // Confirmed in vfp_test/dbctest/ref.DCX and vfp_test/ligtest.CDX: @504 == @510 == keyExprLen on
         // every header page (file header and each tag). The reader ignores it; byte-identity needs it.
@@ -836,26 +845,31 @@ internal static class CdxIndexBuilder
     }
 
     /// <summary>Write the KEY then FOR expression strings into the pool at <paramref name="headerOffset"/> + 512.</summary>
-    private static void WriteExpressionPool(PageSink sink, long headerOffset, string keyExpr, string forExpr)
+    private static void WriteExpressionPool(PageSink sink, long headerOffset, byte[] keyExpr, byte[] forExpr)
     {
         int poolIndex = (int)((headerOffset / Page) + 1);
         var pool = sink.At(poolIndex);
-        int p = 0;
-        foreach (byte b in Encoding.ASCII.GetBytes(keyExpr)) pool[p++] = b;
-        pool[p++] = 0;
-        foreach (byte b in Encoding.ASCII.GetBytes(forExpr)) pool[p++] = b;
-        pool[p++] = 0;
+        keyExpr.CopyTo(pool, 0);
+        pool[keyExpr.Length] = 0;
+        forExpr.CopyTo(pool, keyExpr.Length + 1);
+        pool[keyExpr.Length + 1 + forExpr.Length] = 0;
     }
 
     // ---- small helpers ---------------------------------------------------------
 
-    private static byte[] MakeNameKey(string name)
+    /// <summary>The 10-byte, space-padded directory key: <paramref name="name"/> in the table code page
+    /// (VFP9 stores tag RAZÓN with 'Ó' = 0xD3 in CP1252). An unencodable or over-long name throws instead of
+    /// being substituted or clipped — a clipped key would no longer match the name it was created under.</summary>
+    private static byte[] MakeNameKey(string name, Encoding encoding)
     {
+        string trimmed = name.Trim();
+        byte[] bytes = CodePageText.Encode(trimmed, encoding, "CDX tag name", m => new DbfWriteException(m));
+        if (bytes.Length > 10)
+            throw new DbfWriteException(
+                $"CDX tag name '{trimmed}' needs {bytes.Length} bytes in code page {encoding.CodePage}; a tag name holds 10.");
         var key = new byte[10];
         for (int i = 0; i < 10; i++) key[i] = 0x20;
-        byte[] bytes = Encoding.ASCII.GetBytes(name.Trim());
-        int n = Math.Min(bytes.Length, 10);
-        bytes.AsSpan(0, n).CopyTo(key);
+        bytes.CopyTo(key, 0);
         return key;
     }
 

@@ -25,10 +25,11 @@ public static class PrgParser
         return new Impl(lines).ParseProgram();
     }
 
-    /// <summary>Reads <paramref name="path"/> (Windows-1252 / Latin-1, as VFP exports it) and
-    /// parses it.</summary>
+    /// <summary>Reads <paramref name="path"/> in the default code page (Windows-1252, as VFP saves it) and
+    /// parses it. Not Latin-1: that would decode CP1252's 0x80–0x9F letters (Š Œ š œ Ÿ ƒ, which VFP9 accepts in
+    /// names) as C1 control characters, so an identifier such as <c>ŠUP</c> would no longer scan.</summary>
     public static PrgProgram ParseFile(string path)
-        => Parse(File.ReadAllText(path, Encoding.Latin1));
+        => Parse(File.ReadAllText(path, CodePageText.DefaultEncoding));
 
     // ── logical-line model ───────────────────────────────────────────────────
 
@@ -189,7 +190,7 @@ public static class PrgParser
         int i = 1;
         while (i < t.Length && char.IsWhiteSpace(t[i])) i++;
         int start = i;
-        while (i < t.Length && (char.IsAsciiLetterOrDigit(t[i]) || t[i] == '_')) i++;
+        while (i < t.Length && (VfpIdentifier.IsPart(t[i]))) i++;
         if (i == start) return false;
         dir = t.Substring(start, i - start).ToUpperInvariant();
         rest = t.Substring(i).Trim();
@@ -200,7 +201,7 @@ public static class PrgParser
     {
         s = s.TrimStart();
         int j = 0;
-        while (j < s.Length && (char.IsAsciiLetterOrDigit(s[j]) || s[j] == '_')) j++;
+        while (j < s.Length && (VfpIdentifier.IsPart(s[j]))) j++;
         return s.Substring(0, j);
     }
 
@@ -246,10 +247,10 @@ public static class PrgParser
                 char c = expr[i];
                 if (inStr) { sb.Append(c); if (c == q) inStr = false; i++; continue; }
                 if (c == '\'' || c == '"') { inStr = true; q = c; sb.Append(c); i++; continue; }
-                if (char.IsAsciiLetter(c) || c == '_')
+                if (VfpIdentifier.IsStart(c))
                 {
                     int s = i; i++;
-                    while (i < expr.Length && (char.IsAsciiLetterOrDigit(expr[i]) || expr[i] == '_')) i++;
+                    while (i < expr.Length && (VfpIdentifier.IsPart(expr[i]))) i++;
                     string word = expr.Substring(s, i - s);
                     if (defines.TryGetValue(word, out var val)) { sb.Append(string.IsNullOrEmpty(val) ? ".T." : val); changed = true; }
                     else sb.Append(word);
@@ -319,7 +320,7 @@ public static class PrgParser
             string rest = PrgScan.AfterFirstWord(ll.Text).TrimStart();
 
             int j = 0;
-            while (j < rest.Length && (char.IsAsciiLetterOrDigit(rest[j]) || rest[j] == '_')) j++;
+            while (j < rest.Length && (VfpIdentifier.IsPart(rest[j]))) j++;
             string name = rest.Substring(0, j);
             if (name.Length == 0)
                 throw new MicroVfpSyntaxException("PROCEDURE/FUNCTION without a name.", ll.LineNo);
@@ -1671,7 +1672,7 @@ public static class PrgParser
         {
             s = s.TrimStart();
             int j = 0;
-            while (j < s.Length && (char.IsAsciiLetterOrDigit(s[j]) || s[j] == '_')) j++;
+            while (j < s.Length && (VfpIdentifier.IsPart(s[j]))) j++;
             return s.Substring(0, j);
         }
 
