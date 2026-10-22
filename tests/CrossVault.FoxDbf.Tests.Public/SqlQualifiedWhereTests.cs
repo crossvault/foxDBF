@@ -143,6 +143,18 @@ public sealed class SqlQualifiedWhereTests : IDisposable
         SqlTestSupport.AssertRowsEqualOrdered(bare, qualified);
     }
 
+    [Fact]
+    public void Reported_Idxtest_Repro_Returns_The_Row()
+    {
+        // The originally reported shapes, verbatim, on the committed VFP9-made fixture (read-only).
+        using var s = new VfpSession();
+        s.OpenDirectory(Fixtures.VfpTestDir);
+        int bare = s.Execute("SELECT tid FROM idxtest WHERE tid = 1")!.Rows.Count();
+        Assert.True(bare > 0);
+        Assert.Equal(bare, s.Execute("SELECT i.tid FROM idxtest i WHERE i.tid = 1")!.Rows.Count());
+        Assert.Equal(bare, s.Execute("SELECT tid FROM idxtest WHERE idxtest.tid = 1")!.Rows.Count());
+    }
+
     // =========================================================================================
     //  (2) Regression guards — paths that were ALREADY alias-aware (green before the fix).
     // =========================================================================================
