@@ -147,18 +147,75 @@ public sealed class CdxTag
     }
 
     /// <summary>
-    /// The needle VFP9's SEEK uses for the character value <paramref name="s"/> in this tag. With
-    /// <paramref name="exact"/> (SET EXACT ON) it is the full stored key (<see cref="EncodeCharacterKey"/>), matched
-    /// with the rest of the key all <see cref="KeyPad"/>. Without, it is a PREFIX needle: under a weighted sequence
-    /// only the head weights (the diacritic tails are ignored; VFP9: SEEK('áa') finds 'Aa', SEEK('Müller') finds
-    /// 'Muller' when that sorts first), under MACHINE the raw bytes.
+    /// The width in characters of a weighted (GENERAL / SPANISH) key: VFP9 stores two weight bytes per character,
+    /// so it is half the key length. Assumes the key was not capped at 240 bytes (an expression over 120 characters).
+    /// </summary>
+    private int WeightedKeyWidth => KeyLength / 2;
+
+    /// <summary>
+    /// The needle VFP9's SEEK (SEEK(), KEYMATCH(), INDEXSEEK(), the SET RELATION reposition) uses for the character
+    /// value <paramref name="s"/> in this tag, with <paramref name="exact"/> = SET EXACT (VFP9-verified, see
+    /// <see cref="CharacterSeekNeedle"/>):
+    /// <list type="bullet">
+    ///   <item>MACHINE: the raw bytes, never trimmed or cut; EXACT ON matches the key equal to them plus blanks,
+    ///   EXACT OFF every key they are a prefix of.</item>
+    ///   <item>weighted, EXACT ON, or EXACT OFF with <paramref name="s"/> exactly as wide as the key: the full stored
+    ///   key of the trimmed value, matched with the rest of the key 0x00 (SEEK('Muller    ') does not find
+    ///   'Müller').</item>
+    ///   <item>weighted, EXACT OFF otherwise: the head weights only, a prefix (the tails are ignored: SEEK('áa') finds
+    ///   'Aa', SEEK('Müller') finds 'Muller' when that sorts first); trailing needle blanks compare with the heads of
+    ///   the blank-padded value (SEEK('Ab ') finds 'Ab' or 'Ab  c', SEEK('Stra  ') not 'Strab').</item>
+    /// </list>
     /// </summary>
     /// <exception cref="NotSupportedException">The tag's sort sequence is unknown (see <see cref="EncodeCharacterKey"/>).</exception>
-    internal byte[] EncodeCharacterSeekKey(string s, bool exact)
+    internal CharacterSeekNeedle CreateCharacterSeekNeedle(string s, bool exact)
     {
-        if (exact || _collationSupport == CollationSupport.Unsupported)
-            return EncodeCharacterKey(s);
-        return IndexKey.EncodeCharacterPrefixNeedle(s.AsSpan(), _collation, CharacterEncoding, KeyLength);
+        if (_collationSupport == CollationSupport.Unsupported || _collation is not GeneralCollation general)
+            return new CharacterSeekNeedle(EncodeCharacterKey(s), exact, KeyPad);
+        if (exact || s.Length == WeightedKeyWidth)
+            return new CharacterSeekNeedle(EncodeCharacterKey(s), exact: true, KeyPad);
+        int trimmed = s.Length;
+        while (trimmed > 0 && s[trimmed - 1] == ' ') trimmed--;
+        var heads = general.GetHeadKey(s.AsSpan(0, trimmed));
+        if (heads.Length >= KeyLength)
+            return new CharacterSeekNeedle(heads.AsSpan(0, KeyLength).ToArray(), exact: false, KeyPad);
+        return new CharacterSeekNeedle(heads, exact: false, KeyPad, s.Length - trimmed, general.BlankHead);
+    }
+
+    /// <summary>
+    /// The bound of a single-value SET KEY TO <paramref name="s"/> under SET EXACT <paramref name="exact"/>
+    /// (VFP9-verified). With <paramref name="equality"/> the stored key must equal the returned bytes, which are
+    /// padded with <see cref="KeyPad"/> to <see cref="KeyLength"/> (EXACT ON, and under a weighted sequence also a
+    /// value exactly as wide as the key); otherwise the returned bytes are a byte prefix of the stored key. Unlike
+    /// SEEK the bound is cut to the key length (MACHINE SET KEY TO 'Ab'+SPACE(20) scopes to 'Ab') and a weighted
+    /// prefix keeps its trailing blanks as blank heads with no pad equivalence (SET KEY TO 'Ab ' leaves out 'Ab').
+    /// </summary>
+    /// <exception cref="NotSupportedException">The tag's sort sequence is unknown (see <see cref="EncodeCharacterKey"/>).</exception>
+    internal byte[] EncodeCharacterScopeKey(string s, bool exact, out bool equality)
+    {
+        byte[] natural;
+        if (_collation is GeneralCollation general && _collationSupport != CollationSupport.Unsupported
+            && !exact && s.Length != WeightedKeyWidth)
+        {
+            int trimmed = s.Length;
+            while (trimmed > 0 && s[trimmed - 1] == ' ') trimmed--;
+            var heads = general.GetHeadKey(s.AsSpan(0, trimmed));
+            natural = new byte[heads.Length + s.Length - trimmed];
+            Array.Fill(natural, general.BlankHead);
+            heads.CopyTo(natural, 0);
+            equality = false;
+        }
+        else
+        {
+            natural = EncodeCharacterKey(s);
+            equality = exact || _collation is GeneralCollation;
+        }
+        if (!equality)
+            return natural.Length <= KeyLength ? natural : natural.AsSpan(0, KeyLength).ToArray();
+        var key = new byte[KeyLength];
+        Array.Fill(key, KeyPad);
+        natural.AsSpan(0, Math.Min(natural.Length, KeyLength)).CopyTo(key);
+        return key;
     }
 
     /// <summary>
@@ -221,6 +278,27 @@ public sealed class CdxTag
     }
 
     /// <summary>
+    /// Seeks the first key in stored ascending byte order that matches <paramref name="needle"/> (see
+    /// <see cref="CreateCharacterSeekNeedle"/>); an empty needle matches the first key, as VFP9's SEEK('') does.
+    /// Like <see cref="Seek(ReadOnlySpan{byte}, bool)"/> it is not order-aware for a <see cref="Descending"/> tag.
+    /// Never throws.
+    /// </summary>
+    internal uint? Seek(CharacterSeekNeedle needle)
+    {
+        // Every matching key carries needle.Bytes, so the walk starts at the first key >= them and ends once the
+        // keys sort past them; keys in between that fail the trailing-blank rule are skipped.
+        foreach (var entry in EnumerateFrom(needle.Bytes))
+        {
+            int cmp = needle.CompareBytes(entry.Key);
+            if (cmp < 0)
+                break;
+            if (cmp == 0 && needle.TrailingBlanksMatch(entry.Key))
+                return entry.RecordNumber;
+        }
+        return NotFound;
+    }
+
+    /// <summary>
     /// Unsigned byte comparison of <paramref name="needle"/> against the start of
     /// <paramref name="key"/>: returns 0 when they match, negative when the needle sorts
     /// before the key, positive after. When <paramref name="exact"/> is false a plain
@@ -251,9 +329,10 @@ public sealed class CdxTag
     /// <summary>
     /// Encodes <paramref name="value"/> to key bytes via this tag's
     /// <see cref="KeyType"/> transform, then seeks it (see <see cref="Seek(ReadOnlySpan{byte})"/>).
-    /// A character value seeks like VFP9's SEEK under SET EXACT OFF: a prefix seek whose needle, under a weighted
-    /// sequence (GENERAL / SPANISH), is the value's head weights only, so <c>Seek("áa")</c> lands on the first key
-    /// whose heads start with those of <c>áa</c>, which may be <c>Aa</c> (see <see cref="EncodeCharacterSeekKey"/>).
+    /// A character value seeks like VFP9's SEEK under SET EXACT OFF (see <see cref="CreateCharacterSeekNeedle"/>):
+    /// under a weighted sequence (GENERAL / SPANISH) a prefix seek on the value's head weights only, so
+    /// <c>Seek("áa")</c> lands on the first key whose heads start with those of <c>áa</c>, which may be <c>Aa</c>; a
+    /// value exactly as wide as the key seeks its full key. An empty value is not found.
     /// Returns <see cref="NotFound"/> for an absent value, an unencodable type or a character key under an
     /// unsupported collating sequence. Never throws.
     /// </summary>
@@ -261,7 +340,12 @@ public sealed class CdxTag
     {
         // A character tag whose expression could not be typed (e.g. a UDF) still holds character keys.
         if ((KeyType == IndexKeyType.Character || (KeyType == IndexKeyType.Unknown && IsCharacterKey)) && value is string s)
-            return _collationSupport == CollationSupport.Unsupported ? NotFound : Seek(EncodeCharacterSeekKey(s, exact: false).AsSpan());
+        {
+            if (_collationSupport == CollationSupport.Unsupported)
+                return NotFound;
+            var needle = CreateCharacterSeekNeedle(s, exact: false);
+            return needle.Bytes.Length == 0 && needle.TrailingBlanks == 0 ? NotFound : Seek(needle);
+        }
 
         var keyBytes = IndexKey.Encode(value, KeyType);
         return keyBytes is null ? NotFound : Seek(keyBytes.AsSpan());

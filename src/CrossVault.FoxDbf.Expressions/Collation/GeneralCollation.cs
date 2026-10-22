@@ -100,6 +100,12 @@ public sealed class GeneralCollation : IVfpCollation
         return heads[..hc].ToArray();
     }
 
+    /// <summary>
+    /// The head weight of a blank (0x11 under CP1252). Every head is at least 0x10, while
+    /// every tail and the 0x00 pad are below 0x10, so a key byte under 0x10 lies past the value's heads.
+    /// </summary>
+    internal byte BlankHead => _table.Head[_table.CharToByte[' ']];
+
     /// <inheritdoc/>
     public int Compare(ReadOnlySpan<char> left, ReadOnlySpan<char> right)
     {

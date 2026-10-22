@@ -24,6 +24,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   its own, and our SEEK and Rushmore find VFP9's rows on its CDX. The "cut, then lose the trailing 0x00 tail
   bytes" rule listed for 0.10.0 is this pad. GENERAL/SPANISH CDX files written by an earlier version keep the
   old order and lose a trailing `/` on read: REINDEX them.
+- microVFP `SET KEY TO` a single character value uses VFP9's bound: under GENERAL/SPANISH and `SET EXACT OFF` the head
+  weights only, like SEEK (`SET KEY TO 'áa'` shows `Aa`, `aa`, `áa`, `Áa`, `Aab`); a MACHINE bound is cut to the key
+  length; `SET KEY TO ''` clears the scope. The relation reposition into a DESCENDING child tag lands on the first
+  match in descending order.
 
 ### Changed
 
@@ -45,6 +49,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Rushmore and the Highlike statistics matched a condition against a tag's KEY by its exact spelling, so a
   VFP-built tag stored as `IIF(.NOT.EMPTY(name),…)` or with `"…"`, `#`, `=>` was not used for a condition
   typed `IIF(NOT EMPTY(NAME),…)`, `'…'`, `<>`, `>=`.
+- BREAKING: microVFP `SEEK`, `SEEK()` and `KEYMATCH()` honour `SET EXACT` under every collation, as VFP9 does (they
+  were always prefix seeks; only the relation reposition honoured it). Under `SET EXACT ON` — microVFP's default —
+  `SEEK 'Stra'` no longer finds `Straße` and a short value no longer finds a longer key: set `SET EXACT OFF` for a
+  prefix seek. EXACT ON matches the whole key (value plus pad); under GENERAL/SPANISH also a value exactly as wide
+  as the key does under EXACT OFF (`SEEK 'Muller    '` does not find `Müller`). Trailing needle blanks under
+  GENERAL/SPANISH EXACT OFF compare with the heads of the blank-padded value (`SEEK 'Ab '` finds `Ab` or `Ab  c`,
+  `SEEK 'Stra  '` not `Strab`); a MACHINE needle longer than the key never matches (also not under `SET NEAR`).
+  `CdxTag.Seek(object)` follows the same EXACT OFF rule.
 
 ## [0.10.0] - 2026-10-22
 

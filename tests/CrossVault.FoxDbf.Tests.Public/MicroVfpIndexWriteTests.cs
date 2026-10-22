@@ -198,7 +198,12 @@ public sealed class MicroVfpIndexWriteTests
         Assert.True(b.Bool("FOUND()"));
         Assert.Equal(2m, b.Num("RECNO()"));
 
+        // A prefix finds the row only under SET EXACT OFF; VFP9's SEEK honours EXACT ON (microVFP's default)
+        // under every collation (SeekExactVfp9OracleTests).
         b.Run("=SEEK('ali', 'people', 'g')");
+        Assert.False(b.Bool("FOUND()"));
+
+        b.Run("SET EXACT OFF\n=SEEK('ali', 'people', 'g')");
         Assert.True(b.Bool("FOUND()"));
         Assert.Equal(2m, b.Num("RECNO()"));
 

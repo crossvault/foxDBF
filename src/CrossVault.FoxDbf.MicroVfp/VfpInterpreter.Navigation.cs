@@ -303,8 +303,16 @@ public sealed partial class VfpInterpreter
         }
         else
         {
+            var single = EvalText(rest);
+            if (single.Type == VfpType.Character && single.AsString.Length == 0)
+            {
+                // SET KEY TO '' clears the scope like a bare SET KEY TO (VFP9-verified: every row, SET('KEY') = '',
+                // under any collation and SET EXACT).
+                m.KeySet = false; m.KeyRange = false; m.KeyLow = null; m.KeyHigh = null; m.KeyVisible = null;
+                return;
+            }
             m.KeyRange = false;
-            m.KeyLow = EvalText(rest);
+            m.KeyLow = single;
             m.KeyHigh = null;
         }
         m.KeySet = true;
@@ -473,15 +481,30 @@ public sealed partial class VfpInterpreter
 
         if (src.IsCharacterKey)
         {
-            // Encode each bound the SAME way the order stores keys: CDX collation weights or standalone
-            // IDX code-page bytes, padded to the key length. Raw comparison mirrors on-disk order.
+            if (!m.KeyRange)
+            {
+                // Single value: the stored key equals the padded bound or starts with the bound prefix, per SET
+                // EXACT and the order's collation (see ScopeCharacterKey).
+                if (m.KeyLow is not { } single) return set;   // no bound value ⇒ nothing matches (never fail-open).
+                byte[] bound = ScopeCharacterKey(src, single, _ctx.Exact, out bool equality);
+                if (ScopeTopMisses(src, m, single, bound)) return set;
+                foreach (var (key, recno) in OrderedEntries(src))
+                {
+                    if (equality ? CompareBytesUnsigned(key, bound) == 0 : IsBytePrefix(bound, key))
+                        set.Add(recno);
+                }
+                return set;
+            }
+
+            // Range: encode each bound the SAME way the order stores keys (CDX collation weights or standalone
+            // IDX code-page bytes), padded to the key length. Raw comparison mirrors on-disk order.
             byte[]? loBytes = m.KeyLow is { } lo ? PaddedCharacterKey(src, lo) : null;
-            byte[]? hiBytes = m.KeyRange && m.KeyHigh is { } hi ? PaddedCharacterKey(src, hi) : null;
-            byte[]? loNatural = !m.KeyRange && m.KeyLow is { } lo1 ? NaturalCharacterKey(src, lo1) : null;
+            byte[]? hiBytes = m.KeyHigh is { } hi ? PaddedCharacterKey(src, hi) : null;
             foreach (var (key, recno) in OrderedEntries(src))
             {
-                if (CharKeyInRange(m, key, loBytes, hiBytes, loNatural))
-                    set.Add(recno);
+                if (loBytes is not null && CompareBytesUnsigned(key, loBytes) < 0) continue;
+                if (hiBytes is not null && CompareBytesUnsigned(key, hiBytes) > 0) continue;
+                set.Add(recno);
             }
             return set;
         }
@@ -494,7 +517,42 @@ public sealed partial class VfpInterpreter
         return set;
     }
 
-    /// <summary>The stored-key bytes for a CHARACTER SET KEY bound: the natural CDX weights or IDX
+    /// <summary>
+    /// VFP9 finds the top of a single-value SET KEY scope by SEEKing the bound and stepping at most once; when that
+    /// lands outside the scope, the scope shows no rows although keys inside it exist (VFP9-verified). Two cases:
+    /// <list type="bullet">
+    ///   <item>a MACHINE bound longer than the key on a DESCENDING order (an ascending order cuts it to the key
+    ///   length);</item>
+    ///   <item>an ascending GENERAL / SPANISH order under SET EXACT OFF with trailing blanks in the bound: the SEEK
+    ///   needle also matches keys whose heads end there ('Ab' for 'Ab '), which sort before the scope; with two such
+    ///   keys first, VFP shows nothing (one is stepped over).</item>
+    /// </list>
+    /// </summary>
+    private bool ScopeTopMisses(OrderSource src, AreaMeta m, VfpValue single, byte[] scopePrefix)
+    {
+        bool descending = src.Descending != m.OrderReversed;
+        if (descending)
+            return NaturalCharacterKey(src, single).Length > src.KeyLength;
+        if (_ctx.Exact || src.CdxTag is null)
+            return false;
+        var needle = SeekCharacterNeedle(src, single, exact: false);
+        if (needle.Exact || needle.TrailingBlanks == 0)
+            return false;
+        var entries = OrderedEntries(src);
+        if (m.OrderReversed) entries = entries.Reverse();
+        int outside = 0;
+        bool started = false;
+        foreach (var (key, _) in entries)
+        {
+            if (!started && !needle.Matches(key)) continue;
+            started = true;
+            if (IsBytePrefix(scopePrefix, key)) return false;
+            if (++outside == 2) return true;
+        }
+        return false;
+    }
+
+    /// <summary>The stored-key bytes for a CHARACTER SET KEY range bound: the natural CDX weights or IDX
     /// code-page bytes, right-padded to or truncated at the order's key length with the order's pad (blanks for
     /// MACHINE and standalone IDX, 0x00 for a GENERAL / SPANISH tag — VFP9's stored form).</summary>
     private static byte[] PaddedCharacterKey(OrderSource src, VfpValue bound)
@@ -505,6 +563,30 @@ public sealed partial class VfpInterpreter
         int copy = Math.Min(natural.Length, src.KeyLength);
         natural.AsSpan(0, copy).CopyTo(key);
         return key;
+    }
+
+    /// <summary>The bound of a single-value SET KEY under SET EXACT <paramref name="exact"/> (VFP9-verified): with
+    /// <paramref name="equality"/> the stored key must equal it, else it is a byte prefix of the stored key. A CDX tag
+    /// builds it per its collation (<see cref="CdxTag.EncodeCharacterScopeKey"/>: under GENERAL / SPANISH and EXACT OFF
+    /// the head weights only, like SEEK); a standalone IDX holds raw MACHINE bytes, cut to the key length and, for
+    /// EXACT ON, padded with blanks.</summary>
+    private static byte[] ScopeCharacterKey(OrderSource src, VfpValue bound, bool exact, out bool equality)
+    {
+        if (src.CdxTag is { } tag)
+        {
+            try
+            {
+                return tag.EncodeCharacterScopeKey(bound.AsString ?? string.Empty, exact, out equality);
+            }
+            catch (NotSupportedException ex)
+            {
+                throw new MicroVfpRuntimeException(ex.Message);
+            }
+        }
+        equality = exact;
+        if (exact) return PaddedCharacterKey(src, bound);
+        var natural = NaturalCharacterKey(src, bound);
+        return natural.Length <= src.KeyLength ? natural : natural.AsSpan(0, src.KeyLength).ToArray();
     }
 
     /// <summary>The natural stored byte needle for a character order. Standalone IDX uses its
@@ -518,27 +600,17 @@ public sealed partial class VfpInterpreter
         return EncodeTagCharacterKey(src.CdxTag!, text);
     }
 
-    /// <summary>The PREFIX byte needle of an interpreter character SEEK on a CDX tag (VFP9 SEEK under SET EXACT
-    /// OFF): the stored bytes under MACHINE, the head weights only under GENERAL / SPANISH
-    /// (see <see cref="CdxTag.EncodeCharacterSeekKey"/>).</summary>
-    private static byte[] NaturalCharacterSeekNeedle(CdxTag tag, VfpValue key)
-        => EncodeTagCharacterKey(tag, key.AsString ?? string.Empty, seekExact: false);
-
-    /// <summary>The character byte needle a SEEK on <paramref name="src"/> compares: an IDX's code-page bytes, a CDX
-    /// tag's SEEK needle — the full stored key when <paramref name="exact"/>, else the prefix needle.</summary>
-    private static byte[] SeekCharacterNeedle(OrderSource src, VfpValue key, bool exact)
-        => src.Idx is not null
-            ? NaturalCharacterKey(src, key)
-            : EncodeTagCharacterKey(src.CdxTag!, key.AsString ?? string.Empty, seekExact: exact);
-
-    /// <summary><see cref="CdxTag.EncodeCharacterKey"/> (or, with <paramref name="seekExact"/> given, the SEEK needle
-    /// <see cref="CdxTag.EncodeCharacterSeekKey"/>), surfacing an unsupported collating sequence (a tag built by VFP
-    /// under e.g. GERMAN) as a catchable runtime error instead of a silent miss.</summary>
-    private static byte[] EncodeTagCharacterKey(CdxTag tag, string text, bool? seekExact = null)
+    /// <summary>The character needle a SEEK, SEEK(), KEYMATCH() or relation reposition on <paramref name="src"/>
+    /// matches under SET EXACT <paramref name="exact"/> (VFP9-verified, the same rule for all of them): a CDX tag's
+    /// <see cref="CdxTag.CreateCharacterSeekNeedle"/>; a standalone IDX's raw MACHINE bytes (a prefix, or under EXACT ON
+    /// the key equal to them plus blanks).</summary>
+    private static CharacterSeekNeedle SeekCharacterNeedle(OrderSource src, VfpValue key, bool exact)
     {
+        if (src.Idx is not null)
+            return new CharacterSeekNeedle(NaturalCharacterKey(src, key), exact, (byte)0x20);
         try
         {
-            return seekExact is bool exact ? tag.EncodeCharacterSeekKey(text, exact) : tag.EncodeCharacterKey(text);
+            return src.CdxTag!.CreateCharacterSeekNeedle(key.AsString ?? string.Empty, exact);
         }
         catch (NotSupportedException ex)
         {
@@ -546,21 +618,18 @@ public sealed partial class VfpInterpreter
         }
     }
 
-    /// <summary>Whether one stored CHARACTER key falls in the active SET KEY range, compared on collated
-    /// key bytes. Single-value: SET EXACT ON ⇒ full byte-equality against the padded bound; SET EXACT OFF ⇒
-    /// the (unpadded) bound weights are a byte PREFIX of the stored key (SEEK semantics).</summary>
-    private bool CharKeyInRange(AreaMeta m, byte[] storedKey, byte[]? loBytes, byte[]? hiBytes, byte[]? loNatural)
+    /// <summary><see cref="CdxTag.EncodeCharacterKey"/>, surfacing an unsupported collating sequence (a tag built by
+    /// VFP under e.g. GERMAN) as a catchable runtime error instead of a silent miss.</summary>
+    private static byte[] EncodeTagCharacterKey(CdxTag tag, string text)
     {
-        if (!m.KeyRange)
+        try
         {
-            if (loBytes is null) return false;   // no bound value ⇒ nothing matches (never fail-open).
-            return _ctx.Exact
-                ? CompareBytesUnsigned(storedKey, loBytes) == 0
-                : IsBytePrefix(loNatural ?? Array.Empty<byte>(), storedKey);
+            return tag.EncodeCharacterKey(text);
         }
-        if (loBytes is not null && CompareBytesUnsigned(storedKey, loBytes) < 0) return false;
-        if (hiBytes is not null && CompareBytesUnsigned(storedKey, hiBytes) > 0) return false;
-        return true;
+        catch (NotSupportedException ex)
+        {
+            throw new MicroVfpRuntimeException(ex.Message);
+        }
     }
 
     /// <summary>Unsigned, shorter-sorts-first byte comparison (the CDX key sort order).</summary>
@@ -950,27 +1019,26 @@ public sealed partial class VfpInterpreter
         using var src = OpenOrderSource(area, identity);
         if (src is null) { m.Found = false; return false; }
 
-        byte[]? characterNeedle = src.IsCharacterKey && key.Type == VfpType.Character
-            ? SeekCharacterNeedle(src, key, relationSeek && _ctx.Exact)
+        // A character value seeks with the needle VFP9 builds for SEEK, SEEK(), KEYMATCH(), INDEXSEEK() and the
+        // relation reposition alike: SET EXACT ON matches the whole key (value plus pad), EXACT OFF a prefix (under
+        // GENERAL / SPANISH the head weights only) — so under EXACT ON SEEK 'Stra' misses 'Straße' and a short value
+        // misses a COMPOSITE key (relate on `cust_id`, tag `cust_id+ord_id`: hackfox quirk 1), while EXACT OFF keeps
+        // the prefix match. The raw-byte needle also serves a composite character tag, which the value-typed
+        // Seek(object) cannot (its expression resolves to KeyType.Unknown).
+        CharacterSeekNeedle? characterNeedle = src.IsCharacterKey && key.Type == VfpType.Character
+            ? SeekCharacterNeedle(src, key, _ctx.Exact)
             : null;
 
         uint? recno = null;
         if (src.CdxTag is { } t)
         {
-            // Character keys seek by RAW BYTES (a prefix seek): this lets a SHORT value match a COMPOSITE
-            // character tag (e.g. relate on `cust_id`, tag `cust_id+ord_id`) — the P1-gap-#2 prefix quirk —
-            // which the value-typed Seek(object) cannot do (a composite expression resolves to
-            // KeyType.Unknown, so its Encode returns null). A single-field character key is unaffected.
-            // The RELATION reposition seek honours SET EXACT (hackfox quirk 1): under EXACT ON a prefix-only
-            // hit on a composite child key is NOT a match (→ child EOF); the SEEK command path keeps its
-            // always-prefix behaviour.
             recno = characterNeedle is not null
-                ? t.Seek(characterNeedle.AsSpan(), relationSeek && _ctx.Exact)
+                ? t.Seek(characterNeedle)
                 : t.Seek(key.ToClr() ?? string.Empty);
         }
         else if (src.Idx is not null)
         {
-            recno = SeekIdx(src, key);
+            recno = SeekIdx(src, key, characterNeedle);
         }
 
         m.OldVals = null;                 // a record move re-bases the OLDVAL() buffer (per-record buffering).
@@ -978,12 +1046,12 @@ public sealed partial class VfpInterpreter
         {
             int hit = (int)r;
             bool cdxSeekNeedsOrderedLanding = src.CdxTag is not null && (src.CdxTag.Descending != m.OrderReversed);
-            if (!relationSeek && cdxSeekNeedsOrderedLanding)
+            if (cdxSeekNeedsOrderedLanding)
             {
                 // CdxTag.Seek walks stored ascending bytes. For a descending controlling order it is only an
-                // existence probe; duplicate-key positioning must land on the first matching visible entry in
-                // that order.
-                int vis = FirstVisibleSeekMatch(src, key, wa, characterNeedle);
+                // existence probe; duplicate-key positioning must land on the first matching (for SEEK: visible)
+                // entry in that order — the relation reposition too (VFP9-verified on a descending child tag).
+                int vis = FirstVisibleSeekMatch(src, key, wa, characterNeedle, requireVisible: !relationSeek);
                 if (vis >= 1)
                     hit = vis;
                 else
@@ -1018,8 +1086,9 @@ public sealed partial class VfpInterpreter
         }
 
         // Miss: SET NEAR ON leaves the pointer on the record just past where the key would sort
-        // (s4g268 — SEEK only, not relation repositioning); NEAR OFF (default) parks at EOF.
-        if (_setNear && !relationSeek)
+        // (s4g268 — SEEK only, not relation repositioning); NEAR OFF (default) parks at EOF. A needle longer than the
+        // key (a MACHINE value wider than the field) parks at EOF under NEAR ON too (VFP9-verified).
+        if (_setNear && !relationSeek && !(characterNeedle is { } cn && cn.Bytes.Length > src.KeyLength))
         {
             int nearRec = NearRecord(src, key, area, characterNeedle);
             if (nearRec >= 1)
@@ -1038,8 +1107,10 @@ public sealed partial class VfpInterpreter
     /// (SET DELETED / SET KEY / SET FILTER), find the first VISIBLE record among the index entries that still
     /// MATCH the seek key — walking the controlling order. This extends VFP's deleted-record skip to every
     /// visibility gate. Returns the recno, or −1 when every matching entry is hidden (⇒ the caller parks the
-    /// pointer at EOF with FOUND()=.F.). Works over a CDX tag OR a standalone <c>.idx</c> source.</summary>
-    private int FirstVisibleSeekMatch(OrderSource src, VfpValue key, VfpSession.WorkArea wa, byte[]? characterNeedle)
+    /// pointer at EOF with FOUND()=.F.). Works over a CDX tag OR a standalone <c>.idx</c> source. Without
+    /// <paramref name="requireVisible"/> it is the first matching entry in the controlling order.</summary>
+    private int FirstVisibleSeekMatch(OrderSource src, VfpValue key, VfpSession.WorkArea wa, CharacterSeekNeedle? characterNeedle,
+        bool requireVisible = true)
     {
         var entries = OrderedEntries(src);
         if (_meta.TryGetValue(wa.Area, out var m) && m.OrderReversed)
@@ -1049,50 +1120,36 @@ public sealed partial class VfpInterpreter
         {
             if (recno < 1 || recno > wa.Table.RecordCount) continue;
             if (!SeekEntryMatches(keyBytes, key, src, characterNeedle)) continue;
-            if (Visible(wa, recno)) return recno;
+            if (!requireVisible || Visible(wa, recno)) return recno;
         }
         return -1;
     }
 
     /// <summary>Does an index entry's stored key MATCH the SEEK needle the same way <see cref="DoSeekCore"/>'s
-    /// hit did? Character keys match by PREFIX (mirroring the raw-byte prefix seek DoSeekCore issues); every
-    /// other type matches by VALUE equality. Used to walk the equal-key run when the first hit is
-    /// filtered/deleted out.</summary>
-    private static bool SeekEntryMatches(byte[] keyBytes, VfpValue key, OrderSource src, byte[]? characterNeedle)
+    /// hit did? Character keys match by the needle's rule (<see cref="CharacterSeekNeedle.Matches"/>: prefix or,
+    /// under SET EXACT ON, the whole key); every other type matches by VALUE equality. Used to walk the equal-key
+    /// run when the first hit is filtered/deleted out.</summary>
+    private bool SeekEntryMatches(byte[] keyBytes, VfpValue key, OrderSource src, CharacterSeekNeedle? characterNeedle)
     {
+        if (src.IsCharacterKey && key.Type == VfpType.Character)
+            return (characterNeedle ?? SeekCharacterNeedle(src, key, _ctx.Exact)).Matches(keyBytes);
         if (src.CdxTag is { } t)
-        {
-            if (t.IsCharacterKey && key.Type == VfpType.Character)
-            {
-                var needle = characterNeedle ?? NaturalCharacterSeekNeedle(t, key);
-                if (keyBytes.Length < needle.Length) return false;
-                for (int i = 0; i < needle.Length; i++) if (keyBytes[i] != needle[i]) return false;
-                return true;
-            }
             return CompareDecodedToValue(IndexKey.Decode(keyBytes, t.KeyType), t.KeyType, key) == 0;
-        }
         if (src.Idx is not null)
-        {
-            if (src.IdxKeyType == IndexKeyType.Character && key.Type == VfpType.Character)
-                return IsBytePrefix(characterNeedle ?? NaturalCharacterKey(src, key), keyBytes);
             return SeekValueMatches(IndexKey.Decode(keyBytes, src.IdxKeyType), src.IdxKeyType, key);
-        }
         return false;
     }
 
-    /// <summary>Seek <paramref name="key"/> in a standalone <c>.idx</c> order. Character keys compare
-    /// raw stored bytes to a needle encoded with the order's resolved encoding; other types decode.</summary>
-    private static uint? SeekIdx(OrderSource src, VfpValue key)
+    /// <summary>Seek <paramref name="key"/> in a standalone <c>.idx</c> order. Character keys match the raw stored
+    /// bytes against <paramref name="characterNeedle"/> (see <see cref="SeekCharacterNeedle"/>); other types decode.</summary>
+    private static uint? SeekIdx(OrderSource src, VfpValue key, CharacterSeekNeedle? characterNeedle)
     {
         if (src.Idx is null) return null;
-        byte[]? characterNeedle = src.IdxKeyType == IndexKeyType.Character && key.Type == VfpType.Character
-            ? NaturalCharacterKey(src, key)
-            : null;
         foreach (var e in src.Idx.EnumerateEntries())
         {
             if (characterNeedle is not null)
             {
-                if (IsBytePrefix(characterNeedle, e.Key))
+                if (characterNeedle.Matches(e.Key))
                     return e.RecordNumber;
                 continue;
             }
@@ -1128,7 +1185,7 @@ public sealed partial class VfpInterpreter
 
     /// <summary>SET NEAR: the record the pointer parks on after a failed SEEK — the first entry that sorts
     /// AFTER the seek key in the CONTROLLING order that is in-range and visible; −1 when past the end.</summary>
-    private int NearRecord(OrderSource src, VfpValue key, int area, byte[]? characterNeedle)
+    private int NearRecord(OrderSource src, VfpValue key, int area, CharacterSeekNeedle? characterNeedle)
     {
         var wa = Session.AreaAt(area);
         if (wa is null) return -1;
@@ -1155,28 +1212,20 @@ public sealed partial class VfpInterpreter
 
     /// <summary>Three-way compare a STORED key (index bytes) against the SEEK value: &gt;0 when the stored
     /// key sorts after the seek value, &lt;0 before, 0 equal — in the key's own encoding.</summary>
-    private static int CompareStoredKeyToSeek(byte[] keyBytes, VfpValue key, OrderSource src, byte[]? characterNeedle)
+    private int CompareStoredKeyToSeek(byte[] keyBytes, VfpValue key, OrderSource src, CharacterSeekNeedle? characterNeedle)
     {
-        if (src.Idx is not null)
+        // Character keys: the raw stored bytes against where the needle sorts (unsigned byte order; under SET EXACT
+        // ON the needle plus pad, so a key the needle is only a prefix of sorts after it).
+        if (src.IsCharacterKey && key.Type == VfpType.Character)
         {
-            if (src.IdxKeyType == IndexKeyType.Character && key.Type == VfpType.Character)
-                return CompareBytesUnsigned(
-                    keyBytes,
-                    characterNeedle ?? NaturalCharacterKey(src, key));
-            var decoded = IndexKey.Decode(keyBytes, src.IdxKeyType);
-            return CompareDecodedToValue(decoded, src.IdxKeyType, key);
-        }
-        // CDX: compare the raw stored bytes against the seek needle (unsigned byte order).
-        var t = src.CdxTag!;
-        byte[] needle = t.IsCharacterKey && key.Type == VfpType.Character
-            ? characterNeedle ?? NaturalCharacterSeekNeedle(t, key)
-            : (IndexKey.Decode(keyBytes, t.KeyType).Value is null ? Array.Empty<byte>() : keyBytes); // fallback
-        if (t.IsCharacterKey && key.Type == VfpType.Character)
-        {
+            byte[] needle = (characterNeedle ?? SeekCharacterNeedle(src, key, _ctx.Exact)).SortKey(src.KeyLength);
             int n = Math.Min(keyBytes.Length, needle.Length);
             for (int i = 0; i < n; i++) { int d = keyBytes[i] - needle[i]; if (d != 0) return d; }
             return keyBytes.Length - needle.Length;
         }
+        if (src.Idx is not null)
+            return CompareDecodedToValue(IndexKey.Decode(keyBytes, src.IdxKeyType), src.IdxKeyType, key);
+        var t = src.CdxTag!;
         return CompareDecodedToValue(IndexKey.Decode(keyBytes, t.KeyType), t.KeyType, key);
     }
 

@@ -124,6 +124,8 @@ public sealed class MicroVfpUnicodeIdentifierTests : IDisposable
         // VFP9 stores the CP850 key 'Peñarol' as 50 65 A4 ...; the needle must be encoded the same way.
         _interp.Execute("USE uni850 ORDER razón");
         Assert.True(_interp.EvalExpression("SEEK('Peñarol')").AsLogical);
+        Assert.False(_interp.EvalExpression("SEEK('Peña')").AsLogical);   // SET EXACT ON (microVFP's default): no prefix match.
+        _interp.Execute("SET EXACT OFF");
         Assert.True(_interp.EvalExpression("SEEK('Peña')").AsLogical);
         Assert.False(_interp.EvalExpression("SEEK('Peñb')").AsLogical);
     }

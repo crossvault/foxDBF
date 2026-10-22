@@ -212,18 +212,20 @@ public sealed partial class VfpInterpreter
         using var src = OpenOrderSource(area, identity);
         if (src is null) return false;
 
+        // The same needle as SEEK (SET EXACT honoured, VFP9-verified); unlike SEEK no visibility gate: KEYMATCH()
+        // finds a key whose only record is deleted under SET DELETED ON.
+        CharacterSeekNeedle? characterNeedle = src.IsCharacterKey && key.Type == VfpType.Character
+            ? SeekCharacterNeedle(src, key, _ctx.Exact)
+            : null;
         uint? recno = null;
         if (src.CdxTag is { } t)
         {
-            byte[]? characterNeedle = t.IsCharacterKey && key.Type == VfpType.Character
-                ? NaturalCharacterSeekNeedle(t, key)
-                : null;
             recno = characterNeedle is not null
-                ? t.Seek(characterNeedle.AsSpan(), false)
+                ? t.Seek(characterNeedle)
                 : t.Seek(key.ToClr() ?? string.Empty);
         }
         else if (src.Idx is not null)
-            recno = SeekIdx(src, key);
+            recno = SeekIdx(src, key, characterNeedle);
         return recno is uint r && r >= 1 && r <= (uint)wa.Table.RecordCount;
     }
 

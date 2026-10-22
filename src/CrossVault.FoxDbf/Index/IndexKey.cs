@@ -319,21 +319,6 @@ public readonly struct IndexKey
     }
 
     /// <summary>
-    /// The SEEK needle VFP9 builds for the character value <paramref name="s"/> with SET EXACT OFF: under a weighted
-    /// collation only the HEAD (primary) weights, so the diacritic tails of the needle are ignored and the first key
-    /// whose heads start with them matches (VFP9: SEEK('áa') lands on 'Aa', SEEK('Müller') on 'Muller' when that sorts
-    /// first). Under MACHINE the raw code-page bytes, exactly as <see cref="EncodeCharacterKey(ReadOnlySpan{char},
-    /// IVfpCollation, Encoding, int)"/>. Cut to <paramref name="keyLength"/>.
-    /// </summary>
-    internal static byte[] EncodeCharacterPrefixNeedle(ReadOnlySpan<char> s, IVfpCollation collation, Encoding encoding, int keyLength)
-    {
-        if (collation is not GeneralCollation general)
-            return EncodeCharacterKey(s, collation, encoding, keyLength);
-        var heads = general.GetHeadKey(s);
-        return heads.Length <= keyLength ? heads : heads.AsSpan(0, Math.Max(0, keyLength)).ToArray();
-    }
-
-    /// <summary>
     /// The byte VFP9 pads a stored CHARACTER key with up to the tag key length, by the tag's sort sequence name as
     /// stored in its header: <c>0x20</c> under MACHINE (or no name), <c>0x00</c> under every weighted sequence
     /// (GENERAL, SPANISH and any other, including one we cannot weight such as GERMAN). Keys that are a prefix of one
