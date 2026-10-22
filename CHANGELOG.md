@@ -4,7 +4,7 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
-## [Unreleased]
+## [0.10.0] - 2026-10-22
 
 ### Fixed
 
@@ -95,6 +95,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - New overloads `CdxHeader.Parse(span, Encoding)`, `IdxHeader.Parse(span, Encoding)` and
   `IdxFile.Open(path, Encoding)` decode index expressions in a given table code page; the existing
   overloads use the library default code page (Windows-1252) instead of ASCII.
+
+### Known issues
+
+- GENERAL/SPANISH CDX keys are padded with 0x20 where VFP9 pads them with 0x00. Each key matches VFP9, but keys
+  that are a prefix of one another (`Aa` / `áa`, `Muller` / `Müller`, an empty key) can sit in a different order,
+  so a SEEK on such a key may miss across the two engines. This predates 0.10.0 and affects every code page.
 
 ## [0.9.0] - 2026-07-05
 

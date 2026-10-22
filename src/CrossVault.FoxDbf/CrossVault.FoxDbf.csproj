@@ -12,7 +12,7 @@
 
   <PropertyGroup>
     <PackageId>CrossVault.FoxDbf</PackageId>
-    <Version>0.9.0</Version>
+    <Version>0.10.0</Version>
     <Authors>CrossVault</Authors>
     <Company>CrossVault</Company>
     <Description>Idiomatic .NET library for Visual FoxPro and dBase database files: read AND write .dbf tables, .fpt/.dbt memos, .cdx/.idx indexes, and .dbc database containers (long field names, code pages, NULL/_NullFlags, Varchar). Includes append/update/PACK/ZAP, VFP-compatible record locking, create-DBF/ALTER, create-DBC, CDX (re)indexing with INCREMENTAL index maintenance (every structural .cdx tag is kept up to date on append/update — an O(log n) B-tree edit, so a REPLACE followed by a SEEK finds the row without a REINDEX) plus page-level single-tag DDL (append or drop one tag without rebuilding its siblings), a VFP expression engine with MACHINE/GENERAL collation, a Rushmore-style query optimizer with a SYS(3054)-style ShowPlan (SET EXACT/DELETED/OPTIMIZE semantics, late materialization, an adaptive sparse/dense bitmap, an optional memory-mapped read backend), a VFP-SQL parser + work-area session + executor (SELECT/INNER/LEFT/RIGHT/FULL JOIN/UNION/correlated subqueries, INTO CURSOR/TABLE/ARRAY, DML incl. INSERT FROM ARRAY/MEMVAR, DDL), and the opt-in Highlike cost-based query accelerator (statistics, histograms, cross-query index cache) — all in one package. Output is byte-compatible with the real Visual FoxPro 9 runtime. Primary target Visual FoxPro.</Description>
