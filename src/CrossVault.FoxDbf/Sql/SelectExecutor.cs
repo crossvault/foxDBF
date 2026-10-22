@@ -1055,24 +1055,38 @@ internal sealed class SelectExecutor
         return true;
     }
 
-    /// <summary>True when every field the fragment reads resolves to the DRIVING source, and the
-    /// fragment does not depend on the ROW CONTEXT — RECNO / RECCOUNT / DELETED read a DIFFERENT
-    /// context on each side (RowAdapter reports the real recno/flag, CompositeRowContext reports
-    /// 0 / 0 / false), so they must never be pushed.</summary>
+    /// <summary>True when the fragment reads at least one field, every field it reads resolves to the
+    /// DRIVING source, and it calls no function from <see cref="IsUnpushableFunction"/>. A fragment
+    /// without any field reference (<c>.T.</c>, <c>RAND() &lt; 0.5</c>, a bare memvar) is never pushed:
+    /// it is either useless to push or would be evaluated twice in two different contexts.</summary>
     private static bool IsDrivingOnly(string text, JoinSource[] src)
     {
         VfpExpression expr;
         try { expr = VfpExpression.Parse(text); }
         catch { return false; }      // unparseable here ⇒ let the post-join path report it
 
-        if (expr.ContainsFunction(static (name, _) => name is "RECNO" or "RECCOUNT" or "DELETED"))
+        if (expr.ContainsFunction(static (name, _) => IsUnpushableFunction(name)))
             return false;
 
-        foreach (var reference in expr.ReferencedFields())
+        var references = expr.ReferencedFields();
+        if (references.Count == 0) return false;
+        foreach (var reference in references)
             if (!ResolvesToDriving(reference, src))
                 return false;
         return true;
     }
+
+    /// <summary>Functions whose result depends on something other than the driving row's field values,
+    /// so evaluating them once against the driving table and again over the composites can disagree:
+    /// the ROW CONTEXT (RECNO / RECCOUNT / DELETED — RowAdapter reports the real recno/flag,
+    /// CompositeRowContext reports 0 / 0 / false), work-area or session STATE (EOF / BOF / FOUND / SEEK /
+    /// ALIAS / SELECT / USED / EVALUATE / TYPE / SYS, which a microVFP host may answer), or a fresh value
+    /// per call (RAND / SECONDS / DATETIME / TIME / DATE).</summary>
+    private static bool IsUnpushableFunction(string name) => name is
+        "RECNO" or "RECCOUNT" or "DELETED" or
+        "EOF" or "BOF" or "FOUND" or "SEEK" or "ALIAS" or "SELECT" or "USED" or
+        "EVALUATE" or "TYPE" or "SYS" or
+        "RAND" or "SECONDS" or "DATETIME" or "TIME" or "DATE";
 
     /// <summary>The WHERE conjuncts that read ONLY the driving source and are therefore safe to
     /// evaluate against it before the join chain runs. Empty when there is no WHERE.</summary>

@@ -353,6 +353,23 @@ public sealed class SqlJoinPushdownTests : IDisposable
         Assert.Contains("empid", pushed[0], StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("RAND() < 0.5")]
+    [InlineData("emp.empid < RAND() * 10")]
+    [InlineData("NOT EOF()")]
+    [InlineData("EVALUATE('dept.dname') = 'Engineering'")]
+    [InlineData(".T.")]
+    public void Does_Not_Push_A_Context_Dependent_Or_Field_Free_Conjunct_But_Pushes_Its_Sibling(string conjunct)
+    {
+        // Evaluated once on the driving table and again over the composites, a conjunct whose value
+        // does not come from driving fields alone could disagree with itself (RAND twice, a host-state
+        // function in two contexts) — and a field-free one gains nothing from being pushed.
+        var pushed = Pushed("SELECT emp.ename, dept.dname FROM emp LEFT JOIN dept ON emp.deptid = dept.deptid " +
+                            "WHERE emp.empid = 3 AND " + conjunct);
+        Assert.Single(pushed);
+        Assert.Equal("emp.empid = 3", pushed[0]);
+    }
+
     [Fact]
     public void No_Where_Means_No_Pushdown()
     {
