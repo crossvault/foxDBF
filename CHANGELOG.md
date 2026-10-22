@@ -32,6 +32,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   longer matches as if they were not there (`name = 'A'` matched `' Á'` in a scan but not through an index), so
   a plain scan and Rushmore return the same rows. The index window for `<` / `<=` on a GENERAL/SPANISH tag now
   holds every key that starts with the literal's head weights (`'Ab' < 'Á'` under SET EXACT OFF).
+- SQL expressions over character fields keep the field's blanks: on a C(5) holding `'N'`, `SELECT p.region +
+  p.region` returns `'N    N    '` (it returned `'NN'`), also across a JOIN (`ca.region + ao.region`), `LEN(region)`
+  is 5, `SUBSTR`/`RIGHT` see the blanks, and `WHERE region + '|' = 'N    |'` matches, under SET ANSI OFF and ON.
 - A SQL `UPDATE` no longer strips the leading blanks of the character fields it does not assign (right-justified
   keys such as TasTrade's `'     1'` turned into `'1'`).
 
