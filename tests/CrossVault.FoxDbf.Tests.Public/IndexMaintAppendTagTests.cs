@@ -89,7 +89,7 @@ public sealed class IndexMaintAppendTagTests
     }
 
     [Fact]
-    public void Incremental_updates_that_empty_a_tag_install_a_fresh_empty_leaf_root()
+    public void Incremental_updates_that_empty_a_tag_turn_its_root_into_an_empty_leaf_in_place()
     {
         using var dir = new IndexMaintTestSupport.TempDir();
         var cols = new[] { new DbfColumnDef("VAL", 'N', 10, 2) };
@@ -123,7 +123,7 @@ public sealed class IndexMaintAppendTagTests
         var root = Assert.IsType<IndexNodeHeader>(cdx.Index.ReadNodeHeader(tag.RootPageOffset));
 
         Assert.Empty(tag.EnumerateEntries());
-        Assert.NotEqual(oldRootOffset, tag.RootPageOffset);
+        Assert.Equal(oldRootOffset, tag.RootPageOffset);   // VFP9: the root never moves
         Assert.True(root.IsRoot);
         Assert.True(root.IsLeaf);
         Assert.Equal(0, root.KeyCount);

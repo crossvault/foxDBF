@@ -107,7 +107,7 @@ public sealed partial class DbfWriter
                     continue;   // FOR filter excludes this record from the tag
                 if (computer.Unique && editor.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
                     continue;   // UNIQUE tag already holds the key (keep the first record — VFP semantics)
-                editor.Insert(tag.HeaderOffset, key, (uint)recNo, computer.KeyLen, computer.Pad, _recordCount);
+                editor.Insert(tag.HeaderOffset, key, (uint)recNo, computer.KeyLen, computer.Pad);
             }
             // Flush after every append so on-disk visibility is byte-for-byte what the per-append
             // open/insert/flush/close path produced — only the redundant re-open/re-parse is removed.
@@ -258,16 +258,20 @@ public sealed partial class DbfWriter
                     deferred = true;
                 else
                 {
-                    foreach (var (tag, computer) in plans)
-                        foreach (var (recNo, bytes) in appended)
+                    // Record by record, every tag for each one — the order VFP maintains its tags in (new pages of
+                    // different tags interleave in the file the same way).
+                    foreach (var (recNo, bytes) in appended)
+                    {
+                        var record = new DbfRecord(_schema, bytes);
+                        foreach (var (tag, computer) in plans)
                         {
-                            var record = new DbfRecord(_schema, bytes);
                             if (!computer.TryComputeKey(record, recNo, _recordCount, out var key))
                                 continue;
                             if (computer.Unique && editor.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
                                 continue;
-                            editor.Insert(tag.HeaderOffset, key, (uint)recNo, computer.KeyLen, computer.Pad, _recordCount);
+                            editor.Insert(tag.HeaderOffset, key, (uint)recNo, computer.KeyLen, computer.Pad);
                         }
+                    }
                     editor.Flush();
                 }
             }
@@ -374,9 +378,9 @@ public sealed partial class DbfWriter
                     continue;
 
                 if (oldIn)
-                    editor.Delete(tag.HeaderOffset, oldKey, (uint)recNo, computer.KeyLen, computer.Pad, _recordCount);
+                    editor.Delete(tag.HeaderOffset, oldKey, (uint)recNo, computer.KeyLen, computer.Pad);
                 if (newIn && !(computer.Unique && editor.ContainsKey(tag.HeaderOffset, newKey, computer.KeyLen, computer.Pad)))
-                    editor.Insert(tag.HeaderOffset, newKey, (uint)recNo, computer.KeyLen, computer.Pad, _recordCount);
+                    editor.Insert(tag.HeaderOffset, newKey, (uint)recNo, computer.KeyLen, computer.Pad);
             }
             // Flush after every update so on-disk visibility is byte-for-byte what the per-update
             // open/edit/flush/close path produced — only the redundant re-open/re-parse is removed.

@@ -409,23 +409,17 @@ public sealed partial class DbfWriter
             rw.Write(block.Pages, 0, block.Pages.Length);
             rw.Flush();
 
-            // Recno geometry for the DIRECTORY leaf is sized from the DATA (the largest existing tag-header byte
-            // offset — the directory's "recnos" ARE header offsets), NOT from rw.Length: the just-appended block
-            // (and unrelated 5.1 row-append maintenance) can push the file past an 8-bit band without the
-            // directory needing a wider record field, and an rw.Length basis would then re-pack the directory
-            // leaf one byte-per-entry WIDER (project-review 5.6 MUST-FIX — silent sibling loss on the REPLACE
-            // unlink). The new entry's own (larger) offset is folded in by LeafGeometry on the Insert, which
-            // SPLITS safely if it must; the Delete only ever narrows, so it can never overflow.
-            long basis = DirectoryRecnoBasis(dir);
+            // Every directory leaf packs its "recnos" (the tag-header offsets) at its own geometry, so neither the
+            // just-appended block nor unrelated row-append growth of the file can widen a leaf being re-packed.
             byte[] nameKey = CdxIndexBuilder.DirectoryKey(def.Name, _schema.Encoding);
             using (var editor = new CdxTreeEditor(rw, _schema.Encoding))
             {
                 var old = dir.FirstOrDefault(e => string.Equals(e.Name, def.Name, StringComparison.OrdinalIgnoreCase));
                 if (old.Name is not null)
-                    editor.Delete(0, nameKey, (uint)old.HeaderOffset, DirKeyLen, DirPad, basis);  // REPLACE: unlink old
+                    editor.Delete(0, nameKey, (uint)old.HeaderOffset, DirKeyLen, DirPad);  // REPLACE: unlink old
                 if (FailFastTagDirectoryInsertForTests)
                     throw new IOException("Injected fast tag-directory insert fault (test seam).");
-                editor.Insert(0, nameKey, (uint)block.HeaderOffset, DirKeyLen, DirPad, basis);
+                editor.Insert(0, nameKey, (uint)block.HeaderOffset, DirKeyLen, DirPad);
                 editor.Flush();
             }
             return true;
@@ -467,43 +461,16 @@ public sealed partial class DbfWriter
                 targets.Add((CdxIndexBuilder.DirectoryKey(nm, textEncoding), (uint)hit.HeaderOffset));
             }
 
-            // Size the directory leaf's recno field from the DATA (max tag-header offset), NOT rw.Length — the
-            // file may have grown past an 8-bit band via unrelated 5.1 row-append maintenance with the directory
-            // untouched, and an rw.Length basis would re-pack the leaf one byte-per-entry WIDER, overflowing a
-            // near-full directory leaf and silently losing surviving tags (project-review 5.6 MUST-FIX). Header
-            // offsets never move, so this basis can only leave the delete re-pack equal-or-narrower.
-            long basis = DirectoryRecnoBasis(dir);
             using (var editor = new CdxTreeEditor(rw, textEncoding))
             {
                 foreach (var (key, recno) in targets)
-                    editor.Delete(0, key, recno, DirKeyLen, DirPad, basis);
+                    editor.Delete(0, key, recno, DirKeyLen, DirPad);
                 editor.Flush();
             }
             return true;
         }
         catch { return false; }
         finally { rw?.Dispose(); }
-    }
-
-    /// <summary>
-    /// The recno-geometry basis for a DIRECTORY-leaf edit: the LARGEST tag-header byte offset the directory must
-    /// represent (a directory entry's "recno" IS that tag's header offset). Deriving the compact-leaf record
-    /// field width from the DATA — not from the FILE LENGTH — is what keeps a tag-directory unlink/insert safe:
-    /// the cdx grows past 8-bit record-field bands (256B / 64KiB / 16MiB / 4GiB of length) via UNRELATED 5.1
-    /// row-append maintenance that never edits the directory, so an <c>rw.Length</c> basis would re-pack the
-    /// directory leaf one byte-per-entry WIDER and overflow a near-full leaf on a delete — silently dropping
-    /// surviving tags (project-review 5.6 MUST-FIX). Tag-header offsets never move once written, so this basis
-    /// never exceeds the geometry the leaf was last packed with: a delete re-pack stays equal-or-narrower (never
-    /// overflows), and an insert folds the new (possibly larger) offset in via <see cref="CdxTreeEditor"/>'s own
-    /// split-safe path. Floored at 1 so an empty directory still yields a valid single-byte field.
-    /// </summary>
-    private static long DirectoryRecnoBasis(IEnumerable<(string Name, long HeaderOffset)> dir)
-    {
-        long basis = 1;
-        foreach (var (_, headerOffset) in dir)
-            if (headerOffset > basis)
-                basis = headerOffset;
-        return basis;
     }
 
     /// <summary>Read the compound-index tag directory over <paramref name="stream"/> as (tag name → header byte
