@@ -237,6 +237,25 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `COPY INDEXES` on a DBC table use its long field names. `INDEX ON customer_name TAG x` built a tag that no
   `SEEK` found, and the existing tags whose KEY names the long fields (`CUSTOMER_NAME`, as VFP9 stores it)
   were no longer seekable after it or after `REINDEX`.
+- `GROUP BY` with a column ordinal (`SELECT p.id % 2 AS k, COUNT(*) FROM person p GROUP BY 1`) grouped by the
+  constant `1` and returned a single group; it now groups by that select item, as does `GROUP BY k` on a
+  select alias that is no source field. An ordinal outside the select list raises VFP error 1807, one that
+  names an aggregate column 1846, and an `ORDER BY` ordinal outside the select list 1808.
+- `ORDER BY` on a select alias (`SELECT id AS k FROM person ORDER BY k DESC`) left the rows unsorted outside
+  aggregate queries; it now sorts by that column. A source field of the same name still wins over the alias,
+  as in VFP9 (`SELECT name AS id, id AS name … ORDER BY id` sorts by the field `id`).
+
+### Changed
+
+- BREAKING: SQL result columns are named as VFP9 names them (checked against VFP9). Names are upper case (also
+  user aliases and DBC long field names: `customer_name` → `CUSTOMER_NAME`). An unaliased expression is `EXP_n`
+  with n its column position (`SELECT a, b, b * 2` → `EXP_3`, was `EXP_1`). An unaliased aggregate is `CNT`
+  for `COUNT(*)`, `CNT_FIELD` / `SUM_FIELD` / `AVG_FIELD` / `MIN_FIELD` / `MAX_FIELD` over a field and
+  `SUM_EXP_n` etc. over an expression (was `COUNT`, `SUM`, …). A name that occurs more than once, user aliases
+  included, becomes `NAME_A`, `NAME_B`, `NAME_C`, … in column order: `SELECT ca.account_number,
+  ao.account_number` gives `ACCOUNT_NUMBER_A` / `ACCOUNT_NUMBER_B` (was `ca_account_number` /
+  `ao_account_number`), and a single-table `SELECT id, id` no longer returns two columns named `id`. ADO.NET
+  lookups by name (`GetOrdinal`, `DataTable` columns) are case-insensitive and keep working for unchanged names.
 
 ## [0.10.0] - 2026-10-22
 

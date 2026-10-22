@@ -395,6 +395,10 @@ internal sealed class SelectExecutor
         // row context so ORDER BY / TOP can re-evaluate row-level keys after grouping.
         bool aggregate = sel.GroupBy.Count > 0 || sel.Items.Any(ContainsAggregate);
 
+        Func<SelectItem, int> starWidth = _ => table.Columns.Count;
+        Func<string, bool> isSourceField = f => FindColumn(table, f) is not null;
+        var order = new OrderScope(sel.Items, starWidth, isSourceField, columns.Count);
+
         List<(object?[] row, IRowContext rep)> pairs;
         if (!aggregate)
         {
@@ -404,14 +408,13 @@ internal sealed class SelectExecutor
         }
         else
         {
-            pairs = Aggregate(ctx, sel, rows.ConvertAll(r => r.Ctx));
+            var groupBy = ResolveGroupBy(sel, order, _ => table.Columns.Select(c => c.Name));
+            pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, rows.ConvertAll(r => r.Ctx));
         }
-
-        Func<SelectItem, int> starWidth = _ => table.Columns.Count;
 
         // (4) ORDER BY (collation-aware via ctx).
         if (sel.OrderBy.Count > 0)
-            pairs = ApplyOrderBy(pairs, sel.OrderBy, sel.Items, starWidth, aggregate, ctx);
+            pairs = ApplyOrderBy(pairs, sel.OrderBy, order, aggregate, ctx);
 
         // (5) DISTINCT (collation-aware dedup).
         if (sel.Distinct)
@@ -419,7 +422,7 @@ internal sealed class SelectExecutor
 
         // (6) TOP n — VFP keeps ALL rows whose full ORDER BY key ties the nth row's key.
         if (sel.Top is int top)
-            pairs = ApplyTop(pairs, top, sel.OrderBy, sel.Items, starWidth, aggregate, ctx);
+            pairs = ApplyTop(pairs, top, sel.OrderBy, order, aggregate, ctx);
 
         return Materialize(columns, pairs);
     }
@@ -948,6 +951,10 @@ internal sealed class SelectExecutor
 
             bool aggregate = sel.GroupBy.Count > 0 || sel.Items.Any(ContainsAggregate);
 
+            Func<SelectItem, int> starWidth = it => StarWidthJoin(it, src);
+            Func<string, bool> isSourceField = f => Array.Exists(src, s => s.ColNames.Contains(f));
+            var order = new OrderScope(sel.Items, starWidth, isSourceField, columns.Count);
+
             List<(object?[] row, IRowContext rep)> pairs;
             if (!aggregate)
             {
@@ -960,20 +967,21 @@ internal sealed class SelectExecutor
             }
             else
             {
+                var groupBy = ResolveGroupBy(sel, order, it => src
+                    .Where(s => it.StarAlias is null || string.Equals(it.StarAlias, s.Alias, StringComparison.OrdinalIgnoreCase))
+                    .SelectMany(s => s.Columns.Select(c => s.Alias + "." + c.Name)));
                 var rcs = composites.ConvertAll(c => Bind(new CompositeRowContext(src, c, _outer)));
-                pairs = Aggregate(ctx, sel, rcs);
+                pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, rcs);
             }
 
-            Func<SelectItem, int> starWidth = it => StarWidthJoin(it, src);
-
             if (sel.OrderBy.Count > 0)
-                pairs = ApplyOrderBy(pairs, sel.OrderBy, sel.Items, starWidth, aggregate, ctx);
+                pairs = ApplyOrderBy(pairs, sel.OrderBy, order, aggregate, ctx);
 
             if (sel.Distinct)
                 pairs = Distinct(pairs, ctx);
 
             if (sel.Top is int top)
-                pairs = ApplyTop(pairs, top, sel.OrderBy, sel.Items, starWidth, aggregate, ctx);
+                pairs = ApplyTop(pairs, top, sel.OrderBy, order, aggregate, ctx);
 
             return Materialize(columns, pairs);
         }
@@ -1626,15 +1634,22 @@ internal sealed class SelectExecutor
 
     // ---- ORDER BY / DISTINCT / TOP (source-agnostic) --------------------------------------
 
+    /// <summary>What ORDER BY / GROUP BY resolution needs to know about the query: its select items, the
+    /// width of each <c>*</c> item, whether a bare name is a field of one of the query's sources, and the
+    /// number of result columns.</summary>
+    private sealed record OrderScope(
+        IReadOnlyList<SelectItem> Items, Func<SelectItem, int> StarWidth, Func<string, bool> IsSourceField,
+        int ColumnCount);
+
     private static List<(object?[] row, IRowContext rep)> ApplyOrderBy(
         List<(object?[] row, IRowContext rep)> pairs, IReadOnlyList<OrderItem> orderBy,
-        IReadOnlyList<SelectItem> items, Func<SelectItem, int> starWidth, bool aggregate, EvaluationContext ctx)
+        OrderScope scope, bool aggregate, EvaluationContext ctx)
     {
         IOrderedEnumerable<(object?[] row, IRowContext rep)>? ordered = null;
         for (int k = 0; k < orderBy.Count; k++)
         {
             var ob = orderBy[k];
-            var keySel = OrderKeySelector(ob, items, starWidth, aggregate, ctx);
+            var keySel = OrderKeySelector(ob, scope, aggregate, ctx);
             var cmp = Comparer<(object?[] row, IRowContext rep)>.Create((a, b) => CompareVfp(keySel(a), keySel(b), ctx));
             ordered = k == 0
                 ? (ob.Descending ? pairs.OrderByDescending(x => x, cmp) : pairs.OrderBy(x => x, cmp))
@@ -1657,14 +1672,14 @@ internal sealed class SelectExecutor
     /// ORDER BY it is a plain take.</summary>
     private static List<(object?[] row, IRowContext rep)> ApplyTop(
         List<(object?[] row, IRowContext rep)> pairs, int top, IReadOnlyList<OrderItem> orderBy,
-        IReadOnlyList<SelectItem> items, Func<SelectItem, int> starWidth, bool aggregate, EvaluationContext ctx)
+        OrderScope scope, bool aggregate, EvaluationContext ctx)
     {
         top = Math.Max(0, top);
         if (top == 0) return new List<(object?[], IRowContext)>();
         if (top >= pairs.Count) return pairs;
         if (orderBy.Count == 0) return pairs.Take(top).ToList();
 
-        var keySels = orderBy.Select(ob => OrderKeySelector(ob, items, starWidth, aggregate, ctx)).ToList();
+        var keySels = orderBy.Select(ob => OrderKeySelector(ob, scope, aggregate, ctx)).ToList();
         bool KeyTies(int i, int j) => keySels.All(ks => CompareVfp(ks(pairs[i]), ks(pairs[j]), ctx) == 0);
 
         int end = top; // boundary row is at index top-1; extend while subsequent rows tie its key.
@@ -1673,15 +1688,25 @@ internal sealed class SelectExecutor
     }
 
     /// <summary>Builds the ORDER BY key selector for one entry: a 1-based ordinal reads the output
-    /// column; in an aggregate query an expression matching a select item (by alias/text) ALSO reads
-    /// the already-computed output column (so <c>ORDER BY COUNT(*)</c> is not re-evaluated per row);
-    /// otherwise the expression is evaluated against the representative row.</summary>
+    /// column (outside 1..column count is VFP error 1808); in an aggregate query an expression matching a
+    /// select item (by alias/text) ALSO reads the already-computed output column (so <c>ORDER BY COUNT(*)</c>
+    /// is not re-evaluated per row); in a plain query a bare name that is a select-list alias and no source
+    /// field reads that output column (<c>SELECT id AS k … ORDER BY k DESC</c>; a source field of the same
+    /// name wins, as in VFP9); otherwise the expression is evaluated against the representative row.</summary>
     private static Func<(object?[] row, IRowContext rep), VfpValue> OrderKeySelector(
-        OrderItem ob, IReadOnlyList<SelectItem> items, Func<SelectItem, int> starWidth, bool aggregate, EvaluationContext ctx)
+        OrderItem ob, OrderScope scope, bool aggregate, EvaluationContext ctx)
     {
         int colIdx = -1;
-        if (ob.Ordinal is int ord) colIdx = ord - 1;
-        else if (aggregate) colIdx = ResolveOrderColumn(ob, items, starWidth);
+        if (ob.Ordinal is int ord)
+        {
+            if (ord < 1 || ord > scope.ColumnCount)
+                throw new FoxDbfSqlException(
+                    $"ORDER BY ordinal {ord} is outside the valid range 1..{scope.ColumnCount}.") { VfpErrorNumber = 1808 };
+            colIdx = ord - 1;
+        }
+        else if (aggregate) colIdx = ResolveOrderColumn(ob, scope.Items, scope.StarWidth);
+        else if (ob.Expression is not null && AliasOnlyName(ob.Expression.Text, scope) is string name)
+            colIdx = ResolveAliasColumn(name, scope.Items, scope.StarWidth);
 
         if (colIdx >= 0)
         {
@@ -1689,6 +1714,90 @@ internal sealed class SelectExecutor
             return t => VfpValue.FromClr(c < t.row.Length ? t.row[c] : null);
         }
         return t => ob.Expression!.Evaluate(t.rep, ctx);
+    }
+
+    /// <summary>The name when <paramref name="text"/> is a bare (unqualified) identifier that is NOT a field
+    /// of the query's sources — the only shape VFP9 resolves to a select-list alias; otherwise null.</summary>
+    private static string? AliasOnlyName(string text, OrderScope scope)
+    {
+        string t = text.Trim();
+        if (t.Contains('.') || !SimpleFieldRx.IsMatch(t) || scope.IsSourceField(t)) return null;
+        return t;
+    }
+
+    /// <summary>The output column index of the select item aliased <paramref name="name"/>, accounting for
+    /// <c>*</c> widths; -1 if no item carries that alias.</summary>
+    private static int ResolveAliasColumn(string name, IReadOnlyList<SelectItem> items, Func<SelectItem, int> starWidth)
+    {
+        int col = 0;
+        foreach (var it in items)
+        {
+            if (it.IsStar) { col += starWidth(it); continue; }
+            if (it.Alias is not null && string.Equals(it.Alias.Trim(), name, StringComparison.OrdinalIgnoreCase))
+                return col;
+            col++;
+        }
+        return -1;
+    }
+
+    /// <summary>Resolves the GROUP BY list as VFP9 does: a column ordinal (<c>GROUP BY 1</c>) and a bare
+    /// select-list alias that is no source field (<c>GROUP BY k</c> for <c>p.id % 2 AS k</c>) group by that
+    /// select item's expression, evaluated per source row (a <c>*</c> column by its field); anything else
+    /// is grouped as written. An ordinal outside 1..column count is error 1807, one naming an aggregate
+    /// column 1846 (both probed against VFP9).</summary>
+    private static IReadOnlyList<VfpExpression> ResolveGroupBy(
+        SelectStatement sel, OrderScope scope, Func<SelectItem, IEnumerable<string>> starFields)
+    {
+        if (sel.GroupBy.Count == 0) return sel.GroupBy;
+        var resolved = new List<VfpExpression>(sel.GroupBy.Count);
+        bool changed = false;
+        foreach (var g in sel.GroupBy)
+        {
+            string t = g.Text.Trim();
+            VfpExpression? target = null;
+            if (t.Length > 0 && t.All(char.IsAsciiDigit))
+            {
+                if (!int.TryParse(t, NumberStyles.None, CultureInfo.InvariantCulture, out int ord)
+                    || ord < 1 || ord > scope.ColumnCount)
+                    throw new FoxDbfSqlException(
+                        $"GROUP BY ordinal {t} is outside the valid range 1..{scope.ColumnCount}.") { VfpErrorNumber = 1807 };
+                target = GroupTargetAt(ord - 1, scope, starFields);
+            }
+            else if (AliasOnlyName(t, scope) is string name)
+            {
+                int col = ResolveAliasColumn(name, scope.Items, scope.StarWidth);
+                if (col >= 0) target = GroupTargetAt(col, scope, starFields);
+            }
+
+            if (target is null) { resolved.Add(g); continue; }
+            resolved.Add(target);
+            changed = true;
+        }
+        return changed ? resolved : sel.GroupBy;
+    }
+
+    /// <summary>The expression that produces output column <paramref name="col"/> per source row.</summary>
+    private static VfpExpression GroupTargetAt(int col, OrderScope scope, Func<SelectItem, IEnumerable<string>> starFields)
+    {
+        foreach (var it in scope.Items)
+        {
+            if (it.IsStar)
+            {
+                int w = scope.StarWidth(it);
+                if (col < w) return VfpExpression.Parse(starFields(it).ElementAt(col));
+                col -= w;
+                continue;
+            }
+            if (col == 0)
+            {
+                if (ContainsAggregate(it))
+                    throw new FoxDbfSqlException(
+                        "GROUP BY cannot name an aggregate column.") { VfpErrorNumber = 1846 };
+                return it.Expression!;
+            }
+            col--;
+        }
+        throw new InvalidOperationException("GROUP BY column outside the select list.");
     }
 
     /// <summary>Maps an ORDER BY expression onto a select-item output column index (by alias or by
@@ -1752,9 +1861,9 @@ internal sealed class SelectExecutor
         DbfTable table, string alias, TableSchema schema, IReadOnlyList<SelectItem> items)
     {
         var cols = new List<SqlColumn>();
-        int exp = 0;
         foreach (var it in items)
         {
+            int position = cols.Count + 1;
             if (it.IsStar)
             {
                 foreach (var c in table.Columns)
@@ -1764,21 +1873,22 @@ internal sealed class SelectExecutor
 
             if (it.AggregateStarFunction is not null)
             {
-                cols.Add(new SqlColumn(it.Alias ?? it.AggregateStarFunction.ToUpperInvariant(), 'N', 10, 0, typeof(decimal)));
+                cols.Add(new SqlColumn(it.Alias ?? AggregateName(it.AggregateStarFunction, "*", position), 'N', 10, 0, typeof(decimal)));
                 continue;
             }
 
             if (IsAggregate(it, out var func, out var arg))
             {
+                string aggName = it.Alias ?? AggregateName(func, arg, position);
                 if (func is "MIN" or "MAX" && arg is not null)
                 {
                     var info = SafeInfer(arg, schema);
                     var (vc, clr) = MapInfer(info);
-                    cols.Add(new SqlColumn(it.Alias ?? func, vc, info.Length, info.Decimals, clr));
+                    cols.Add(new SqlColumn(aggName, vc, info.Length, info.Decimals, clr));
                 }
                 else
                 {
-                    cols.Add(new SqlColumn(it.Alias ?? func, 'N', 18, func == "AVG" ? 6 : 2, typeof(decimal)));
+                    cols.Add(new SqlColumn(aggName, 'N', 18, func == "AVG" ? 6 : 2, typeof(decimal)));
                 }
                 continue;
             }
@@ -1798,10 +1908,9 @@ internal sealed class SelectExecutor
 
             var ti = it.Expression!.InferType(schema);
             var (typeChar, clrType) = MapInfer(ti);
-            string name = it.Alias ?? ("EXP_" + (++exp));
-            cols.Add(new SqlColumn(name, typeChar, ti.Length, ti.Decimals, clrType));
+            cols.Add(new SqlColumn(it.Alias ?? ExpName(position), typeChar, ti.Length, ti.Decimals, clrType));
         }
-        return cols;
+        return ApplyVfpColumnNames(cols);
     }
 
     // ---- schema (join) --------------------------------------------------------------------
@@ -1809,14 +1918,10 @@ internal sealed class SelectExecutor
     private static IReadOnlyList<SqlColumn> BuildJoinColumns(
         JoinSource[] src, CompositeSchema schema, IReadOnlyList<SelectItem> items)
     {
-        // Track each column with its owning source alias (null = expression/aggregate) so duplicate
-        // names — common across joined tables (e.g. emp.DEPTID and dept.DEPTID, or two SELECT * sources
-        // both with a column of the same name) — can be alias-qualified afterwards, keeping every
-        // column reachable by a UNIQUE name through the DataReader.
-        var built = new List<(SqlColumn col, string? alias)>();
-        int exp = 0;
+        var cols = new List<SqlColumn>();
         foreach (var it in items)
         {
+            int position = cols.Count + 1;
             if (it.IsStar)
             {
                 bool any = false;
@@ -1827,7 +1932,7 @@ internal sealed class SelectExecutor
                         continue;
                     any = true;
                     foreach (var c in s.Columns)
-                        built.Add((new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)), s.Alias));
+                        cols.Add(new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)));
                 }
                 if (it.StarAlias is not null && !any)
                     throw new FoxDbfSqlException($"Unknown alias '{it.StarAlias}' in '{it.StarAlias}.*'.");
@@ -1836,21 +1941,22 @@ internal sealed class SelectExecutor
 
             if (it.AggregateStarFunction is not null)
             {
-                built.Add((new SqlColumn(it.Alias ?? it.AggregateStarFunction.ToUpperInvariant(), 'N', 10, 0, typeof(decimal)), null));
+                cols.Add(new SqlColumn(it.Alias ?? AggregateName(it.AggregateStarFunction, "*", position), 'N', 10, 0, typeof(decimal)));
                 continue;
             }
 
             if (IsAggregate(it, out var func, out var arg))
             {
+                string aggName = it.Alias ?? AggregateName(func, arg, position);
                 if (func is "MIN" or "MAX" && arg is not null)
                 {
                     var info = SafeInfer(arg, schema);
                     var (vc, clr) = MapInfer(info);
-                    built.Add((new SqlColumn(it.Alias ?? func, vc, info.Length, info.Decimals, clr), null));
+                    cols.Add(new SqlColumn(aggName, vc, info.Length, info.Decimals, clr));
                 }
                 else
                 {
-                    built.Add((new SqlColumn(it.Alias ?? func, 'N', 18, func == "AVG" ? 6 : 2, typeof(decimal)), null));
+                    cols.Add(new SqlColumn(aggName, 'N', 18, func == "AVG" ? 6 : 2, typeof(decimal)));
                 }
                 continue;
             }
@@ -1860,43 +1966,71 @@ internal sealed class SelectExecutor
             string text = it.Expression!.Text.Trim();
             if (it.Alias is null && SimpleFieldRx.IsMatch(text))
             {
-                var c = ResolveJoinField(text, src, out var ownerAlias);
+                var c = ResolveJoinField(text, src, out _);
                 if (c is not null)
                 {
-                    built.Add((new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)), ownerAlias));
+                    cols.Add(new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)));
                     continue;
                 }
             }
 
             var ti = it.Expression!.InferType(schema);
             var (typeChar, clrType) = MapInfer(ti);
-            // A user-supplied alias is authoritative — never auto-qualify it.
-            built.Add((new SqlColumn(it.Alias ?? ("EXP_" + (++exp)), typeChar, ti.Length, ti.Decimals, clrType), null));
+            cols.Add(new SqlColumn(it.Alias ?? ExpName(position), typeChar, ti.Length, ti.Decimals, clrType));
         }
-        return UniquifyColumnNames(built);
+        return ApplyVfpColumnNames(cols);
     }
 
-    /// <summary>Resolves the final result column names so no two collide (case-insensitive). A name that
-    /// appears more than once is qualified with its source alias (<c>ALIAS_FIELD</c>); if that still
-    /// collides, a numeric suffix (<c>_2</c>, <c>_3</c>, …) is appended. A unique name is kept verbatim.
-    /// Values are positional, so renaming a column's NAME never disturbs the row data.</summary>
-    private static IReadOnlyList<SqlColumn> UniquifyColumnNames(List<(SqlColumn col, string? alias)> built)
-    {
-        var nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (col, _) in built)
-            nameCounts[col.Name] = nameCounts.TryGetValue(col.Name, out int n) ? n + 1 : 1;
+    /// <summary>VFP9's name for an unaliased computed column: <c>EXP_n</c>, n = its 1-based position in
+    /// the result (after <c>*</c> expansion), not a count of the expressions.</summary>
+    private static string ExpName(int position) => "EXP_" + position.ToString(CultureInfo.InvariantCulture);
 
-        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var outCols = new List<SqlColumn>(built.Count);
-        foreach (var (col, alias) in built)
+    /// <summary>VFP9's name for an unaliased aggregate column: <c>COUNT(*)</c> → <c>CNT</c>; over a field
+    /// <c>FN_FIELD</c> (qualifier dropped, <c>COUNT</c> abbreviated to <c>CNT</c>); over any other
+    /// expression <c>FN_EXP_n</c> with n the column's position (<c>SUM(amount * 2)</c> in column 2 →
+    /// <c>SUM_EXP_2</c>).</summary>
+    private static string AggregateName(string func, string? arg, int position)
+    {
+        string fn = func.ToUpperInvariant();
+        string prefix = fn == "COUNT" ? "CNT" : fn;
+        if (arg is null || arg.Trim() == "*") return prefix;
+        string a = arg.Trim();
+        return prefix + "_" + (SimpleFieldRx.IsMatch(a) ? StripAlias(a) : ExpName(position));
+    }
+
+    /// <summary>Gives the result columns VFP9's names: every name upper-case, and a name that occurs more
+    /// than once (case-insensitive) — a source field, a user alias and a generated name alike — becomes
+    /// <c>NAME_A</c>, <c>NAME_B</c>, <c>NAME_C</c>, … in column order (<c>ca.id, ao.id</c> → <c>ID_A, ID_B</c>;
+    /// <c>id, name AS id</c> → <c>ID_A, ID_B</c>). Should a suffixed name still collide (an explicit
+    /// <c>id_a</c> beside two <c>id</c>), a numeric suffix keeps it unique. Values are positional, so
+    /// renaming a column never disturbs the row data.</summary>
+    private static IReadOnlyList<SqlColumn> ApplyVfpColumnNames(List<SqlColumn> cols)
+    {
+        var upper = cols.ConvertAll(c => c.Name.ToUpperInvariant());
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var n in upper)
+            counts[n] = counts.TryGetValue(n, out int k) ? k + 1 : 1;
+
+        var used = new HashSet<string>(upper.Where(n => counts[n] == 1), StringComparer.Ordinal);
+        var next = new Dictionary<string, int>(StringComparer.Ordinal);
+        var outCols = new List<SqlColumn>(cols.Count);
+        for (int i = 0; i < cols.Count; i++)
         {
-            string baseName = nameCounts[col.Name] > 1 && alias is not null ? alias + "_" + col.Name : col.Name;
-            string finalName = baseName;
-            for (int k = 2; !used.Add(finalName); k++)
-                finalName = baseName + "_" + k;
-            outCols.Add(string.Equals(finalName, col.Name, StringComparison.Ordinal)
+            string name = upper[i];
+            if (counts[name] > 1)
+            {
+                int k = next.TryGetValue(name, out int seen) ? seen : 0;
+                next[name] = k + 1;
+                string suffix = k < 26 ? ((char)('A' + k)).ToString() : (k + 1).ToString(CultureInfo.InvariantCulture);
+                string baseName = name + "_" + suffix;
+                name = baseName;
+                for (int n = 2; !used.Add(name); n++)
+                    name = baseName + "_" + n.ToString(CultureInfo.InvariantCulture);
+            }
+            var col = cols[i];
+            outCols.Add(string.Equals(name, col.Name, StringComparison.Ordinal)
                 ? col
-                : new SqlColumn(finalName, col.VfpType, col.Length, col.Decimals, col.ClrType));
+                : new SqlColumn(name, col.VfpType, col.Length, col.Decimals, col.ClrType));
         }
         return outCols;
     }

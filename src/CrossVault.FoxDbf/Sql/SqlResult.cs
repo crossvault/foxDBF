@@ -4,8 +4,9 @@ using System.Collections.Generic;
 namespace CrossVault.FoxDbf.Sql;
 
 /// <summary>
-/// One column of a <see cref="SqlResult"/> schema: the result column NAME (the select-item
-/// alias, or the source field name, or a synthesized <c>EXP_n</c>), the VFP field TYPE char
+/// One column of a <see cref="SqlResult"/> schema: the result column NAME as VFP9 gives it (upper
+/// case: the select-item alias, or the source field name, or a synthesized <c>EXP_n</c> /
+/// <c>CNT</c> / <c>SUM_FIELD</c>; a repeated name suffixed <c>_A</c>, <c>_B</c>, …), the VFP field TYPE char
 /// (<c>C N F I Y B D T L M</c>), the declared <see cref="Length"/> / <see cref="Decimals"/>,
 /// and the CLR type each row value boxes to. This is what the Phase-3 ADO.NET DataReader maps
 /// its schema table from.

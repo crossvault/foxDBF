@@ -14,8 +14,8 @@ namespace CrossVault.FoxDbf.Tests;
 /// <item>SET DELETED OFF: the join must KEEP deleted rows (the old <c>GetRecords</c> path silently
 /// dropped every deleted physical record, unlike the single-table path) — on BOTH the driving side
 /// and the index-accelerated inner side.</item>
-/// <item><c>SELECT *</c> over sources that share a column name must produce UNIQUE, alias-qualified
-/// result-column names so the 2nd same-named column stays reachable.</item>
+/// <item><c>SELECT *</c> over sources that share a column name must produce UNIQUE result-column
+/// names (VFP9: <c>NAME_A</c>, <c>NAME_B</c>, …) so the 2nd same-named column stays reachable.</item>
 /// <item>A duplicate source alias in FROM/JOIN must be REJECTED (a silently-wrong self-join otherwise).</item>
 /// </list>
 /// All assertions ride the independent brute-force oracle. SAFETY: throwaway temp tables only.
@@ -131,10 +131,10 @@ public sealed class SqlJoinMustFixTests : IDisposable
         Assert.Contains("Dave", eng);
     }
 
-    // ---- (2) SELECT * duplicate column names are alias-qualified & unique -----------------
+    // ---- (2) SELECT * duplicate column names are suffixed _A/_B & unique -----------------
 
     [Fact]
-    public void SelectStar_DuplicateColumnNames_Are_AliasQualified_And_Unique()
+    public void SelectStar_DuplicateColumnNames_Are_Suffixed_And_Unique()
     {
         using var s = new VfpSession();
         s.OpenDirectory(_indexed.Path);
@@ -147,9 +147,10 @@ public sealed class SqlJoinMustFixTests : IDisposable
         var names = r.Columns.Select(c => c.Name).ToList();
         Assert.Equal(names.Count, names.Distinct(StringComparer.OrdinalIgnoreCase).Count());
 
-        // DEPTID exists in BOTH sources → the collision is alias-qualified on both sides.
-        Assert.Contains(names, n => n.Equals("EMP_DEPTID", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(names, n => n.Equals("DEPT_DEPTID", StringComparison.OrdinalIgnoreCase));
+        // DEPTID exists in BOTH sources → VFP9 suffixes the collision in column order (emp first).
+        Assert.Contains("DEPTID_A", names);
+        Assert.Contains("DEPTID_B", names);
+        Assert.True(names.IndexOf("DEPTID_A") < names.IndexOf("DEPTID_B"));
         // Non-colliding names are kept verbatim.
         Assert.Contains(names, n => n.Equals("EMPID", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(names, n => n.Equals("DNAME", StringComparison.OrdinalIgnoreCase));
