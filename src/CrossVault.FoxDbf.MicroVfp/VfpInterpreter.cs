@@ -366,14 +366,22 @@ public sealed partial class VfpInterpreter
         }
 
         VfpValue result = VfpValue.Logical(true);
-        try { ExecBlock(proc.Body); }
-        catch (ReturnSignal rs) { result = rs.Value; }
+        VfpValue[] finals;
+        try
+        {
+            try { ExecBlock(proc.Body); }
+            catch (ReturnSignal rs) { result = rs.Value; }
 
-        // Capture callee param finals BEFORE popping (for BY-REF write-back).
-        var finals = cc.ParamNames.Select(n => Memory.Get(n)).ToArray();
-
-        _callStack.RemoveAt(_callStack.Count - 1);
-        Memory.PopFrame();
+            // Capture callee param finals BEFORE popping (for BY-REF write-back).
+            finals = cc.ParamNames.Select(n => Memory.Get(n)).ToArray();
+        }
+        finally
+        {
+            // An error escaping the procedure (to a caller's TRY or the host) must still unwind its frame,
+            // or the caller would resume with the callee's LOCALs and PROGRAM() still on top.
+            _callStack.RemoveAt(_callStack.Count - 1);
+            Memory.PopFrame();
+        }
 
         if (byRefNames is not null)
             for (int i = 0; i < byRefNames.Length && i < finals.Length; i++)
@@ -410,8 +418,10 @@ public sealed partial class VfpInterpreter
             {
                 // A RUNTIME error: run the installed ON ERROR handler in the error's context, then
                 // RESUME after this line (default RETURN semantics). With no handler installed — or while
-                // already inside a handler — the error propagates exactly as before P2.
-                if (_inHandler || _onErrorCmd is null) throw;
+                // already inside a handler — the error propagates exactly as before P2. Inside a TRY body
+                // (anywhere up the call chain) the TRY always wins over ON ERROR (VFP9-verified).
+                StampFault(ex, s.Line, s.SourceText);
+                if (_inHandler || _onErrorCmd is null || _tryDepth > 0) throw;
                 RunErrorHandler(ex, s.Line);
             }
         }
@@ -524,6 +534,9 @@ public sealed partial class VfpInterpreter
             case ForStmt f: ExecFor(f); break;
             case ForEachStmt fe: ExecForEach(fe); break;
             case ScanStmt sc: ExecScan(sc); break;
+            case TryStmt ts: ExecTry(ts); break;
+            case ThrowStmt th: ExecThrow(th); break;
+            case CountStmt cnt: ExecCount(cnt); break;
             case DoCall dca: ExecDoCall(dca); break;
             case ExprStatement es: Eval(es.Expression); break;
             case UseStmt us: ExecUse(us); break;
@@ -583,13 +596,13 @@ public sealed partial class VfpInterpreter
             case MacroSubstStmt ms: ExecMacroSubst(ms); break;
             case LocateStmt loc: ExecLocate(loc); break;
             case ContinueStmt: ExecContinue(); break;
-            case UnknownCommand uc:
-                // CLOSE ALL sweeps open low-level file handles (P3 §C.2); every other unrecognised command
-                // (and CLOSE DATABASES/TABLES/…) stays a headless no-op.
-                if (string.Equals(uc.Verb, "CLOSE", StringComparison.OrdinalIgnoreCase)) ExecCloseCommand(uc.Arguments);
-                break;
+            // A command microVFP cannot execute raises error 16/36 unless it is on the documented headless
+            // allow-list (UI/console-only). It used to be skipped silently, producing wrong results.
+            case UnknownCommand uc: ExecUnknown(uc); break;
             case ProcDef: break;
-            default: break;
+            default:
+                throw new MicroVfpRuntimeException("Unrecognized command verb.", UnrecognizedVerbErrorNumber)
+                    { Statement = s.GetType().Name, LineNo = s.Line };
         }
     }
 
@@ -763,7 +776,10 @@ public sealed partial class VfpInterpreter
 
     private void ExecDoCall(DoCall d)
     {
-        if (!_procs.TryGetValue(d.Name, out var proc)) return;  // unknown DO target → no-op.
+        // An unknown DO target is VFP error 1 ("File … does not exist.") — it used to be a silent no-op.
+        if (!_procs.TryGetValue(d.Name, out var proc))
+            throw new MicroVfpRuntimeException($"File '{d.Name.ToLowerInvariant()}.prg' does not exist.", 1)
+                { Statement = "DO " + d.Name, LineNo = d.Line };
         int n = d.Args.Count;
         var values = new VfpValue[n];
         var byRef = new string?[n];
@@ -842,7 +858,19 @@ public sealed partial class VfpInterpreter
             // Controlling order: an explicit ORDER wins; else the FIRST listed index becomes master.
             string? orderName = u.Order is null ? null : NameOf(u.Order).Trim();
             if (!string.IsNullOrEmpty(orderName))
-                m.Order = ResolveOrderName(wa.Area, orderName);
+            {
+                // An unknown tag leaves the table OPEN and raises VFP error 12 (VFP9-verified: USE … ORDER TAG
+                // nosuch → "Variable 'NOSUCH' is not found.", ALIAS() still set).
+                try { m.Order = ResolveOrderName(wa.Area, orderName); }
+                catch (MicroVfpRuntimeException) when (!int.TryParse(orderName, out _))
+                {
+                    GoTop(wa.Area);
+                    throw new MicroVfpRuntimeException($"Variable '{orderName.ToUpperInvariant()}' is not found.", 12);
+                }
+                // ASCENDING/DESCENDING override the tag's stored direction, exactly as SET ORDER TO … does.
+                if (u.OrderDescending is bool wantDescending && m.Order is not null)
+                    m.OrderReversed = wantDescending != MasterDescending(wa.Area);
+            }
             else if (m.ExtraIndexes is { Count: > 0 })
                 m.Order = FirstIndexIdentity(wa.Area);
 
@@ -888,8 +916,8 @@ public sealed partial class VfpInterpreter
 
     private void ExecSqlSelect(SqlSelectStmt sq)
     {
-        var parsed = sq.Parsed ?? SafeParseSql(sq.Sql);
-        if (parsed is not SelectStatement sel) return;
+        var parsed = sq.Parsed ?? SafeParseSql(sq.Sql) ?? ThrowSqlParseError(sq.Sql);
+        if (parsed is not SelectStatement sel) { ThrowSqlParseError(sq.Sql); return; }
         var exec = new SelectExecutor(Session, _row);
         exec.Run(sel);
         if (sel.Into is { Kind: IntoKind.Cursor } into)
@@ -1180,6 +1208,7 @@ public sealed partial class VfpInterpreter
                 if (_pendingAppendPaths is { Count: > 0 }) { FlushPendingAppends(wa.Area); wa = Session.FindAreaByAlias(head); }
                 return wa is not null ? ReadField(wa, rest) : null;
             }
+            if (TryResolveObjectMember(head, rest, out var member)) return member;   // CATCH TO oErr → oErr.ErrorNo
             return null;                                  // object property / DBC!table.field → undefined.
         }
 
@@ -1308,6 +1337,7 @@ public sealed partial class VfpInterpreter
         }
         VfpValue v;
         try { v = EvalText(e); } catch { return "U"; }
+        if (TryGetObject(v, out _)) return "O";
         return v.Type switch
         {
             VfpType.Character => "C",
@@ -1396,7 +1426,7 @@ public sealed partial class VfpInterpreter
         try
         {
             if (e.IsParsed) return e.Parsed!.Evaluate(_row, _ctx);
-            return EvalText(e.Text);
+            return EvalUnparsed(e.Text);
         }
         finally
         {

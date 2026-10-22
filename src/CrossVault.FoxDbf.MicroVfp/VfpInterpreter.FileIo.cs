@@ -79,13 +79,34 @@ public sealed partial class VfpInterpreter : IDisposable
     {
         string what = PrgScan.FirstWord(args);
         if (string.Equals(what, "ALL", StringComparison.OrdinalIgnoreCase))
+        {
             CloseAllLowLevelHandles();
+            CloseAllWorkAreas();
+        }
+        // CLOSE TABLES [ALL] / CLOSE DATABASES [ALL] — close every open table of the current data session (it
+        // used to be a silent no-op). The session's DBC attachment itself is the host's and stays open.
+        else if (what is "TABLES" or "DATABASES")
+            CloseAllWorkAreas();
         // CLOSE INDEXES — close every NON-structural index of the current work area (standalone .idx +
         // non-structural .cdx); the structural .cdx (auto-opened by USE) is untouched (hackfox s4g792).
         // Identical effect to SET INDEX TO with no files.
         else if (string.Equals(what, "INDEXES", StringComparison.OrdinalIgnoreCase)
               || string.Equals(what, "INDEX", StringComparison.OrdinalIgnoreCase))
             CloseNonStructuralIndexes(Session.CurrentArea);
+    }
+
+    // Close every work area of the ACTIVE data session exactly as `USE IN n` does (locks released first, then
+    // the area, its meta and any cached writer that no longer has an area), then select work area 1 (VFP).
+    private void CloseAllWorkAreas()
+    {
+        foreach (var wa in Session.OpenAreas.ToList())
+        {
+            ReleaseAreaLocks(wa.Area);
+            Session.CloseArea(wa.Area);
+            _meta.Remove(wa.Area);
+        }
+        PruneCachedWriters();
+        Session.SelectArea(1);
     }
 
     // Only ReadOnly/Hidden/System are meaningful for FCREATE's nAttribute (0 = normal). Best-effort — the

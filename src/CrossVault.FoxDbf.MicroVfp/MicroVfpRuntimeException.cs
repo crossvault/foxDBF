@@ -20,6 +20,17 @@ public sealed class MicroVfpRuntimeException : Exception, IVfpErrorCode
     /// site did not pin one (see <see cref="IVfpErrorCode"/>).</summary>
     public int? VfpErrorNumber { get; }
 
+    /// <summary>The source text of the statement microVFP could not execute (an unrecognised command, an
+    /// unparseable expression or SQL statement), or <see langword="null"/>. <see cref="Exception.Message"/>
+    /// stays VFP's exact error text (what <c>MESSAGE()</c> returns); this carries the context for the host.</summary>
+    public string? Statement { get; init; }
+
+    /// <summary>The 1-based source line of <see cref="Statement"/>, or 0 when unknown.</summary>
+    public int LineNo { get; init; }
+
+    /// <summary>The <c>eUserExpression</c> of a user <c>THROW</c> (error 2071), or null for any other error.</summary>
+    internal Expressions.VfpValue? UserValue { get; init; }
+
     public MicroVfpRuntimeException(string message) : base(message) { }
 
     public MicroVfpRuntimeException(string message, int vfpErrorNumber) : base(message)

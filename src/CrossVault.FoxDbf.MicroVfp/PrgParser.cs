@@ -345,6 +345,7 @@ public static class PrgParser
         {
             "ENDIF", "ELSE", "ENDDO", "ENDFOR", "NEXT", "ENDSCAN",
             "ENDCASE", "OTHERWISE", "CASE", "ENDPROC", "ENDFUNC",
+            "CATCH", "FINALLY", "ENDTRY",
         };
 
         // ---- top level ----
@@ -426,7 +427,12 @@ public static class PrgParser
                 _blockDepth--;
                 throw new MicroVfpSyntaxException("Block nesting is too deep.", Peek.LineNo);
             }
-            try { return ParseStatementCore(); }
+            try
+            {
+                string source = Peek.Text;
+                var node = ParseStatementCore();
+                return node.SourceText is null ? node with { SourceText = source } : node;
+            }
             finally { _blockDepth--; }
         }
 
@@ -442,6 +448,7 @@ public static class PrgParser
                 case "IF": return ParseIf();
                 case "FOR": return PrgScan.SecondWord(ll.Text) == "EACH" ? ParseForEach() : ParseFor();
                 case "SCAN": return ParseScan();
+                case "TRY" when PrgScan.AfterFirstWord(ll.Text).Length == 0: return ParseTry();
                 case "DO":
                     string sw = PrgScan.SecondWord(ll.Text);
                     if (sw == "CASE") return ParseDoCase();
@@ -575,6 +582,31 @@ public static class PrgParser
             return new ScanStmt(scope, forE, whileE, body) { Line = ll.LineNo };
         }
 
+        // TRY … [CATCH [TO VarName] [WHEN lExpression] …]… [FINALLY …] ENDTRY — VFP9 structured error handling.
+        // Any number of CATCH clauses (tried in order, first whose WHEN holds wins), an optional FINALLY.
+        private TryStmt ParseTry()
+        {
+            var ll = Next();
+            var body = ParseBlock("CATCH", "FINALLY", "ENDTRY");
+            var catches = new List<CatchClause>();
+            while (!Eof && PeekWord == "CATCH")
+            {
+                var cl = Next();
+                var (_, segs) = Carve(PrgScan.AfterFirstWord(cl.Text), "TO", "WHEN");
+                string? toVar = SegBody(segs, "TO") is { Length: > 0 } tb ? FirstToken(tb) : null;
+                PrgExpr? when = SegBody(segs, "WHEN") is { Length: > 0 } wb ? PrgExpr.Parse(wb) : null;
+                catches.Add(new CatchClause(toVar, when, ParseBlock("CATCH", "FINALLY", "ENDTRY")));
+            }
+            IReadOnlyList<PrgStatement>? fin = null;
+            if (!Eof && PeekWord == "FINALLY")
+            {
+                Next();
+                fin = ParseBlock("ENDTRY");
+            }
+            Require("ENDTRY", ll.LineNo);
+            return new TryStmt(body, catches, fin) { Line = ll.LineNo };
+        }
+
         private void Require(string keyword, int openLine)
         {
             if (Eof || PeekWord != keyword)
@@ -611,6 +643,10 @@ public static class PrgParser
                 "PUBLIC" => BuildVarDecl(DeclScope.Public, text),
                 "RELEASE" => BuildRelease(text),
                 "DIMENSION" or "REDIMENSION" => BuildDimension(text),
+                // DECLARE is VFP's synonym for DIMENSION; only `DECLARE … IN <dll>` is a DLL import (headless no-op).
+                "DECLARE" => PrgScan.IndexOfKeyword(PrgScan.AfterFirstWord(text), "IN") >= 0
+                    ? new UnknownCommand(kw, PrgScan.AfterFirstWord(text))
+                    : BuildDimension(text),
                 "PARAMETERS" => new ParametersStmt(false, IdentList(PrgScan.AfterFirstWord(text))),
                 "LPARAMETERS" => new ParametersStmt(true, IdentList(PrgScan.AfterFirstWord(text))),
                 "STORE" => BuildStore(text),
@@ -644,6 +680,8 @@ public static class PrgParser
                 "CREATE" => BuildCreate(text),
                 "FLUSH" => BuildFlush(text),
                 "SUM" => BuildSum(text),
+                "COUNT" => BuildCount(text),
+                "THROW" => new ThrowStmt(PrgScan.AfterFirstWord(text).Trim() is { Length: > 0 } tv ? PrgExpr.Parse(tv) : null),
                 "CLEAR" => BuildClear(text),
                 "UNLOCK" => BuildUnlock(text),
                 "ZAP" => BuildZap(text),
@@ -655,10 +693,10 @@ public static class PrgParser
                 "ROLLBACK" => new RollbackStmt(),
                 "BEGIN" => PrgScan.SecondWord(text) == "TRANSACTION"
                     ? new BeginTxnStmt()
-                    : new UnknownCommand(kw, PrgScan.AfterFirstWord(text)),
+                    : Unparsed(kw, PrgScan.AfterFirstWord(text)),
                 "END" => PrgScan.SecondWord(text) == "TRANSACTION"
                     ? new EndTxnStmt()
-                    : new UnknownCommand(kw, PrgScan.AfterFirstWord(text)),
+                    : Unparsed(kw, PrgScan.AfterFirstWord(text)),
                 "=" => new ExprStatement(PrgExpr.Parse(text.TrimStart().Substring(1))),
                 "&" => new MacroSubstStmt(new MacroSubst(text.Trim())),
                 "#" => new DirectiveStmt(text.Trim()),
@@ -677,6 +715,10 @@ public static class PrgParser
             }
             return new UnknownCommand(kw, PrgScan.AfterFirstWord(text));
         }
+
+        /// <summary>A verb microVFP models whose clause list it could not parse — raises VFP error 36
+        /// ("Command contains unrecognized phrase/keyword.") when executed instead of being skipped.</summary>
+        private static UnknownCommand Unparsed(string verb, string rest) => new(verb, rest) { KnownVerb = true };
 
         // A left-hand side is an assignable REFERENCE — an identifier optionally followed by member
         // access (<c>.name</c>) and/or balanced subscripts (<c>[…]</c> / <c>(…)</c>), and NOTHING else.
@@ -833,6 +875,7 @@ public static class PrgParser
             NameRef? table = null, alias = null, order = null, inArea = null;
             var index = new List<NameRef>();
             bool again = false, noUpdate = false;
+            bool? orderDescending = null;
             var mode = UseMode.Default;
 
             int idx = 0;
@@ -858,7 +901,19 @@ public static class PrgParser
                     case "IN": inArea = ToNameRef(NextTok(toks, ref idx)); break;
                     case "AGAIN": again = true; idx++; break;
                     case "ALIAS": alias = ToNameRef(NextTok(toks, ref idx)); break;
-                    case "ORDER": order = ToNameRef(NextTok(toks, ref idx)); break;
+                    case "ORDER":
+                    {
+                        // ORDER [nIndexNumber | IDXFileName | [TAG] TagName [OF CDXFileName] [ASCENDING|DESCENDING]]
+                        string first = NextTok(toks, ref idx);
+                        if (first.Equals("TAG", StringComparison.OrdinalIgnoreCase))
+                            first = idx < toks.Count ? toks[idx++] : string.Empty;
+                        if (first.Length > 0) order = ToNameRef(first);
+                        if (idx < toks.Count && toks[idx].Equals("OF", StringComparison.OrdinalIgnoreCase))
+                            NextTok(toks, ref idx);   // OF cdx — the tag resolves against the area's open index set.
+                        break;
+                    }
+                    case "ASCENDING": orderDescending = false; idx++; break;
+                    case "DESCENDING": orderDescending = true; idx++; break;
                     case "EXCLUSIVE": mode = UseMode.Exclusive; idx++; break;
                     case "SHARED":
                     case "SHARE": mode = UseMode.Shared; idx++; break;
@@ -879,7 +934,10 @@ public static class PrgParser
                     default: idx++; break;
                 }
             }
-            return new UseStmt(database, table, again, alias, order, inArea, mode, noUpdate, table is null, index);
+            return new UseStmt(database, table, again, alias, order, inArea, mode, noUpdate, table is null, index)
+            {
+                OrderDescending = orderDescending,
+            };
         }
 
         private static SeekStmt BuildSeek(string text)
@@ -940,7 +998,7 @@ public static class PrgParser
 
             string keyText = key.Trim();
             if (keyText.Length == 0)
-                return new UnknownCommand("INDEX", PrgScan.AfterFirstWord(text));
+                return Unparsed("INDEX", PrgScan.AfterFirstWord(text));
             return new IndexStmt(PrgExpr.Parse(keyText), tag, ofCdx, toIdx, forE,
                 descending, unique, candidate, additive);
         }
@@ -1121,7 +1179,7 @@ public static class PrgParser
         private PrgStatement BuildOn(string text, int line)
         {
             if (PrgScan.SecondWord(text) != "ERROR")
-                return new UnknownCommand("ON", PrgScan.AfterFirstWord(text));
+                return Unparsed("ON", PrgScan.AfterFirstWord(text));
             string command = PrgScan.AfterFirstWord(PrgScan.AfterFirstWord(text)).Trim(); // drop ON, ERROR
             if (command.Length == 0)
                 return new OnErrorStmt(OnErrorKind.Clear, null, null);
@@ -1326,6 +1384,47 @@ public static class PrgParser
             return new SumStmt(exprs, null, forE, whileE, targets);
         }
 
+        // COUNT [Scope] [FOR lExpr] [WHILE lExpr] TO VarName [NOOPTIMIZE] — the clauses may come in any order
+        // (VFP9-verified: `COUNT TO n FOR …` and `COUNT FOR … TO n` are equivalent). A scope trailing a FOR/
+        // WHILE body is peeled exactly like LOCATE's. A COUNT without TO is legal VFP (it only displays the
+        // count, which a headless runtime has nowhere to show), so Target stays null.
+        private static PrgStatement BuildCount(string text)
+        {
+            var (head, segs) = Carve(PrgScan.AfterFirstWord(text), "FOR", "WHILE", "TO");
+            string? scope = head.Trim().Length == 0 ? null : head.Trim();
+            if (scope is not null && PrgScan.TopWords(scope) is { Count: > 0 } hw && hw[^1].Upper == "NOOPTIMIZE")
+                scope = scope.Substring(0, hw[^1].Start).Trim() is { Length: > 0 } hs ? hs : null;
+            PrgExpr? forE = null, whileE = null;
+            string? target = null;
+            foreach (var (k, b) in segs)
+            {
+                if (k == "TO")
+                {
+                    string body = b;
+                    var tw = PrgScan.TopWords(body);
+                    if (tw.Count > 1 && tw[^1].Upper == "NOOPTIMIZE") body = body.Substring(0, tw[^1].Start);
+                    target = FirstToken(body);
+                    continue;
+                }
+                var expr = PrgExpr.Parse(b);
+                if (!expr.IsParsed)
+                {
+                    string body = b;
+                    string? trailScope = PeelTrailingScope(ref body);
+                    if (body.Length != b.Length)
+                    {
+                        scope ??= trailScope;
+                        expr = PrgExpr.Parse(body);
+                    }
+                }
+                if (k == "FOR") forE = expr; else whileE = expr;
+            }
+            if (scope is not null && !IsScopeText(scope)) return Unparsed("COUNT", PrgScan.AfterFirstWord(text));
+            return new CountStmt(scope, forE, whileE, target is { Length: > 0 } ? target : null);
+        }
+
+        private static bool IsScopeText(string scope) => PrgScan.FirstWord(scope) is "ALL" or "REST" or "NEXT" or "RECORD";
+
         // ---- P2 table/record movers + whole-table I/O ----
 
         /// <summary><c>GATHER FROM aArray | MEMVAR | NAME oObj [FIELDS cList] [MEMO]</c>. The MEMVAR/NAME
@@ -1393,7 +1492,7 @@ public static class PrgParser
                 return new AppendMemoStmt(memoField, memoSource, HasKw(memoSegs, "OVERWRITE"), asCp);
             }
             if (PrgScan.FirstWord(rest) != "FROM")
-                return new UnknownCommand("APPEND", rest);
+                return Unparsed("APPEND", rest);
             string body = PrgScan.AfterFirstWord(rest);   // after FROM
             var (head, segs) = Carve(body, "FIELDS", "FOR", "WHILE", "TYPE");
             var source = ToNameRef(FirstToken(head));
@@ -1450,7 +1549,8 @@ public static class PrgParser
                 var (head, segs) = Carve(r2, "TO", "ADDITIVE");
                 var memoField = ToNameRef(FirstToken(head));
                 var target = ToNameRef(FirstToken(SegBody(segs, "TO") ?? string.Empty));
-                return new CopyToStmt(target, Array.Empty<string>(), null, null, Memo: true, memoField);
+                bool additive = segs.Any(sg => sg.Kw == "ADDITIVE");
+                return new CopyToStmt(target, Array.Empty<string>(), null, null, Memo: true, memoField) { Additive = additive };
             }
             // COPY INDEXES cIdxList | ALL [TO cCdx] — convert open standalone .idx files into cdx tags.
             if (fw is "INDEXES" or "INDEX")
@@ -1474,7 +1574,7 @@ public static class PrgParser
                 var toIdx = ToNameRef(FirstToken(SegBody(segs, "TO") ?? string.Empty));
                 return new CopyTagStmt(tag, ofCdx, toIdx);
             }
-            return new UnknownCommand("COPY", rest);
+            return Unparsed("COPY", rest);
         }
 
         /// <summary><c>TOTAL ON eKey TO cFile [FIELDS nList] [FOR lExpr]</c>.</summary>
@@ -1482,11 +1582,11 @@ public static class PrgParser
         {
             string rest = PrgScan.AfterFirstWord(text);   // after TOTAL
             if (PrgScan.FirstWord(rest) != "ON")
-                return new UnknownCommand("TOTAL", rest);
+                return Unparsed("TOTAL", rest);
             string body = PrgScan.AfterFirstWord(rest);   // after ON
             var (head, segs) = Carve(body, "TO", "FIELDS", "FOR", "WHILE");
             if (head.Trim().Length == 0)
-                return new UnknownCommand("TOTAL", rest);
+                return Unparsed("TOTAL", rest);
             var key = PrgExpr.Parse(head);
             var target = ToNameRef(FirstToken(SegBody(segs, "TO") ?? string.Empty));
             PrgExpr? forE = SegBody(segs, "FOR") is { Length: > 0 } fb ? PrgExpr.Parse(fb) : null;
@@ -1525,7 +1625,7 @@ public static class PrgParser
         {
             string rest = PrgScan.AfterFirstWord(text);   // after SAVE
             if (!PrgScan.FirstWord(rest).Equals("TO", StringComparison.OrdinalIgnoreCase))
-                return new UnknownCommand("SAVE", rest);
+                return Unparsed("SAVE", rest);
             string body = PrgScan.AfterFirstWord(rest);   // after TO
             var (all, like, except, _, _) = ParseAllLikeExcept(body, out string target);
             return new SaveToStmt(ToNameRef(target), all ? like : null, all ? except : null);
@@ -1536,7 +1636,7 @@ public static class PrgParser
         {
             string rest = PrgScan.AfterFirstWord(text);   // after RESTORE
             if (!PrgScan.FirstWord(rest).Equals("FROM", StringComparison.OrdinalIgnoreCase))
-                return new UnknownCommand("RESTORE", rest);
+                return Unparsed("RESTORE", rest);
             var (_, segs) = Carve(PrgScan.AfterFirstWord(rest), "ADDITIVE");
             // the file is the head (first token before ADDITIVE).
             string body = PrgScan.AfterFirstWord(rest);
@@ -1549,7 +1649,7 @@ public static class PrgParser
         {
             string rest = PrgScan.AfterFirstWord(text);   // after VALIDATE
             if (!PrgScan.FirstWord(rest).Equals("DATABASE", StringComparison.OrdinalIgnoreCase))
-                return new UnknownCommand("VALIDATE", rest);
+                return Unparsed("VALIDATE", rest);
             var words = PrgScan.TopWords(rest).Select(w => w.Upper).ToList();
             return new ValidateDatabaseStmt(words.Contains("RECOVER"));
         }
@@ -1580,7 +1680,7 @@ public static class PrgParser
                 case "TABLES":
                     return new DisplayTablesStmt(toFile);
                 default:
-                    return new UnknownCommand(PrgScan.FirstWord(text), rest);
+                    return Unparsed(PrgScan.FirstWord(text), rest);
             }
         }
 
@@ -1614,7 +1714,7 @@ public static class PrgParser
         {
             string rest = PrgScan.AfterFirstWord(text);   // after RENAME
             if (PrgScan.FirstWord(rest) != "TABLE")
-                return new UnknownCommand("RENAME", rest);
+                return Unparsed("RENAME", rest);
             string body = PrgScan.AfterFirstWord(rest);   // after TABLE
             var (head, segs) = Carve(body, "TO");
             var from = ToNameRef(FirstToken(head));
@@ -1755,7 +1855,8 @@ public static class PrgParser
         private static bool IsUseKeyword(string t) => t.ToUpperInvariant() switch
         {
             "IN" or "AGAIN" or "ALIAS" or "ORDER" or "EXCLUSIVE" or "SHARED"
-                or "SHARE" or "NOUPDATE" or "INDEX" or "NODATA" or "ONLINE" => true,
+                or "SHARE" or "NOUPDATE" or "INDEX" or "NODATA" or "ONLINE"
+                or "ASCENDING" or "DESCENDING" => true,
             _ => false,
         };
 

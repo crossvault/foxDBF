@@ -88,6 +88,48 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   GENERAL/SPANISH EXACT OFF compare with the heads of the blank-padded value (`SEEK 'Ab '` finds `Ab` or `Ab  c`,
   `SEEK 'Stra  '` not `Strab`); a MACHINE needle longer than the key never matches (also not under `SET NEAR`).
   `CdxTag.Seek(object)` follows the same EXACT OFF rule.
+### Changed
+
+- **BREAKING — microVFP fails loudly on statements it cannot execute.** A command it does not model used
+  to be skipped silently, so a stored procedure could run to the end with a wrong result. Executing such a
+  line now raises a catchable VFP error that `ON ERROR` and `TRY…CATCH` see: 16 "Unrecognized command
+  verb." for an unknown verb (this includes 4-letter abbreviations such as `REPL` and VFP verbs microVFP
+  does not model, e.g. SQL `UPDATE`, `QUIT`, `DEFINE CLASS`), 36 "Command contains unrecognized
+  phrase/keyword." for a modelled verb whose clauses it cannot parse, 1 for `DO` of a procedure that is not
+  loaded, 10 for an expression the expression engine cannot parse (it used to evaluate to `.NULL.`), and the
+  SQL parser's error for an embedded `SELECT`/`INSERT`/`CREATE` it cannot parse (an unparseable `INSERT`
+  used to write nothing). Source still parses, so a `.prg` or DBC container with an exotic command in an
+  unused procedure keeps loading. A documented allow-list of UI/console-only commands (`?`, `@ … SAY`,
+  `ACTIVATE WINDOW`, `KEYBOARD`, `ON KEY`, `DECLARE … IN <dll>`, `DISPLAY`/`LIST` to the screen, …) stays a
+  headless no-op; see "Deviations from VFP" in `docs/04-microvfp-runtime.md`. `MicroVfpRuntimeException`
+  gains `Statement` and `LineNo` with the offending source; its `Message` stays VFP's exact text.
+- microVFP `CLOSE TABLES`, `CLOSE DATABASES` and `CLOSE ALL` close every table of the current data session
+  (they did nothing); the session's database container stays attached.
+
+### Added
+
+- microVFP `TRY … CATCH [TO oErr] [WHEN lExpr] … FINALLY … ENDTRY` and `THROW [eExpr]` with VFP9 semantics,
+  verified against the VFP9 runtime. Before, TRY was not modelled and both the TRY and the CATCH block ran.
+  A TRY wins over `ON ERROR`, also for errors raised in called procedures; without a matching CATCH the
+  FINALLY block runs and the error propagates. The `CATCH TO` object exposes `ErrorNo`, `Message`, `LineNo`,
+  `LineContents`, `Details`, `Procedure`, `StackLevel` and `UserValue` (`VARTYPE()` = `"O"`); `THROW x`
+  raises 2071 with `UserValue = x`, a bare `THROW` inside CATCH re-raises the caught error. Inside CATCH
+  `ERROR()` is 0 while `MESSAGE()` and `AERROR()` describe the caught error. `EXIT` inside TRY leaves the
+  TRY structure, `LOOP` raises 1939 and `RETURN` raises 2060, as in VFP9. An error that leaves a procedure
+  now also unwinds its call frame, so the caller no longer resumes with the callee's variables in scope.
+- microVFP `COUNT [scope] [FOR lExpr] [WHILE lExpr] TO var` (it was not implemented and left the variable
+  untouched), honouring `SET DELETED`, `SET FILTER` and `SET KEY` and leaving the record pointer where VFP9
+  does.
+- microVFP `COPY MEMO … TO file ADDITIVE` appends to the file (a missing file raises error 1, as in VFP9).
+- Currency literals such as `$0` and `$12.50` in expressions. The TasTrade sample's credit-limit check
+  (`IF lyRemainingCredit < $0`) used to evaluate to `.NULL.` and never fire.
+- microVFP `DECLARE name[n]` as the `DIMENSION` synonym.
+
+### Fixed
+
+- microVFP `USE … ORDER TAG name` failed with "tag not found" even for an existing tag; `ORDER TAG … OF cdx`
+  and the `ASCENDING`/`DESCENDING` override now work too, and `DESCENDING()` reports the overridden
+  direction. An unknown tag raises error 12 and leaves the table open, as in VFP9.
 
 ## [0.10.0] - 2026-10-22
 

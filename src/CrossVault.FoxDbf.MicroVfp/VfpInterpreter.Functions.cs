@@ -77,7 +77,7 @@ public sealed partial class VfpInterpreter
             case "KEY": r = VfpValue.Character(ResolveSlot(a)?.KeyExpr.ToUpperInvariant() ?? string.Empty); return true;
             case "FOR": r = VfpValue.Character(ResolveSlot(a)?.ForExpr.ToUpperInvariant() ?? string.Empty); return true;
             case "UNIQUE": r = VfpValue.Logical(ResolveSlot(a)?.Unique ?? false); return true;
-            case "DESCENDING": r = VfpValue.Logical(ResolveSlot(a)?.Descending ?? false); return true;
+            case "DESCENDING": r = VfpValue.Logical(FnDescending(a)); return true;
             case "CANDIDATE": r = VfpValue.Logical(false); return true;   // no DBC index catalog → never a candidate.
             case "PRIMARY": r = VfpValue.Logical(false); return true;     // primary keys are a DBC-bound concept only.
             case "IDXCOLLATE": r = VfpValue.Character(ResolveSlot(a)?.Collation ?? string.Empty); return true;

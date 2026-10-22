@@ -656,6 +656,22 @@ public sealed partial class VfpInterpreter
         return n >= 1 && n <= inv.Count ? inv[n.Value - 1] : null;
     }
 
+    /// <summary>DESCENDING([cIndexFile,] [nIndexNumber] [, area]) — the tag's stored direction, EXCEPT for the
+    /// controlling tag of an area whose USE/SET ORDER carried an ASCENDING/DESCENDING override: VFP then reports
+    /// the effective direction (VFP9-verified: <c>USE t ORDER TAG idDesc ASCENDING</c> ⇒ .F.).</summary>
+    private bool FnDescending(VfpValue[] a)
+    {
+        var slot = ResolveSlot(a);
+        if (slot is null) return false;
+        int area = Session.CurrentArea, ai = 0;
+        if (ai < a.Length && a[ai].Type == VfpType.Character) ai++;
+        if (ai < a.Length && IsNumeric(a[ai])) ai++;
+        if (ai < a.Length) area = AreaNumber(a[ai]);
+        var m = Meta(area);
+        bool master = string.Equals(slot.Name, m.Order, StringComparison.OrdinalIgnoreCase);
+        return master && m.OrderReversed ? !slot.Descending : slot.Descending;
+    }
+
     /// <summary>Narrow an inventory to a single named index file (by file name, extension optional); the
     /// whole set when <paramref name="file"/> is null/empty.</summary>
     private static List<IndexSlot> FilterInventory(List<IndexSlot> inv, string? file)

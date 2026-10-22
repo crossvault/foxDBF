@@ -148,7 +148,10 @@ interp.ReleaseDataSession(s2);                 // ASESSIONS()/AUSED() enumerate 
   by every navigation and scan — `GO TOP`/`BOTTOM`, `SKIP`, `LOCATE`/`CONTINUE`, `SCAN`, `SUM` — composed
   with `SET DELETED`/`SET KEY`; a direct `GOTO`/`RECNO()`/`RECCOUNT()` bypasses it, matching VFP; read back
   with `FILTER()`/`SET("FILTER")`), `REPLACE`/`DELETE`/`RECALL`/`INSERT`, `GATHER`/`SCATTER`,
-  `APPEND FROM`/`COPY TO` (`.dbf`), `PACK`, `SUM`/`TOTAL`, `BEGIN`/`END TRANSACTION`/`ROLLBACK`
+  `APPEND FROM`/`COPY TO` (`.dbf`), `COPY MEMO … TO … [ADDITIVE]`, `PACK`, `SUM`/`TOTAL`,
+  `COUNT [scope] [FOR] [WHILE] TO var` (honouring `SET DELETED`/`SET FILTER`/`SET KEY`),
+  `USE … ORDER [TAG] name [OF cdx] [ASCENDING|DESCENDING]`, `CLOSE TABLES`/`DATABASES`/`ALL`,
+  `BEGIN`/`END TRANSACTION`/`ROLLBACK`
   (copy-on-write), and an embedded VFP-SQL `SELECT` (routed through the same
   [SQL engine](03-sql-and-ado-net.md) as everything else).
 - **Data sessions**: a **real** multi-datasession model. The host API
@@ -175,8 +178,14 @@ interp.ReleaseDataSession(s2);                 // ASESSIONS()/AUSED() enumerate 
   (multiple indexes per work area), `REINDEX`, `DELETE TAG`, plus introspection
   (`TAG()`/`TAGCOUNT()`/`TAGNO()`/`KEY()`/`ORDER()`/`CANDIDATE()`/`PRIMARY()`/`DESCENDING()`/`FOR()`/
   `CDX()`/`SYS(14)`/`ATAGINFO()`).
-- **Error handling**: `ON ERROR`, `AERROR()` (the full 7-column result-array contract), `MESSAGE()`/
-  `ERROR()`/`LINENO()`.
+- **Error handling**: `TRY … CATCH [TO oErr] [WHEN lExpr] … FINALLY … ENDTRY` and `THROW [eExpr]` with
+  VFP9 semantics (verified against the runtime): a TRY wins over `ON ERROR`, also for errors raised in
+  procedures it calls; no matching `CATCH` runs `FINALLY` and passes the error outward; `oErr` exposes
+  `ErrorNo`, `Message`, `LineNo`, `LineContents`, `Details`, `Procedure`, `StackLevel`, `UserValue`
+  (`THROW x` raises 2071 with `UserValue = x`, a bare `THROW` in `CATCH` re-raises); inside `CATCH`,
+  `ERROR()` is 0 while `MESSAGE()`/`AERROR()` describe the caught error; `EXIT` leaves the TRY structure,
+  `LOOP` raises 1939 and `RETURN` 2060, as in VFP9. Plus `ON ERROR`, `AERROR()` (the full 7-column
+  result-array contract), `MESSAGE()`/`ERROR()`/`LINENO()`.
 - **Referential integrity**: the DBC's stored `RULE`s and the generated insert/update/delete RI
   triggers auto-fire on `INSERT`/`REPLACE`/`DELETE` through the interpreter, cascading exactly as VFP9.
 
@@ -331,8 +340,8 @@ business-logic stored procedures** — not a drop-in replacement for the full VF
 differences below are deliberate, verified simplifications, not bugs to be worked around:
 
 - **`?`/`??` display output is not implemented.** There is no console to print to, so a `? expr` /
-  `?? expr` line parses but produces nothing (it falls into the "unrecognized command" bucket below —
-  no output, no exception). To observe a value, return it from a `FUNCTION`/`PROCEDURE` and read the
+  `?? expr` line parses but produces nothing (it is on the headless allow-list below — no output, no
+  exception). To observe a value, return it from a `FUNCTION`/`PROCEDURE` and read the
   `Call(...)` result in C# (as the snippets above do), or evaluate it with
   `interp.EvalExpression("expr")`.
 - **Only the lock *wait timing* is approximated.** `RLOCK()`/`LOCK()`/`FLOCK()`/`UNLOCK`/
@@ -344,12 +353,33 @@ differences below are deliberate, verified simplifications, not bugs to be worke
   timing**: a headless library will not block a thread indefinitely the way an interactive VFP
   session parks the UI, so the wait/retry cadence on a *contended* lock is approximate — the grant /
   deny outcome and the byte ranges themselves are real.
-- **An unrecognized command is captured, not rejected — and not executed either.** Any command verb
-  the parser doesn't model yet still parses (so a whole `.prg` file continues to load even if it uses
-  a handful of exotic commands), but it silently does nothing at runtime. A `.prg` parsing cleanly is
-  therefore not proof that every line in it actually ran — check
-  [What's implemented](#whats-implemented) and the [function reference](#function-reference) above
-  for what's real.
+- **A statement microVFP cannot execute raises an error when it runs** (since 0.11; it used to be
+  skipped silently). Such a line still *parses*, so a whole `.prg` or DBC container loads even if an
+  unused procedure contains an exotic command; executing it raises a catchable VFP error that `ON ERROR`
+  and `TRY…CATCH` see like any other:
+
+  | Situation | Error |
+  |---|---|
+  | unknown command verb (incl. 4-letter abbreviations such as `REPL`, and VFP verbs microVFP does not model, e.g. `UPDATE`-SQL, `QUIT`, `DEFINE CLASS`) | 16 "Unrecognized command verb." |
+  | a modelled verb with a clause list microVFP cannot parse (`COPY garbage`, `CLOSE nonsense`) | 36 "Command contains unrecognized phrase/keyword." |
+  | `DO name` of a procedure that is not loaded | 1 "File 'name.prg' does not exist." |
+  | an expression the expression engine cannot parse (used to evaluate to `.NULL.`) | 10 "Syntax error." |
+  | an embedded `SELECT`/`INSERT`/`CREATE` the SQL parser cannot parse | the parser's error (10 when it carries no number) |
+
+  `MicroVfpRuntimeException.Message` stays VFP's exact text (what `MESSAGE()` returns);
+  `MicroVfpRuntimeException.Statement` and `.LineNo` carry the offending source for the host.
+  The **headless allow-list** — commands that only drive the interactive UI or console and are
+  deliberately ignored — is: `?`/`??`/`???`, `@ … SAY/GET/…`, `ACTIVATE`/`DEACTIVATE`/`HIDE`/`SHOW`/
+  `MOVE`/`ZOOM`, `DEFINE WINDOW/MENU/POPUP/BAR/PAD/BOX`, `PUSH`/`POP`, `KEYBOARD`, `MOUSE`, `READ`,
+  `DOEVENTS`, `BROWSE`/`EDIT`/`CHANGE`/`MODIFY`, `ASSERT`, `DEBUG`/`DEBUGOUT`/`SUSPEND`, `EXTERNAL`,
+  the event traps `ON KEY`/`ON ESCAPE`/`ON SHUTDOWN`/… (`ON ERROR` is modelled), `DECLARE … IN <dll>`
+  (DLL imports; `CoCreateGuid` is a native built-in), `DISPLAY`/`LIST` forms that only paint the
+  screen (a `TO FILE` form must be modelled or it raises), `CLOSE ALTERNATE/DEBUGGER/FORMAT/MEMO/
+  PRINTER/PROCEDURE`, and unrecognised `SET` settings (`SET TALK`, `SET COMPATIBLE`, …). The real
+  stored-procedure corpus the project is tested against uses none of the raising forms.
+  Unknown *functions* are not covered yet: they still evaluate to `.NULL.`.
+- **`CLOSE TABLES`/`CLOSE DATABASES`/`CLOSE ALL` close every table of the current data session** but
+  leave the session's database container attached (the host owns it).
 - **The genuinely GUI-bound functions are stubs**, because a headless interpreter has no window,
   screen or font metrics to answer them: `MESSAGEBOX()` always returns `6` (`IDYES`), `AFONT()`
   returns an empty font list, and `TXTWIDTH()`/font-extent style queries have no pixel geometry.

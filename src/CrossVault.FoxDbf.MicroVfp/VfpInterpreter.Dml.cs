@@ -17,6 +17,9 @@ public sealed partial class VfpInterpreter
 {
     private void ExecInsert(InsertStmt ins)
     {
+        // An INSERT the SQL parser cannot represent used to fall through every path below into a swallowed
+        // Session.Execute — the row silently never landed. Raise the parser's error instead (catchable).
+        if (ins.Parsed is null && ResolveInsertStatement(ins) is null) ThrowSqlParseError(ins.Sql);
         long checkStart = VfpInsertProfile.Start();
         // P3b: an INSERT on a DBC member with a bound insert trigger (the RI insert RESTRICT rule) is
         // ENFORCED atomically — the row lands, the bound __RI_INSERT_<table> trigger fires positioned ON
@@ -729,7 +732,16 @@ public sealed partial class VfpInterpreter
         // (the table code page, or Latin-1 byte identity for a binary / NOCPTRANS memo), never UTF-8.
         var column = wa.Table.Columns.FirstOrDefault(c => string.Equals(c.Name, field, StringComparison.OrdinalIgnoreCase));
         var encoding = column is { IsBinary: true } ? Encoding.Latin1 : wa.Table.Encoding;
-        try { File.WriteAllBytes(path, encoding.GetBytes(content)); } catch { /* best-effort export */ }
+        byte[] bytes = encoding.GetBytes(content);
+        if (s.Additive)
+        {
+            // ADDITIVE appends to an EXISTING file; VFP9 raises error 1 when the file is missing (verified).
+            if (!File.Exists(path)) throw new MicroVfpRuntimeException("File does not exist.", 1);
+            using var fs = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+            fs.Write(bytes);
+            return;
+        }
+        File.WriteAllBytes(path, bytes);
     }
 
     private void ExecTotal(TotalStmt s)
@@ -872,9 +884,9 @@ public sealed partial class VfpInterpreter
         // 5.5: a passthrough may UPDATE/DELETE/INSERT/ALTER/DROP any table through the SQL DML/DDL writer —
         // drop every cached interpreter writer so none straddles a foreign rewrite / count change. Cold path.
         DisposeAllCachedWriters();
-        var parsed = SafeParseSql(s.Sql);
-        try { Session.Execute(s.Sql); }
-        catch { return; }
+        // An unparseable or failing statement raises (it used to be swallowed, leaving no table behind).
+        var parsed = SafeParseSql(s.Sql) ?? ThrowSqlParseError(s.Sql);
+        Session.Execute(s.Sql);
         // VFP opens a freshly CREATEd table in a work area; do the same so a follow-up USE/SELECT/field read works.
         if (parsed is CreateTableStatement cts) OpenCreatedTable(cts.Table);
     }

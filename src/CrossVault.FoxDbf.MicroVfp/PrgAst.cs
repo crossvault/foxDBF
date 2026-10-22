@@ -34,6 +34,9 @@ public sealed class PrgProgram
 internal abstract record PrgStatement
 {
     public int Line { get; init; }
+
+    /// <summary>The logical source line the statement was parsed from (an Exception object's LineContents).</summary>
+    public string? SourceText { get; init; }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -181,7 +184,12 @@ internal sealed record UseStmt(
     UseMode Mode,
     bool NoUpdate,
     bool IsClose,
-    IReadOnlyList<NameRef>? Index = null) : PrgStatement;
+    IReadOnlyList<NameRef>? Index = null) : PrgStatement
+{
+    /// <summary>The <c>ORDER … ASCENDING|DESCENDING</c> override: null = the tag's own direction,
+    /// true = DESCENDING, false = ASCENDING (same contract as <see cref="SetOrderStmt.Direction"/>).</summary>
+    public bool? OrderDescending { get; init; }
+}
 
 /// <summary>The work-area form <c>SELECT n | alias | 0 | (expr)</c> (NOT a SQL query).</summary>
 internal sealed record SelectAreaStmt(NameRef Area) : PrgStatement;
@@ -381,7 +389,11 @@ internal sealed record CopyToStmt(
     PrgExpr? For,
     string? Type,
     bool Memo,
-    NameRef? MemoField) : PrgStatement;
+    NameRef? MemoField) : PrgStatement
+{
+    /// <summary><c>COPY MEMO … TO cFile ADDITIVE</c> — append to the existing file instead of overwriting it.</summary>
+    public bool Additive { get; init; }
+}
 
 /// <summary><c>CREATE cTable FROM cStructureExtendedFile</c> — build a fresh EMPTY table from a
 /// structure-descriptor table (the inverse of <c>COPY STRUCTURE EXTENDED</c>).</summary>
@@ -512,6 +524,29 @@ internal sealed record MacroSubstStmt(MacroSubst Macro) : PrgStatement;
 /// <summary>A preprocessor directive line: <c>#INCLUDE</c> / <c>#DEFINE</c> / <c>#IF…</c>.</summary>
 internal sealed record DirectiveStmt(string Text) : PrgStatement;
 
-/// <summary>A well-formed but un-modelled command — captured (verb + raw args) so the WHOLE
-/// corpus parses without failing.</summary>
-internal sealed record UnknownCommand(string Verb, string Arguments) : PrgStatement;
+/// <summary>A command microVFP cannot execute — captured (verb + raw args) so the WHOLE corpus still
+/// PARSES; executing it raises a catchable VFP error (16 for an unknown verb, 36 when <see cref="KnownVerb"/>
+/// marks a verb microVFP models whose clause list it could not parse) unless the verb is on the documented
+/// headless no-op allow-list (see <c>VfpInterpreter.HeadlessNoOp</c>).</summary>
+internal sealed record UnknownCommand(string Verb, string Arguments) : PrgStatement
+{
+    /// <summary>True when the verb itself is one microVFP models but this clause form was not recognised.</summary>
+    public bool KnownVerb { get; init; }
+}
+
+// ── structured error handling ────────────────────────────────────────────────
+
+/// <summary>One <c>CATCH [TO VarName] [WHEN lExpression]</c> clause of a <see cref="TryStmt"/>.</summary>
+internal sealed record CatchClause(string? ToVar, PrgExpr? When, IReadOnlyList<PrgStatement> Body);
+
+/// <summary><c>TRY … [CATCH [TO v] [WHEN l] …]… [FINALLY …] ENDTRY</c> (VFP9 structured error handling).</summary>
+internal sealed record TryStmt(
+    IReadOnlyList<PrgStatement> Body,
+    IReadOnlyList<CatchClause> Catches,
+    IReadOnlyList<PrgStatement>? Finally) : PrgStatement;
+
+/// <summary><c>THROW [eUserExpression]</c>. With no expression inside a CATCH it re-raises the caught error.</summary>
+internal sealed record ThrowStmt(PrgExpr? Value) : PrgStatement;
+
+/// <summary><c>COUNT [Scope] [FOR lExpr] [WHILE lExpr] TO VarName</c>.</summary>
+internal sealed record CountStmt(string? Scope, PrgExpr? For, PrgExpr? While, string? Target) : PrgStatement;

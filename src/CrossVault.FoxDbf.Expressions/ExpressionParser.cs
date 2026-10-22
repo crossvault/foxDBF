@@ -78,6 +78,11 @@ internal sealed class ExpressionParser
             case TokenType.DateTimeLit:
                 Next();
                 return new LiteralNode(t.Value);
+            // A '$' in PREFIX position followed by a number is a currency literal ($0, $12.50); in infix
+            // position '$' stays the substring operator (handled by the binary loop, never reaches here).
+            case TokenType.Dollar when _pos + 1 < _tokens.Count && _tokens[_pos + 1].Type == TokenType.Number:
+                Next();
+                return new LiteralNode(VfpValue.Currency(Next().Value.AsNumber));
             case TokenType.True: Next(); return new LiteralNode(VfpValue.Logical(true));
             case TokenType.False: Next(); return new LiteralNode(VfpValue.Logical(false));
             case TokenType.NullLit: Next(); return new LiteralNode(VfpValue.Null);

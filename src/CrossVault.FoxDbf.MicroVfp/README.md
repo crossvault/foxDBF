@@ -24,7 +24,7 @@ the rest of this project (byte-compatible reads/writes, the same Rushmore-optimi
 - **Data access**: `USE`/`SELECT` work areas, `SEEK`/`GO`/`SKIP`, `LOCATE`/`CONTINUE` (full
   `FOR`/`WHILE` + scope, in the current index order, with per-area `CONTINUE` state),
   `REPLACE`/`DELETE`/`RECALL`/`INSERT`, `GATHER`/`SCATTER`, `APPEND FROM`/`COPY TO` (`.dbf`), `PACK`,
-  `SUM`/`TOTAL`, `BEGIN`/`END TRANSACTION`/`ROLLBACK` (copy-on-write), and an embedded VFP-SQL `SELECT`.
+  `SUM`/`TOTAL`/`COUNT`, `BEGIN`/`END TRANSACTION`/`ROLLBACK` (copy-on-write), and an embedded VFP-SQL `SELECT`.
 - **Low-level file I/O**: the `FOPEN`/`FCREATE`/`FREAD`/`FGETS`/`FPUTS`/`FWRITE`/`FSEEK`/`FEOF`/
   `FCLOSE`/`FFLUSH`/`FCHSIZE`/`FERROR` handle family, plus `FILETOSTR()`/`STRTOFILE()` and `ADIR()`.
 - **Indexes**: `INDEX ON … TAG` (structural `.cdx`), `… TAG … OF <cdx>` (non-structural),
@@ -35,7 +35,11 @@ the rest of this project (byte-compatible reads/writes, the same Rushmore-optimi
   `SET RELATION`/`SET SKIP` parent-child navigation (`RELATION()`/`TARGET()`).
 - **Referential integrity**: the DBC's `RULE`s and generated insert/update/delete RI triggers
   auto-fire on writes, cascading exactly as VFP9.
-- **Error handling**: `ON ERROR`, `AERROR()` (full 7-column result-array contract), `MESSAGE()`/`ERROR()`/`LINENO()`.
+- **Error handling**: `TRY … CATCH [TO oErr] [WHEN …] … FINALLY … ENDTRY` and `THROW` with VFP9 semantics,
+  `ON ERROR`, `AERROR()` (full 7-column result-array contract), `MESSAGE()`/`ERROR()`/`LINENO()`. A statement
+  microVFP cannot execute raises a catchable VFP error (16 unknown verb, 36 unparsed clause, 1 unknown `DO`
+  target, 10 unparseable expression) instead of being skipped; only a documented list of UI/console-only
+  commands is ignored headless.
 - A broad runtime function library: string/date/math built-ins (`TRANSFORM`, `PROPER`, `STREXTRACT`,
   `GETWORDNUM`, `SOUNDEX`, `STRCONV`, `TEXTMERGE`, …), array functions (`ACOPY`/`ADEL`/`AINS`/`ASORT`/
   `AELEMENT`/`AFIELDS`/…), and session/database state (`RECNO()`, `RECCOUNT()`, `ALIAS()`, `SELECT()`,

@@ -30,6 +30,7 @@ public sealed partial class VfpInterpreter
         if (a.Length == 0) return VfpValue.Character("U");
         var v = a[0];
         if (v.Type == VfpType.Null) return VfpValue.Character("X");
+        if (TryGetObject(v, out _)) return VfpValue.Character("O");   // CATCH TO oErr — the Exception object.
         string code = v.Type switch
         {
             VfpType.Character => "C",

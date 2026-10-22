@@ -211,6 +211,65 @@ public sealed partial class VfpInterpreter
         m.Found = forExpr is null || Truth(Eval(forExpr));
     }
 
+    /// <summary>
+    /// <c>COUNT [Scope] [FOR lExpr] [WHILE lExpr] TO VarName</c> — counts the records of the current area that
+    /// satisfy FOR inside the scope/WHILE window, in the CURRENT order, honouring SET DELETED / SET FILTER /
+    /// SET KEY through the same <see cref="Visible"/> gate LOCATE uses. Pointer afterwards (VFP9-verified):
+    /// ALL/REST ⇒ EOF; NEXT n ⇒ on the n-th visible record (or EOF when the table ran out first; NEXT 0
+    /// leaves it untouched); a failing WHILE ⇒ on that record; RECORD n ⇒ on record n, which is counted
+    /// even when SET DELETED ON would hide it. A WHILE without a scope means REST, as for LOCATE/SCAN.
+    /// </summary>
+    private void ExecCount(CountStmt c)
+    {
+        int area = Session.CurrentArea;
+        if (Session.AreaAt(area) is null)
+            throw new MicroVfpRuntimeException("No table is open in the current work area.", 52);
+        var m = Meta(area);
+        var (kind, count) = ResolveLocScope(c.Scope);
+        if (c.Scope is null && c.While is not null) kind = LocScope.Rest;
+
+        MaybeAutoCommitRow(area);                     // leaving the current row commits its pending edit (mode 2/3).
+        var wa = Session.AreaAt(area);                // MUST re-fetch: a commit may reopen the file areas.
+        if (wa is null) return;
+        var ord = ActiveOrder(area);
+
+        int n = 0;
+        if (kind == LocScope.Record)
+        {
+            if (count < 1 || count > wa.Table.RecordCount)
+                throw new MicroVfpRuntimeException("Record is out of range.", 5);
+            PositionPointer(m, ord, count);
+            if ((c.While is null || Truth(Eval(c.While))) && (c.For is null || Truth(Eval(c.For)))) n = 1;
+        }
+        else
+        {
+            var order = TraversalOrder(area, wa);
+            int startIdx = kind == LocScope.All ? 0 : CurrentIndex(order, m);
+            if (startIdx < 0) startIdx = order.Count;   // current at EOF/BOF ⇒ REST/NEXT window is empty.
+            int remaining = kind == LocScope.Next ? count : int.MaxValue;
+            bool stopped = remaining <= 0;              // NEXT 0 counts nothing and does not move.
+            for (int i = startIdx; !stopped && i < order.Count; i++)
+            {
+                int rec = order[i];
+                // REST/NEXT process the CURRENT record as-is (VFP9: GO <deleted rec>, COUNT NEXT 1 under SET
+                // DELETED ON counts it); only the records reached by skipping honour visibility.
+                if ((kind == LocScope.All || i != startIdx) && !Visible(wa, rec)) continue;
+                PositionPointer(m, ord, rec);
+                if (c.While is not null && !Truth(Eval(c.While))) { stopped = true; break; }
+                if (c.For is null || Truth(Eval(c.For))) n++;
+                if (--remaining == 0) stopped = true;
+            }
+            if (!stopped)
+            {
+                m.RecNo = EffCount(area, wa) + 1; m.Eof = true; m.Bof = false;
+                m.Cached = null; m.OldVals = null;
+                if (ord is not null) m.OrderPos = ord.Count;
+            }
+        }
+        RepositionChildren(area);
+        if (c.Target is not null) AssignTo(c.Target, VfpValue.Integer(n));
+    }
+
     /// <summary>Position the pointer on <paramref name="rec"/> for FOR/WHILE evaluation (re-basing the record
     /// cache + OLDVAL buffer + index position), the SAME state a GO would set — but WITHOUT the GO/SKIP side
     /// effects, which LOCATE fires ONCE for its whole scan.</summary>
