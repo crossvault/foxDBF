@@ -163,7 +163,7 @@ internal static partial class SqlTestSupport
         {
             if (ctx.Deleted && rec.IsDeleted) continue;
             var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var c in t.Columns) map[c.Name] = rec[c.Name];
+            foreach (var c in t.Columns) map[c.Name] = rec.GetExpressionValue(c.Name);   // VFP cursor width
             src.Rows.Add(map);
         }
         return src;

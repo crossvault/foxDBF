@@ -98,6 +98,19 @@ public static class FieldDecoder
     }
 
     /// <summary>
+    /// A character ('C') field at its full declared width, as VFP's expressions see it: leading and trailing blanks
+    /// kept, a trailing NUL padding (written by non-VFP tools) read as blanks. Same code-page / UTF-8 detection as
+    /// <see cref="Decode"/>.
+    /// </summary>
+    internal static string DecodeCharacterPadded(DbfColumn column, ReadOnlySpan<byte> raw, Encoding encoding, bool suppressUtf8Detection)
+    {
+        string s = DecodeCharacter(column, raw, encoding, suppressUtf8Detection);
+        int end = s.Length;
+        while (end > 0 && s[end - 1] == '\0') end--;
+        return end == s.Length ? s : string.Concat(s.AsSpan(0, end), new string(' ', s.Length - end));
+    }
+
+    /// <summary>
     /// Decode a character ('C') field's bytes to a string (§A7). Active detection:
     /// when the raw bytes are already valid UTF-8 (and the column is NOT a NOCPTRANS/
     /// binary column), pass them through 1:1 instead of transcoding through the table

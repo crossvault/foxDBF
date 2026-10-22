@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Linq;
 
 namespace CrossVault.FoxDbf.Expressions;
 
@@ -85,6 +86,11 @@ public sealed class GeneralCollation : IVfpCollation
         tails[..tc].CopyTo(key.AsSpan(hc));
         return key;
     }
+
+    /// <summary>The second letters of this collation's contractions (SPANISH: <c>h</c> of <c>ch</c>, <c>l</c> of
+    /// <c>ll</c>; none for GENERAL), lower case: appended to a value, they can merge its last letter into one head.</summary>
+    internal string ContractionTrailers
+        => new(_table.Contractions.Select(c => (char)c.Second).Distinct().ToArray());
 
     /// <summary>
     /// The head (primary) weights of <paramref name="s"/> alone — the leading part of <see cref="GetCollatedKey"/>

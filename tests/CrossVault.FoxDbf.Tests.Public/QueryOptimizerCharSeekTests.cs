@@ -51,7 +51,7 @@ internal static class CharSeekOracle
         public int RecNo { get; }
         public int RecCount { get; }
         public bool Deleted => _rec.IsDeleted;
-        public object? GetField(string name) => _rec[name];
+        public object? GetField(string name) => _rec.GetExpressionValue(name);
     }
 
     /// <summary>

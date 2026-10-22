@@ -1,0 +1,241 @@
+LEN=10 val=[ Á        ] lt=[Á        ]
+MACHINE EXACT OFF [A] = | scan: 5 8 | rush: 5 8 | sqlAnsiOff: 5 8 | sqlAnsiOn: 5 
+MACHINE EXACT OFF [A] == | scan: | rush: | sqlAnsiOff: 5 | sqlAnsiOn: 5 
+MACHINE EXACT OFF [A] < | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+MACHINE EXACT OFF [A] <= | scan: 1 2 4 5 7 8 9 10 12 | rush: 1 2 4 5 7 8 9 10 12 | sqlAnsiOff: 1 2 4 5 7 8 9 10 12 | sqlAnsiOn: 1 2 4 5 7 9 10 12 
+MACHINE EXACT OFF [A] > | scan: 3 6 11 | rush: 3 6 11 | sqlAnsiOff: 3 6 11 | sqlAnsiOn: 3 6 8 11 
+MACHINE EXACT OFF [A] >= | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+MACHINE EXACT OFF [ A] = | scan: 7 10 | rush: 7 10 | sqlAnsiOff: 7 10 | sqlAnsiOn: 7 
+MACHINE EXACT OFF [ A] == | scan: | rush: | sqlAnsiOff: 7 | sqlAnsiOn: 7 
+MACHINE EXACT OFF [ A] < | scan: 1 9 | rush: 1 9 | sqlAnsiOff: 1 9 | sqlAnsiOn: 1 9 
+MACHINE EXACT OFF [ A] <= | scan: 1 7 9 10 | rush: 1 7 9 10 | sqlAnsiOff: 1 7 9 10 | sqlAnsiOn: 1 7 9 
+MACHINE EXACT OFF [ A] > | scan: 2 3 4 5 6 8 11 12 | rush: 2 3 4 5 6 8 11 12 | sqlAnsiOff: 2 3 4 5 6 8 11 12 | sqlAnsiOn: 2 3 4 5 6 8 10 11 12 
+MACHINE EXACT OFF [ A] >= | scan: 2 3 4 5 6 7 8 10 11 12 | rush: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 2 3 4 5 6 7 8 10 11 12 
+MACHINE EXACT OFF [x] = | scan: 3 | rush: 3 | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+MACHINE EXACT OFF [x] == | scan: | rush: | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+MACHINE EXACT OFF [x] < | scan: 1 2 4 5 7 8 9 10 11 12 | rush: 1 2 4 5 7 8 9 10 11 12 | sqlAnsiOff: 1 2 4 5 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 7 8 9 10 11 12 
+MACHINE EXACT OFF [x] <= | scan: 1 2 3 4 5 7 8 9 10 11 12 | rush: 1 2 3 4 5 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 7 8 9 10 11 12 
+MACHINE EXACT OFF [x] > | scan: 6 | rush: 6 | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+MACHINE EXACT OFF [x] >= | scan: 3 6 | rush: 3 6 | sqlAnsiOff: 3 6 | sqlAnsiOn: 3 6 
+MACHINE EXACT OFF [ x] = | scan: 2 | rush: 2 | sqlAnsiOff: 2 | sqlAnsiOn: 2 
+MACHINE EXACT OFF [ x] == | scan: | rush: | sqlAnsiOff: 2 | sqlAnsiOn: 2 
+MACHINE EXACT OFF [ x] < | scan: 1 7 9 10 12 | rush: 1 7 9 10 12 | sqlAnsiOff: 1 7 9 10 12 | sqlAnsiOn: 1 7 9 10 12 
+MACHINE EXACT OFF [ x] <= | scan: 1 2 7 9 10 12 | rush: 1 2 7 9 10 12 | sqlAnsiOff: 1 2 7 9 10 12 | sqlAnsiOn: 1 2 7 9 10 12 
+MACHINE EXACT OFF [ x] > | scan: 3 4 5 6 8 11 | rush: 3 4 5 6 8 11 | sqlAnsiOff: 3 4 5 6 8 11 | sqlAnsiOn: 3 4 5 6 8 11 
+MACHINE EXACT OFF [ x] >= | scan: 2 3 4 5 6 8 11 | rush: 2 3 4 5 6 8 11 | sqlAnsiOff: 2 3 4 5 6 8 11 | sqlAnsiOn: 2 3 4 5 6 8 11 
+MACHINE EXACT OFF [  x] = | scan: 1 | rush: 1 | sqlAnsiOff: 1 | sqlAnsiOn: 1 
+MACHINE EXACT OFF [  x] == | scan: | rush: | sqlAnsiOff: 1 | sqlAnsiOn: 1 
+MACHINE EXACT OFF [  x] < | scan: 9 | rush: 9 | sqlAnsiOff: 9 | sqlAnsiOn: 9 
+MACHINE EXACT OFF [  x] <= | scan: 1 9 | rush: 1 9 | sqlAnsiOff: 1 9 | sqlAnsiOn: 1 9 
+MACHINE EXACT OFF [  x] > | scan: 2 3 4 5 6 7 8 10 11 12 | rush: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 2 3 4 5 6 7 8 10 11 12 
+MACHINE EXACT OFF [  x] >= | scan: 1 2 3 4 5 6 7 8 10 11 12 | rush: 1 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 10 11 12 
+MACHINE EXACT OFF [Á] = | scan: 6 | rush: 6 | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+MACHINE EXACT OFF [Á] == | scan: | rush: | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+MACHINE EXACT OFF [Á] < | scan: 1 2 3 4 5 7 8 9 10 11 12 | rush: 1 2 3 4 5 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 7 8 9 10 11 12 
+MACHINE EXACT OFF [Á] <= | scan: 1 2 3 4 5 6 7 8 9 10 11 12 | rush: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 9 10 11 12 
+MACHINE EXACT OFF [Á] > | scan: | rush: | sqlAnsiOff: | sqlAnsiOn: 
+MACHINE EXACT OFF [Á] >= | scan: 6 | rush: 6 | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+MACHINE EXACT OFF [ Á] = | scan: 4 | rush: 4 | sqlAnsiOff: 4 | sqlAnsiOn: 4 
+MACHINE EXACT OFF [ Á] == | scan: | rush: | sqlAnsiOff: 4 | sqlAnsiOn: 4 
+MACHINE EXACT OFF [ Á] < | scan: 1 2 7 9 10 12 | rush: 1 2 7 9 10 12 | sqlAnsiOff: 1 2 7 9 10 12 | sqlAnsiOn: 1 2 7 9 10 12 
+MACHINE EXACT OFF [ Á] <= | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+MACHINE EXACT OFF [ Á] > | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+MACHINE EXACT OFF [ Á] >= | scan: 3 4 5 6 8 11 | rush: 3 4 5 6 8 11 | sqlAnsiOff: 3 4 5 6 8 11 | sqlAnsiOn: 3 4 5 6 8 11 
+MACHINE EXACT OFF [ ] = | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 9 
+MACHINE EXACT OFF [ ] == | scan: | rush: | sqlAnsiOff: 9 | sqlAnsiOn: 9 
+MACHINE EXACT OFF [ ] < | scan: | rush: | sqlAnsiOff: | sqlAnsiOn: 
+MACHINE EXACT OFF [ ] <= | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 9 
+MACHINE EXACT OFF [ ] > | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 1 2 3 4 5 6 7 8 10 11 12 
+MACHINE EXACT OFF [ ] >= | scan: 1 2 3 4 5 6 7 8 9 10 11 12 | rush: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 9 10 11 12 
+MACHINE EXACT OFF [Ab] = | scan: 8 | rush: 8 | sqlAnsiOff: 8 | sqlAnsiOn: 8 
+MACHINE EXACT OFF [Ab] == | scan: | rush: | sqlAnsiOff: 8 | sqlAnsiOn: 8 
+MACHINE EXACT OFF [Ab] < | scan: 1 2 4 5 7 9 10 12 | rush: 1 2 4 5 7 9 10 12 | sqlAnsiOff: 1 2 4 5 7 9 10 12 | sqlAnsiOn: 1 2 4 5 7 9 10 12 
+MACHINE EXACT OFF [Ab] <= | scan: 1 2 4 5 7 8 9 10 12 | rush: 1 2 4 5 7 8 9 10 12 | sqlAnsiOff: 1 2 4 5 7 8 9 10 12 | sqlAnsiOn: 1 2 4 5 7 8 9 10 12 
+MACHINE EXACT OFF [Ab] > | scan: 3 6 11 | rush: 3 6 11 | sqlAnsiOff: 3 6 11 | sqlAnsiOn: 3 6 11 
+MACHINE EXACT OFF [Ab] >= | scan: 3 6 8 11 | rush: 3 6 8 11 | sqlAnsiOff: 3 6 8 11 | sqlAnsiOn: 3 6 8 11 
+MACHINE EXACT OFF [A         ] = | scan: 5 | rush: 5 | sqlAnsiOff: 5 | sqlAnsiOn: 5 
+MACHINE EXACT OFF [A         ] == | scan: 5 | rush: 5 | sqlAnsiOff: 5 | sqlAnsiOn: 5 
+MACHINE EXACT OFF [A         ] < | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+MACHINE EXACT OFF [A         ] <= | scan: 1 2 4 5 7 9 10 12 | rush: 1 2 4 5 7 9 10 12 | sqlAnsiOff: 1 2 4 5 7 9 10 12 | sqlAnsiOn: 1 2 4 5 7 9 10 12 
+MACHINE EXACT OFF [A         ] > | scan: 3 6 8 11 | rush: 3 6 8 11 | sqlAnsiOff: 3 6 8 11 | sqlAnsiOn: 3 6 8 11 
+MACHINE EXACT OFF [A         ] >= | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+MACHINE EXACT ON [A] = | scan: 5 | rush: 5 | sqlAnsiOff: 5 8 | sqlAnsiOn: 5 
+MACHINE EXACT ON [A] == | scan: | rush: | sqlAnsiOff: 5 | sqlAnsiOn: 5 
+MACHINE EXACT ON [A] < | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+MACHINE EXACT ON [A] <= | scan: 1 2 4 5 7 9 10 12 | rush: 1 2 4 5 7 9 10 12 | sqlAnsiOff: 1 2 4 5 7 8 9 10 12 | sqlAnsiOn: 1 2 4 5 7 9 10 12 
+MACHINE EXACT ON [A] > | scan: 3 6 8 11 | rush: 3 6 8 11 | sqlAnsiOff: 3 6 11 | sqlAnsiOn: 3 6 8 11 
+MACHINE EXACT ON [A] >= | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+MACHINE EXACT ON [ A] = | scan: 7 | rush: 7 | sqlAnsiOff: 7 10 | sqlAnsiOn: 7 
+MACHINE EXACT ON [ A] == | scan: | rush: | sqlAnsiOff: 7 | sqlAnsiOn: 7 
+MACHINE EXACT ON [ A] < | scan: 1 9 | rush: 1 9 | sqlAnsiOff: 1 9 | sqlAnsiOn: 1 9 
+MACHINE EXACT ON [ A] <= | scan: 1 7 9 | rush: 1 7 9 | sqlAnsiOff: 1 7 9 10 | sqlAnsiOn: 1 7 9 
+MACHINE EXACT ON [ A] > | scan: 2 3 4 5 6 8 10 11 12 | rush: 2 3 4 5 6 8 10 11 12 | sqlAnsiOff: 2 3 4 5 6 8 11 12 | sqlAnsiOn: 2 3 4 5 6 8 10 11 12 
+MACHINE EXACT ON [ A] >= | scan: 2 3 4 5 6 7 8 10 11 12 | rush: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 2 3 4 5 6 7 8 10 11 12 
+MACHINE EXACT ON [x] = | scan: 3 | rush: 3 | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+MACHINE EXACT ON [x] == | scan: | rush: | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+MACHINE EXACT ON [x] < | scan: 1 2 4 5 7 8 9 10 11 12 | rush: 1 2 4 5 7 8 9 10 11 12 | sqlAnsiOff: 1 2 4 5 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 7 8 9 10 11 12 
+MACHINE EXACT ON [x] <= | scan: 1 2 3 4 5 7 8 9 10 11 12 | rush: 1 2 3 4 5 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 7 8 9 10 11 12 
+MACHINE EXACT ON [x] > | scan: 6 | rush: 6 | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+MACHINE EXACT ON [x] >= | scan: 3 6 | rush: 3 6 | sqlAnsiOff: 3 6 | sqlAnsiOn: 3 6 
+MACHINE EXACT ON [ x] = | scan: 2 | rush: 2 | sqlAnsiOff: 2 | sqlAnsiOn: 2 
+MACHINE EXACT ON [ x] == | scan: | rush: | sqlAnsiOff: 2 | sqlAnsiOn: 2 
+MACHINE EXACT ON [ x] < | scan: 1 7 9 10 12 | rush: 1 7 9 10 12 | sqlAnsiOff: 1 7 9 10 12 | sqlAnsiOn: 1 7 9 10 12 
+MACHINE EXACT ON [ x] <= | scan: 1 2 7 9 10 12 | rush: 1 2 7 9 10 12 | sqlAnsiOff: 1 2 7 9 10 12 | sqlAnsiOn: 1 2 7 9 10 12 
+MACHINE EXACT ON [ x] > | scan: 3 4 5 6 8 11 | rush: 3 4 5 6 8 11 | sqlAnsiOff: 3 4 5 6 8 11 | sqlAnsiOn: 3 4 5 6 8 11 
+MACHINE EXACT ON [ x] >= | scan: 2 3 4 5 6 8 11 | rush: 2 3 4 5 6 8 11 | sqlAnsiOff: 2 3 4 5 6 8 11 | sqlAnsiOn: 2 3 4 5 6 8 11 
+MACHINE EXACT ON [  x] = | scan: 1 | rush: 1 | sqlAnsiOff: 1 | sqlAnsiOn: 1 
+MACHINE EXACT ON [  x] == | scan: | rush: | sqlAnsiOff: 1 | sqlAnsiOn: 1 
+MACHINE EXACT ON [  x] < | scan: 9 | rush: 9 | sqlAnsiOff: 9 | sqlAnsiOn: 9 
+MACHINE EXACT ON [  x] <= | scan: 1 9 | rush: 1 9 | sqlAnsiOff: 1 9 | sqlAnsiOn: 1 9 
+MACHINE EXACT ON [  x] > | scan: 2 3 4 5 6 7 8 10 11 12 | rush: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 2 3 4 5 6 7 8 10 11 12 
+MACHINE EXACT ON [  x] >= | scan: 1 2 3 4 5 6 7 8 10 11 12 | rush: 1 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 10 11 12 
+MACHINE EXACT ON [Á] = | scan: 6 | rush: 6 | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+MACHINE EXACT ON [Á] == | scan: | rush: | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+MACHINE EXACT ON [Á] < | scan: 1 2 3 4 5 7 8 9 10 11 12 | rush: 1 2 3 4 5 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 7 8 9 10 11 12 
+MACHINE EXACT ON [Á] <= | scan: 1 2 3 4 5 6 7 8 9 10 11 12 | rush: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 9 10 11 12 
+MACHINE EXACT ON [Á] > | scan: | rush: | sqlAnsiOff: | sqlAnsiOn: 
+MACHINE EXACT ON [Á] >= | scan: 6 | rush: 6 | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+MACHINE EXACT ON [ Á] = | scan: 4 | rush: 4 | sqlAnsiOff: 4 | sqlAnsiOn: 4 
+MACHINE EXACT ON [ Á] == | scan: | rush: | sqlAnsiOff: 4 | sqlAnsiOn: 4 
+MACHINE EXACT ON [ Á] < | scan: 1 2 7 9 10 12 | rush: 1 2 7 9 10 12 | sqlAnsiOff: 1 2 7 9 10 12 | sqlAnsiOn: 1 2 7 9 10 12 
+MACHINE EXACT ON [ Á] <= | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+MACHINE EXACT ON [ Á] > | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+MACHINE EXACT ON [ Á] >= | scan: 3 4 5 6 8 11 | rush: 3 4 5 6 8 11 | sqlAnsiOff: 3 4 5 6 8 11 | sqlAnsiOn: 3 4 5 6 8 11 
+MACHINE EXACT ON [ ] = | scan: 9 | rush: 9 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 9 
+MACHINE EXACT ON [ ] == | scan: | rush: | sqlAnsiOff: 9 | sqlAnsiOn: 9 
+MACHINE EXACT ON [ ] < | scan: | rush: | sqlAnsiOff: | sqlAnsiOn: 
+MACHINE EXACT ON [ ] <= | scan: 9 | rush: 9 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 9 
+MACHINE EXACT ON [ ] > | scan: 1 2 3 4 5 6 7 8 10 11 12 | rush: 1 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 1 2 3 4 5 6 7 8 10 11 12 
+MACHINE EXACT ON [ ] >= | scan: 1 2 3 4 5 6 7 8 9 10 11 12 | rush: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 9 10 11 12 
+MACHINE EXACT ON [Ab] = | scan: 8 | rush: 8 | sqlAnsiOff: 8 | sqlAnsiOn: 8 
+MACHINE EXACT ON [Ab] == | scan: | rush: | sqlAnsiOff: 8 | sqlAnsiOn: 8 
+MACHINE EXACT ON [Ab] < | scan: 1 2 4 5 7 9 10 12 | rush: 1 2 4 5 7 9 10 12 | sqlAnsiOff: 1 2 4 5 7 9 10 12 | sqlAnsiOn: 1 2 4 5 7 9 10 12 
+MACHINE EXACT ON [Ab] <= | scan: 1 2 4 5 7 8 9 10 12 | rush: 1 2 4 5 7 8 9 10 12 | sqlAnsiOff: 1 2 4 5 7 8 9 10 12 | sqlAnsiOn: 1 2 4 5 7 8 9 10 12 
+MACHINE EXACT ON [Ab] > | scan: 3 6 11 | rush: 3 6 11 | sqlAnsiOff: 3 6 11 | sqlAnsiOn: 3 6 11 
+MACHINE EXACT ON [Ab] >= | scan: 3 6 8 11 | rush: 3 6 8 11 | sqlAnsiOff: 3 6 8 11 | sqlAnsiOn: 3 6 8 11 
+MACHINE EXACT ON [A         ] = | scan: 5 | rush: 5 | sqlAnsiOff: 5 | sqlAnsiOn: 5 
+MACHINE EXACT ON [A         ] == | scan: 5 | rush: 5 | sqlAnsiOff: 5 | sqlAnsiOn: 5 
+MACHINE EXACT ON [A         ] < | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+MACHINE EXACT ON [A         ] <= | scan: 1 2 4 5 7 9 10 12 | rush: 1 2 4 5 7 9 10 12 | sqlAnsiOff: 1 2 4 5 7 9 10 12 | sqlAnsiOn: 1 2 4 5 7 9 10 12 
+MACHINE EXACT ON [A         ] > | scan: 3 6 8 11 | rush: 3 6 8 11 | sqlAnsiOff: 3 6 8 11 | sqlAnsiOn: 3 6 8 11 
+MACHINE EXACT ON [A         ] >= | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+GENERAL EXACT OFF [A] = | scan: 5 8 11 | rush: 5 8 11 | sqlAnsiOff: 5 8 11 | sqlAnsiOn: 5 11 
+GENERAL EXACT OFF [A] == | scan: | rush: | sqlAnsiOff: 5 11 | sqlAnsiOn: 5 11 
+GENERAL EXACT OFF [A] < | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+GENERAL EXACT OFF [A] <= | scan: 1 2 4 5 7 8 9 10 11 12 | rush: 1 2 4 5 7 8 9 10 11 12 | sqlAnsiOff: 1 2 4 5 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 7 9 10 11 12 
+GENERAL EXACT OFF [A] > | scan: 3 6 | rush: 3 6 | sqlAnsiOff: 3 6 | sqlAnsiOn: 3 6 8 
+GENERAL EXACT OFF [A] >= | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+GENERAL EXACT OFF [ A] = | scan: 7 10 12 | rush: 7 10 12 | sqlAnsiOff: 7 10 12 | sqlAnsiOn: 7 12 
+GENERAL EXACT OFF [ A] == | scan: | rush: | sqlAnsiOff: 7 12 | sqlAnsiOn: 7 12 
+GENERAL EXACT OFF [ A] < | scan: 1 9 | rush: 1 9 | sqlAnsiOff: 1 9 | sqlAnsiOn: 1 9 
+GENERAL EXACT OFF [ A] <= | scan: 1 7 9 10 12 | rush: 1 7 9 10 12 | sqlAnsiOff: 1 7 9 10 12 | sqlAnsiOn: 1 7 9 12 
+GENERAL EXACT OFF [ A] > | scan: 2 3 4 5 6 8 11 | rush: 2 3 4 5 6 8 11 | sqlAnsiOff: 2 3 4 5 6 8 11 | sqlAnsiOn: 2 3 4 5 6 8 10 11 
+GENERAL EXACT OFF [ A] >= | scan: 2 3 4 5 6 7 8 10 11 12 | rush: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 2 3 4 5 6 7 8 10 11 12 
+GENERAL EXACT OFF [x] = | scan: 3 | rush: 3 | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+GENERAL EXACT OFF [x] == | scan: | rush: | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+GENERAL EXACT OFF [x] < | scan: 1 2 4 5 6 7 8 9 10 11 12 | rush: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 6 7 8 9 10 11 12 
+GENERAL EXACT OFF [x] <= | scan: 1 2 3 4 5 6 7 8 9 10 11 12 | rush: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 9 10 11 12 
+GENERAL EXACT OFF [x] > | scan: | rush: | sqlAnsiOff: | sqlAnsiOn: 
+GENERAL EXACT OFF [x] >= | scan: 3 | rush: 3 | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+GENERAL EXACT OFF [ x] = | scan: 2 | rush: 2 | sqlAnsiOff: 2 | sqlAnsiOn: 2 
+GENERAL EXACT OFF [ x] == | scan: | rush: | sqlAnsiOff: 2 | sqlAnsiOn: 2 
+GENERAL EXACT OFF [ x] < | scan: 1 4 7 9 10 12 | rush: 1 4 7 9 10 12 | sqlAnsiOff: 1 4 7 9 10 12 | sqlAnsiOn: 1 4 7 9 10 12 
+GENERAL EXACT OFF [ x] <= | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+GENERAL EXACT OFF [ x] > | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+GENERAL EXACT OFF [ x] >= | scan: 2 3 5 6 8 11 | rush: 2 3 5 6 8 11 | sqlAnsiOff: 2 3 5 6 8 11 | sqlAnsiOn: 2 3 5 6 8 11 
+GENERAL EXACT OFF [  x] = | scan: 1 | rush: 1 | sqlAnsiOff: 1 | sqlAnsiOn: 1 
+GENERAL EXACT OFF [  x] == | scan: | rush: | sqlAnsiOff: 1 | sqlAnsiOn: 1 
+GENERAL EXACT OFF [  x] < | scan: 9 | rush: 9 | sqlAnsiOff: 9 | sqlAnsiOn: 9 
+GENERAL EXACT OFF [  x] <= | scan: 1 9 | rush: 1 9 | sqlAnsiOff: 1 9 | sqlAnsiOn: 1 9 
+GENERAL EXACT OFF [  x] > | scan: 2 3 4 5 6 7 8 10 11 12 | rush: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 2 3 4 5 6 7 8 10 11 12 
+GENERAL EXACT OFF [  x] >= | scan: 1 2 3 4 5 6 7 8 10 11 12 | rush: 1 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 10 11 12 
+GENERAL EXACT OFF [Á] = | scan: 6 | rush: 6 | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+GENERAL EXACT OFF [Á] == | scan: | rush: | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+GENERAL EXACT OFF [Á] < | scan: 1 2 4 5 7 8 9 10 11 12 | rush: 1 2 4 5 7 8 9 10 11 12 | sqlAnsiOff: 1 2 4 5 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 7 9 10 11 12 
+GENERAL EXACT OFF [Á] <= | scan: 1 2 4 5 6 7 8 9 10 11 12 | rush: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 6 7 9 10 11 12 
+GENERAL EXACT OFF [Á] > | scan: 3 | rush: 3 | sqlAnsiOff: 3 | sqlAnsiOn: 3 8 
+GENERAL EXACT OFF [Á] >= | scan: 3 6 | rush: 3 6 | sqlAnsiOff: 3 6 | sqlAnsiOn: 3 6 8 
+GENERAL EXACT OFF [ Á] = | scan: 4 | rush: 4 | sqlAnsiOff: 4 | sqlAnsiOn: 4 
+GENERAL EXACT OFF [ Á] == | scan: | rush: | sqlAnsiOff: 4 | sqlAnsiOn: 4 
+GENERAL EXACT OFF [ Á] < | scan: 1 7 9 10 12 | rush: 1 7 9 10 12 | sqlAnsiOff: 1 7 9 10 12 | sqlAnsiOn: 1 7 9 12 
+GENERAL EXACT OFF [ Á] <= | scan: 1 4 7 9 10 12 | rush: 1 4 7 9 10 12 | sqlAnsiOff: 1 4 7 9 10 12 | sqlAnsiOn: 1 4 7 9 12 
+GENERAL EXACT OFF [ Á] > | scan: 2 3 5 6 8 11 | rush: 2 3 5 6 8 11 | sqlAnsiOff: 2 3 5 6 8 11 | sqlAnsiOn: 2 3 5 6 8 10 11 
+GENERAL EXACT OFF [ Á] >= | scan: 2 3 4 5 6 8 11 | rush: 2 3 4 5 6 8 11 | sqlAnsiOff: 2 3 4 5 6 8 11 | sqlAnsiOn: 2 3 4 5 6 8 10 11 
+GENERAL EXACT OFF [ ] = | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 9 
+GENERAL EXACT OFF [ ] == | scan: | rush: | sqlAnsiOff: 9 | sqlAnsiOn: 9 
+GENERAL EXACT OFF [ ] < | scan: | rush: | sqlAnsiOff: | sqlAnsiOn: 
+GENERAL EXACT OFF [ ] <= | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 9 
+GENERAL EXACT OFF [ ] > | scan: 3 5 6 8 11 | rush: | sqlAnsiOff: | sqlAnsiOn: 1 2 3 4 5 6 7 8 10 11 12 
+GENERAL EXACT OFF [ ] >= | scan: 1 2 3 4 5 6 7 8 9 10 11 12 | rush: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 9 10 11 12 
+GENERAL EXACT OFF [Ab] = | scan: 8 | rush: 8 | sqlAnsiOff: 8 | sqlAnsiOn: 8 
+GENERAL EXACT OFF [Ab] == | scan: | rush: | sqlAnsiOff: 8 | sqlAnsiOn: 8 
+GENERAL EXACT OFF [Ab] < | scan: 1 2 4 5 6 7 9 10 11 12 | rush: 1 2 4 5 6 7 9 10 11 12 | sqlAnsiOff: 1 2 4 5 6 7 9 10 11 12 | sqlAnsiOn: 1 2 4 5 6 7 9 10 11 12 
+GENERAL EXACT OFF [Ab] <= | scan: 1 2 4 5 6 7 8 9 10 11 12 | rush: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 6 7 8 9 10 11 12 
+GENERAL EXACT OFF [Ab] > | scan: 3 | rush: 3 | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+GENERAL EXACT OFF [Ab] >= | scan: 3 8 | rush: 3 8 | sqlAnsiOff: 3 8 | sqlAnsiOn: 3 8 
+GENERAL EXACT OFF [A         ] = | scan: 5 11 | rush: 5 11 | sqlAnsiOff: 5 11 | sqlAnsiOn: 5 11 
+GENERAL EXACT OFF [A         ] == | scan: 5 | rush: 5 | sqlAnsiOff: 5 11 | sqlAnsiOn: 5 11 
+GENERAL EXACT OFF [A         ] < | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+GENERAL EXACT OFF [A         ] <= | scan: 1 2 4 5 7 9 10 11 12 | rush: 1 2 4 5 7 9 10 11 12 | sqlAnsiOff: 1 2 4 5 7 9 10 11 12 | sqlAnsiOn: 1 2 4 5 7 9 10 11 12 
+GENERAL EXACT OFF [A         ] > | scan: 3 6 8 | rush: 3 6 8 | sqlAnsiOff: 3 6 8 | sqlAnsiOn: 3 6 8 
+GENERAL EXACT OFF [A         ] >= | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+GENERAL EXACT ON [A] = | scan: 5 11 | rush: 5 11 | sqlAnsiOff: 5 8 11 | sqlAnsiOn: 5 11 
+GENERAL EXACT ON [A] == | scan: | rush: | sqlAnsiOff: 5 11 | sqlAnsiOn: 5 11 
+GENERAL EXACT ON [A] < | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+GENERAL EXACT ON [A] <= | scan: 1 2 4 5 7 9 10 11 12 | rush: 1 2 4 5 7 9 10 11 12 | sqlAnsiOff: 1 2 4 5 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 7 9 10 11 12 
+GENERAL EXACT ON [A] > | scan: 3 6 8 | rush: 3 6 8 | sqlAnsiOff: 3 6 | sqlAnsiOn: 3 6 8 
+GENERAL EXACT ON [A] >= | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+GENERAL EXACT ON [ A] = | scan: 7 12 | rush: 7 12 | sqlAnsiOff: 7 10 12 | sqlAnsiOn: 7 12 
+GENERAL EXACT ON [ A] == | scan: | rush: | sqlAnsiOff: 7 12 | sqlAnsiOn: 7 12 
+GENERAL EXACT ON [ A] < | scan: 1 9 | rush: 1 9 | sqlAnsiOff: 1 9 | sqlAnsiOn: 1 9 
+GENERAL EXACT ON [ A] <= | scan: 1 7 9 12 | rush: 1 7 9 12 | sqlAnsiOff: 1 7 9 10 12 | sqlAnsiOn: 1 7 9 12 
+GENERAL EXACT ON [ A] > | scan: 2 3 4 5 6 8 10 11 | rush: 2 3 4 5 6 8 10 11 | sqlAnsiOff: 2 3 4 5 6 8 11 | sqlAnsiOn: 2 3 4 5 6 8 10 11 
+GENERAL EXACT ON [ A] >= | scan: 2 3 4 5 6 7 8 10 11 12 | rush: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 2 3 4 5 6 7 8 10 11 12 
+GENERAL EXACT ON [x] = | scan: 3 | rush: 3 | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+GENERAL EXACT ON [x] == | scan: | rush: | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+GENERAL EXACT ON [x] < | scan: 1 2 4 5 6 7 8 9 10 11 12 | rush: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 6 7 8 9 10 11 12 
+GENERAL EXACT ON [x] <= | scan: 1 2 3 4 5 6 7 8 9 10 11 12 | rush: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 9 10 11 12 
+GENERAL EXACT ON [x] > | scan: | rush: | sqlAnsiOff: | sqlAnsiOn: 
+GENERAL EXACT ON [x] >= | scan: 3 | rush: 3 | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+GENERAL EXACT ON [ x] = | scan: 2 | rush: 2 | sqlAnsiOff: 2 | sqlAnsiOn: 2 
+GENERAL EXACT ON [ x] == | scan: | rush: | sqlAnsiOff: 2 | sqlAnsiOn: 2 
+GENERAL EXACT ON [ x] < | scan: 1 4 7 9 10 12 | rush: 1 4 7 9 10 12 | sqlAnsiOff: 1 4 7 9 10 12 | sqlAnsiOn: 1 4 7 9 10 12 
+GENERAL EXACT ON [ x] <= | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+GENERAL EXACT ON [ x] > | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 
+GENERAL EXACT ON [ x] >= | scan: 2 3 5 6 8 11 | rush: 2 3 5 6 8 11 | sqlAnsiOff: 2 3 5 6 8 11 | sqlAnsiOn: 2 3 5 6 8 11 
+GENERAL EXACT ON [  x] = | scan: 1 | rush: 1 | sqlAnsiOff: 1 | sqlAnsiOn: 1 
+GENERAL EXACT ON [  x] == | scan: | rush: | sqlAnsiOff: 1 | sqlAnsiOn: 1 
+GENERAL EXACT ON [  x] < | scan: 9 | rush: 9 | sqlAnsiOff: 9 | sqlAnsiOn: 9 
+GENERAL EXACT ON [  x] <= | scan: 1 9 | rush: 1 9 | sqlAnsiOff: 1 9 | sqlAnsiOn: 1 9 
+GENERAL EXACT ON [  x] > | scan: 2 3 4 5 6 7 8 10 11 12 | rush: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 2 3 4 5 6 7 8 10 11 12 
+GENERAL EXACT ON [  x] >= | scan: 1 2 3 4 5 6 7 8 10 11 12 | rush: 1 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 10 11 12 
+GENERAL EXACT ON [Á] = | scan: 6 | rush: 6 | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+GENERAL EXACT ON [Á] == | scan: | rush: | sqlAnsiOff: 6 | sqlAnsiOn: 6 
+GENERAL EXACT ON [Á] < | scan: 1 2 4 5 7 9 10 11 12 | rush: 1 2 4 5 7 9 10 11 12 | sqlAnsiOff: 1 2 4 5 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 7 9 10 11 12 
+GENERAL EXACT ON [Á] <= | scan: 1 2 4 5 6 7 9 10 11 12 | rush: 1 2 4 5 6 7 9 10 11 12 | sqlAnsiOff: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 6 7 9 10 11 12 
+GENERAL EXACT ON [Á] > | scan: 3 8 | rush: 3 8 | sqlAnsiOff: 3 | sqlAnsiOn: 3 8 
+GENERAL EXACT ON [Á] >= | scan: 3 6 8 | rush: 3 6 8 | sqlAnsiOff: 3 6 | sqlAnsiOn: 3 6 8 
+GENERAL EXACT ON [ Á] = | scan: 4 | rush: 4 | sqlAnsiOff: 4 | sqlAnsiOn: 4 
+GENERAL EXACT ON [ Á] == | scan: | rush: | sqlAnsiOff: 4 | sqlAnsiOn: 4 
+GENERAL EXACT ON [ Á] < | scan: 1 7 9 12 | rush: 1 7 9 12 | sqlAnsiOff: 1 7 9 10 12 | sqlAnsiOn: 1 7 9 12 
+GENERAL EXACT ON [ Á] <= | scan: 1 4 7 9 12 | rush: 1 4 7 9 12 | sqlAnsiOff: 1 4 7 9 10 12 | sqlAnsiOn: 1 4 7 9 12 
+GENERAL EXACT ON [ Á] > | scan: 2 3 5 6 8 10 11 | rush: 2 3 5 6 8 10 11 | sqlAnsiOff: 2 3 5 6 8 11 | sqlAnsiOn: 2 3 5 6 8 10 11 
+GENERAL EXACT ON [ Á] >= | scan: 2 3 4 5 6 8 10 11 | rush: 2 3 4 5 6 8 10 11 | sqlAnsiOff: 2 3 4 5 6 8 11 | sqlAnsiOn: 2 3 4 5 6 8 10 11 
+GENERAL EXACT ON [ ] = | scan: 9 | rush: 9 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 9 
+GENERAL EXACT ON [ ] == | scan: | rush: | sqlAnsiOff: 9 | sqlAnsiOn: 9 
+GENERAL EXACT ON [ ] < | scan: | rush: | sqlAnsiOff: | sqlAnsiOn: 
+GENERAL EXACT ON [ ] <= | scan: 9 | rush: 9 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 9 
+GENERAL EXACT ON [ ] > | scan: 1 2 3 4 5 6 7 8 10 11 12 | rush: 1 2 3 4 5 6 7 8 10 11 12 | sqlAnsiOff: | sqlAnsiOn: 1 2 3 4 5 6 7 8 10 11 12 
+GENERAL EXACT ON [ ] >= | scan: 1 2 3 4 5 6 7 8 9 10 11 12 | rush: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 3 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 3 4 5 6 7 8 9 10 11 12 
+GENERAL EXACT ON [Ab] = | scan: 8 | rush: 8 | sqlAnsiOff: 8 | sqlAnsiOn: 8 
+GENERAL EXACT ON [Ab] == | scan: | rush: | sqlAnsiOff: 8 | sqlAnsiOn: 8 
+GENERAL EXACT ON [Ab] < | scan: 1 2 4 5 6 7 9 10 11 12 | rush: 1 2 4 5 6 7 9 10 11 12 | sqlAnsiOff: 1 2 4 5 6 7 9 10 11 12 | sqlAnsiOn: 1 2 4 5 6 7 9 10 11 12 
+GENERAL EXACT ON [Ab] <= | scan: 1 2 4 5 6 7 8 9 10 11 12 | rush: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOff: 1 2 4 5 6 7 8 9 10 11 12 | sqlAnsiOn: 1 2 4 5 6 7 8 9 10 11 12 
+GENERAL EXACT ON [Ab] > | scan: 3 | rush: 3 | sqlAnsiOff: 3 | sqlAnsiOn: 3 
+GENERAL EXACT ON [Ab] >= | scan: 3 8 | rush: 3 8 | sqlAnsiOff: 3 8 | sqlAnsiOn: 3 8 
+GENERAL EXACT ON [A         ] = | scan: 5 11 | rush: 5 11 | sqlAnsiOff: 5 11 | sqlAnsiOn: 5 11 
+GENERAL EXACT ON [A         ] == | scan: 5 | rush: 5 | sqlAnsiOff: 5 11 | sqlAnsiOn: 5 11 
+GENERAL EXACT ON [A         ] < | scan: 1 2 4 7 9 10 12 | rush: 1 2 4 7 9 10 12 | sqlAnsiOff: 1 2 4 7 9 10 12 | sqlAnsiOn: 1 2 4 7 9 10 12 
+GENERAL EXACT ON [A         ] <= | scan: 1 2 4 5 7 9 10 11 12 | rush: 1 2 4 5 7 9 10 11 12 | sqlAnsiOff: 1 2 4 5 7 9 10 11 12 | sqlAnsiOn: 1 2 4 5 7 9 10 11 12 
+GENERAL EXACT ON [A         ] > | scan: 3 6 8 | rush: 3 6 8 | sqlAnsiOff: 3 6 8 | sqlAnsiOn: 3 6 8 
+GENERAL EXACT ON [A         ] >= | scan: 3 5 6 8 11 | rush: 3 5 6 8 11 | sqlAnsiOff: 3 5 6 8 11 | sqlAnsiOn: 3 5 6 8 11 

@@ -335,7 +335,8 @@ public static class QueryOptimizer
         public int RecNo { get; }
         public int RecCount { get; }
         public bool Deleted => _rec.IsDeleted;
-        public object? GetField(string name) => _rec[name];
+        // Character fields at full width, as VFP evaluates them (leading blanks count, == sees the trailing ones).
+        public object? GetField(string name) => _rec.GetExpressionValue(name);
     }
 
     // ============================================================ analysis result
@@ -1599,12 +1600,15 @@ public static class QueryOptimizer
 
             // SELECTIVE equality upper bound (the literal's head run byte-incremented); NULL ⇒
             // widen to the open first-byte fallback (historical coarse-but-correct behaviour).
-            byte[]? eqUpper = op == CmpOp.Eq ? CharEqUpperBound(tag, literal, lit) : null;
+            // The same head-run bound caps < / <=: under SET EXACT OFF a weighted operand is cut to the literal's
+            // head count before its tails are compared, so 'Ab' < 'Á' holds although its key 60 61.. sorts after
+            // 60 01 — every key carrying the literal's head run can sort below the literal.
+            byte[]? eqUpper = op is CmpOp.Eq or CmpOp.Lt or CmpOp.Le ? HeadRunUpperBound(tag, literal, lit) : null;
 
             // The contiguous collated-byte WINDOW [lo, hi) that is a SUPERSET of the matches,
             // proven per op so the predicate's true-set is entirely contained in [lo, hi):
             //   Eq      → [lit, eqUpper)  (eqUpper, else {lit[0]+1}, else open: key[0]==lit[0])
-            //   Lt/Le   → [open, nextPrefix(lit))   (every prefix-or-below key sorts below it)
+            //   Lt/Le   → [open, eqUpper)           (every key below or carrying the literal's head run; open when null)
             //   Gt/Ge   → [lit, open)               (every prefix-or-above key sorts at/after it)
             byte[]? lo, hi;
             switch (op)
@@ -1616,7 +1620,7 @@ public static class QueryOptimizer
                 case CmpOp.Lt:
                 case CmpOp.Le:
                     lo = null;
-                    hi = NextPrefixBytes(lit); // null ⇒ all-0xFF literal ⇒ open upper
+                    hi = eqUpper; // null ⇒ uncertain head run / all-0xFF ⇒ open upper
                     break;
                 case CmpOp.Gt:
                 case CmpOp.Ge:
@@ -1639,7 +1643,7 @@ public static class QueryOptimizer
                     CmpOp.Eq => CompareBytes(key, lit) >= 0
                         && (eqUpper is null ? key[0] == lit[0] : CompareBytes(key, eqUpper) < 0),
                     // One-sided: widened prefix-byte bound (residual confirms strictness/EXACT).
-                    CmpOp.Lt or CmpOp.Le => ComparePrefixBytes(key, lit) <= 0,
+                    CmpOp.Lt or CmpOp.Le => eqUpper is null || CompareBytes(key, eqUpper) < 0,
                     CmpOp.Gt or CmpOp.Ge => ComparePrefixBytes(key, lit) >= 0,
                     _ => false,
                 };
@@ -1779,24 +1783,6 @@ public static class QueryOptimizer
             return new Analysis(bm, exact: false, usedIndex: true);
         }
 
-        /// <summary>
-        /// The NEXT-PREFIX bound of a collated key: the key with its last non-<c>0xFF</c> byte
-        /// incremented and any trailing <c>0xFF</c> dropped — the first byte string that sorts
-        /// strictly after every string carrying <paramref name="b"/> as a prefix. Returns
-        /// <see langword="null"/> when <paramref name="b"/> is all <c>0xFF</c> (no finite next
-        /// prefix ⇒ open upper bound).
-        /// </summary>
-        private static byte[]? NextPrefixBytes(byte[] b)
-        {
-            int i = b.Length - 1;
-            while (i >= 0 && b[i] == 0xFF) i--;
-            if (i < 0) return null;
-            var up = new byte[i + 1];
-            Array.Copy(b, up, i + 1);
-            up[i]++;
-            return up;
-        }
-
         /// <summary>Unsigned, shorter-sorts-first byte comparison of two whole keys.</summary>
         private static int CompareBytes(byte[] a, byte[] b)
         {
@@ -1823,6 +1809,30 @@ public static class QueryOptimizer
                 if (d != 0) return d < 0 ? -1 : 1;
             }
             return key.Length >= lit.Length ? 0 : -1;
+        }
+
+        /// <summary>
+        /// <see cref="CharEqUpperBound"/> widened for a contracting collation: a value that starts with the literal's
+        /// characters matches it under SET EXACT OFF even when its next letter merges the literal's last one into a
+        /// contraction head (SPANISH <c>'chico' = 'c'</c>, key <c>63…</c> above <c>c</c>'s run <c>62</c>), so the bound
+        /// also covers the head run of the literal followed by each contraction's second letter. <c>null</c> = widen.
+        /// </summary>
+        private static byte[]? HeadRunUpperBound(CdxTag tag, string literal, byte[] lit)
+        {
+            byte[]? upper = CharEqUpperBound(tag, literal, lit);
+            if (upper is null || tag.KeyCollation is not GeneralCollation { ContractionTrailers: { Length: > 0 } trailers })
+                return upper;
+            foreach (char z in trailers)
+            {
+                string extended = literal + z;
+                byte[] key;
+                try { key = tag.EncodeCharacterKey(extended); }
+                catch { return null; }
+                byte[]? other = CharEqUpperBound(tag, extended, key);
+                if (other is null) return null;
+                if (CompareBytes(other, upper) > 0) upper = other;
+            }
+            return upper;
         }
 
         /// <summary>

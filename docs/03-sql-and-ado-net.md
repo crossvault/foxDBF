@@ -79,6 +79,12 @@ subqueries, `GROUP BY`/`HAVING`, aggregates, `ORDER BY`, `DISTINCT`, `TOP [n [PE
 `CREATE`/`ALTER`/`DROP TABLE`. Positional `?` and named `@`/`:` parameters. SQL `=` follows
 **`SET ANSI`** (the `Ansi` connection-string keyword above), not `SET EXACT`.
 
+Character fields are read at their full declared width, exactly as in a VFP cursor: `SELECT name`
+from a `C(10)` returns `'Smith     '`, and leading blanks are part of the value (`' Smith'` is not
+`'Smith'`). Under `SET ANSI OFF` `name = 'Smith'` compares over the shorter operand, so it matches;
+`name == 'Smith'` and `SET ANSI ON` compare blank-padded. Trim in the query (`ALLTRIM(name)`) or in
+your code when you want the bare text; `DbfRecord`'s indexer returns it trimmed.
+
 `SELECT … INTO ARRAY name` lands the result in the connection's active-session memvar array store
 (a 2-D `rows × cols` array — even a single-column result is an `N×1` array, matching VFP9, *not* a
 true 1-D array; zero matching rows leave the array unchanged), and sets `_TALLY` to the row count,

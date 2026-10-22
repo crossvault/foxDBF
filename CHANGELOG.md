@@ -28,9 +28,28 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   weights only, like SEEK (`SET KEY TO 'áa'` shows `Aa`, `aa`, `áa`, `Áa`, `Aab`); a MACHINE bound is cut to the key
   length; `SET KEY TO ''` clears the scope. The relation reposition into a DESCENDING child tag lands on the first
   match in descending order.
+- Expressions see a character field as VFP9 does, at its full declared width. A value with leading blanks no
+  longer matches as if they were not there (`name = 'A'` matched `' Á'` in a scan but not through an index), so
+  a plain scan and Rushmore return the same rows. The index window for `<` / `<=` on a GENERAL/SPANISH tag now
+  holds every key that starts with the literal's head weights (`'Ab' < 'Á'` under SET EXACT OFF).
+- A SQL `UPDATE` no longer strips the leading blanks of the character fields it does not assign (right-justified
+  keys such as TasTrade's `'     1'` turned into `'1'`).
 
 ### Changed
 
+- BREAKING: String comparison follows VFP9 (pinned by a 4116-case VFP9 golden master, `vfp_test/strcmp`). SET EXACT
+  OFF cuts the left operand to the right one's length (MACHINE by characters, GENERAL/SPANISH by head weights),
+  SET EXACT ON pads the shorter one with blanks; `<`, `<=`, `>`, `>=`, `<>`, `INLIST()` and `BETWEEN()` follow
+  the same rule as `=` (`'Ab' <= 'A'` is true under SET EXACT OFF). SQL compares under SET ANSI: OFF cuts the
+  longer operand, ON pads. Xbase `==` compares character for character with equal length whatever SET COLLATE says
+  (`'a' == 'A'` is false under GENERAL); SQL `==` is the padded collation-aware comparison. Five SPANISH ligature
+  pairs (ß, Æ, Œ) under the cutting rules keep a documented deviation.
+- BREAKING: Expressions (`QueryOptimizer` filters, SQL `WHERE` / `JOIN ON` / `HAVING`, computed columns, `UPDATE …
+  SET`) and SQL results (`SELECT *`, `SELECT name`, ADO.NET readers) carry a character field at its full width,
+  as a VFP cursor does: `SELECT name` returns `'Smith     '` for a C(10), an Xbase filter (`QueryOptimizer`)
+  `name == 'Smith'` is false on it (VFP: `ALLTRIM(name) == 'Smith'` or `name = 'Smith'`; SQL `==` pads and
+  matches), and `UPDATE … SET name = name + 'x'` leaves the field unchanged. `DbfRecord`'s indexer still returns the trimmed value; microVFP keeps its right-trimmed field
+  reads.
 - BREAKING: A character `SEEK` on a GENERAL/SPANISH tag (`CdxTag.Seek(object)` and microVFP `SEEK`) uses VFP9's SET EXACT
   OFF needle: only the head weights of the value, so the diacritics of the needle are ignored and the first key
   whose heads start with them matches (`Seek("áa")` lands on `Aa`, `Seek("Müller")` on `Muller` when that sorts

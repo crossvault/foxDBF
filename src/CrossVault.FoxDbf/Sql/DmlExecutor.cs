@@ -219,7 +219,7 @@ internal sealed class DmlExecutor
             for (int i = 0; i < columns.Count; i++)
                 positional[i] = columns[i].Type is 'M' or 'W' or 'G' or 'P' && !setColumns.Contains(i)
                     ? DbfWriter.KeepValue
-                    : rec[columns[i].Name];
+                    : rec.GetExpressionValue(i);   // full width: an untouched C field keeps its leading blanks
 
             var rowCtx = new RecordRow(rec, recNo, table.RecordCount);
             foreach (var (idx, val) in assigns)
@@ -287,7 +287,8 @@ internal sealed class DmlExecutor
     // ---- per-record row state (SET / WHERE evaluation) ------------------------------------
 
     /// <summary>Adapts a <see cref="DbfRecord"/> to <see cref="IRowContext"/> so a SET expression
-    /// reads THIS row's own current values (e.g. <c>amount = amount + 1</c>).</summary>
+    /// reads THIS row's own current values (e.g. <c>amount = amount + 1</c>); character fields at full width, so
+    /// <c>name = name + 'x'</c> overflows the field exactly as in VFP.</summary>
     private sealed class RecordRow : IRowContext
     {
         private readonly DbfRecord _rec;
@@ -302,7 +303,7 @@ internal sealed class DmlExecutor
         {
             int dot = name.LastIndexOf('.');
             string field = dot >= 0 ? name[(dot + 1)..] : name;
-            return _rec[field];
+            return _rec.GetExpressionValue(field);
         }
     }
 

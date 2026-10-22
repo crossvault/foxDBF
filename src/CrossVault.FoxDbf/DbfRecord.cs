@@ -93,6 +93,38 @@ public readonly struct DbfRecord
     }
 
     /// <summary>
+    /// The value VFP's expressions see for the column at <paramref name="index"/>: a character ('C') field at its full
+    /// declared width (leading and trailing blanks kept, see <see cref="FieldDecoder.DecodeCharacterPadded"/>), every
+    /// other column as <see cref="this[int]"/>. Feeds the expression engine and SQL results; the public indexer keeps
+    /// its trimmed value.
+    /// </summary>
+    internal object? GetExpressionValue(int index)
+    {
+        var columns = _table.Columns;
+        if ((uint)index >= (uint)columns.Count)
+            return null;
+        var column = columns[index];
+        if (column.Type != 'C')
+            return this[index];
+
+        var (_, nullBit) = _table.GetVarlenNullBits(column);
+        if (_table.ApplyNullFlags && nullBit >= 0 && IsNullFlagBitSet(nullBit))
+            return null;
+        var raw = GetRawField(column);
+        if (raw.IsEmpty)
+            return null;
+        var encoding = column.IsBinary ? System.Text.Encoding.Latin1 : _table.Encoding;
+        return FieldDecoder.DecodeCharacterPadded(column, raw, encoding, _table.EncodingIsExplicit);
+    }
+
+    /// <summary>The expression value (<see cref="GetExpressionValue(int)"/>) of the column named <paramref name="name"/>.</summary>
+    internal object? GetExpressionValue(string name)
+    {
+        int index = IndexOfColumn(name);
+        return index < 0 ? null : GetExpressionValue(index);
+    }
+
+    /// <summary>
     /// Decode one column applying the §A5b VFP rules: a set null bit (when
     /// <see cref="DbfTable.ApplyNullFlags"/>) overrides the value to
     /// <see langword="null"/>; <c>V</c>/<c>Q</c> use the varlen bit for their effective

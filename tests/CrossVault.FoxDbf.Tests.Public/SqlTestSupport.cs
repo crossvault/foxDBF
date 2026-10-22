@@ -103,7 +103,7 @@ internal static partial class SqlTestSupport
         public int RecNo { get; }
         public int RecCount { get; }
         public bool Deleted => !_empty && _r.IsDeleted;
-        public object? GetField(string name) => _empty ? null : _r[name];
+        public object? GetField(string name) => _empty ? null : _r.GetExpressionValue(name);
     }
 
     // ---- the independent brute-force oracle -----------------------------------------------

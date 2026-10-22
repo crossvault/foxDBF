@@ -166,9 +166,9 @@ public sealed class SqlSelectExecutorTests : IDisposable
             "SELECT city, SUM(amount) + 1 AS adjusted FROM person GROUP BY city ORDER BY city")!);
 
         Assert.Equal(3, rows.Count);
-        Assert.Equal(new object?[] { "Berlin", 501m }, rows[0]);
-        Assert.Equal(new object?[] { "Hamburg", 651m }, rows[1]);
-        Assert.Equal(new object?[] { "Munich", 851m }, rows[2]);
+        Assert.Equal(new object?[] { "Berlin    ", 501m }, rows[0]);
+        Assert.Equal(new object?[] { "Hamburg   ", 651m }, rows[1]);
+        Assert.Equal(new object?[] { "Munich    ", 851m }, rows[2]);
     }
 
     [Fact]
@@ -250,8 +250,8 @@ public sealed class SqlSelectExecutorTests : IDisposable
             "GROUP BY city HAVING SUM(amount) + 1 > 650 ORDER BY city")!);
 
         Assert.Equal(2, rows.Count);
-        Assert.Equal(new object?[] { "Hamburg", 651m }, rows[0]);
-        Assert.Equal(new object?[] { "Munich", 851m }, rows[1]);
+        Assert.Equal(new object?[] { "Hamburg   ", 651m }, rows[0]);
+        Assert.Equal(new object?[] { "Munich    ", 851m }, rows[1]);
     }
 
     [Fact]
@@ -262,8 +262,8 @@ public sealed class SqlSelectExecutorTests : IDisposable
             "GROUP BY city HAVING SUM(amount) * 2 > 1000 ORDER BY city")!);
 
         Assert.Equal(2, rows.Count);
-        Assert.Equal(new object?[] { "Hamburg", 1300m }, rows[0]);
-        Assert.Equal(new object?[] { "Munich", 1700m }, rows[1]);
+        Assert.Equal(new object?[] { "Hamburg   ", 1300m }, rows[0]);
+        Assert.Equal(new object?[] { "Munich    ", 1700m }, rows[1]);
     }
 
     [Fact]
@@ -274,8 +274,8 @@ public sealed class SqlSelectExecutorTests : IDisposable
             "GROUP BY city HAVING SUM(amount) + COUNT(amount) > 650 ORDER BY city")!);
 
         Assert.Equal(2, rows.Count);
-        Assert.Equal(new object?[] { "Hamburg", 652m }, rows[0]);
-        Assert.Equal(new object?[] { "Munich", 853m }, rows[1]);
+        Assert.Equal(new object?[] { "Hamburg   ", 652m }, rows[0]);
+        Assert.Equal(new object?[] { "Munich    ", 853m }, rows[1]);
     }
 
     [Fact]
@@ -285,7 +285,7 @@ public sealed class SqlSelectExecutorTests : IDisposable
             "SELECT city, ABS(SUM(amount)) AS absoluteTotal FROM person " +
             "GROUP BY city HAVING ABS(SUM(amount)) > 700 ORDER BY city")!);
 
-        Assert.Equal(new object?[] { "Munich", 850m }, Assert.Single(rows));
+        Assert.Equal(new object?[] { "Munich    ", 850m }, Assert.Single(rows));
     }
 
     [Fact]

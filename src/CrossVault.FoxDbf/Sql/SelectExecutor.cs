@@ -1309,7 +1309,7 @@ internal sealed class SelectExecutor
             if (it.IsStar)
             {
                 foreach (var c in table.Columns)
-                    outv.Add(r.Rec[c.Name]);
+                    outv.Add(r.Rec.GetExpressionValue(c.Name));
             }
             else
             {
@@ -1459,14 +1459,18 @@ internal sealed class SelectExecutor
         var rv = Side(m.Groups["r"].Value);
         string op = m.Groups["op"].Value;
 
-        // '=' / '<>' follow SQL/ANSI '=' semantics (same as the WHERE path); '==' stays exact;
-        // the ordering operators use the collation-aware VFP comparison.
+        // '=' / '<>' follow SQL/ANSI '=' semantics (same as the WHERE path); for strings '==' is the padded
+        // comparison and the ordering operators line the operands up like '=' (SET ANSI), as on the WHERE path;
+        // other types use the collation-aware VFP comparison.
         if (op is "=" or "<>" or "!=")
         {
             bool eq = ValueEqSql(lv, rv, ctx);
             return op == "=" ? eq : !eq;
         }
-        int c = CompareVfp(lv, rv, ctx);
+        int c = lv.Type == VfpType.Character && rv.Type == VfpType.Character
+            ? VfpRuntime.CompareStrings(lv.AsString, rv.AsString,
+                op == "==" || ctx.Ansi ? StringCompareMode.Pad : StringCompareMode.Shorter, ctx)
+            : CompareVfp(lv, rv, ctx);
         return op switch
         {
             "==" => c == 0,
@@ -2058,7 +2062,8 @@ internal sealed class SelectExecutor
     }
 
     /// <summary>Adapts a <see cref="DbfRecord"/> to <see cref="IRowContext"/>, stripping a leading
-    /// <c>alias.</c> qualifier so <c>SELECT a.id FROM person a</c> resolves field <c>id</c>.</summary>
+    /// <c>alias.</c> qualifier so <c>SELECT a.id FROM person a</c> resolves field <c>id</c>. Character fields read at
+    /// full width (<see cref="DbfRecord.GetExpressionValue(string)"/>), as in a VFP cursor.</summary>
     private sealed class RowContext : IRowContext
     {
         private readonly DbfRecord _rec;
@@ -2091,7 +2096,7 @@ internal sealed class SelectExecutor
             if (_cols is null)
             {
                 int d = name.LastIndexOf('.');
-                return _rec[d >= 0 ? name[(d + 1)..] : name];
+                return _rec.GetExpressionValue(d >= 0 ? name[(d + 1)..] : name);
             }
 
             int dot = name.IndexOf('.');
@@ -2099,10 +2104,10 @@ internal sealed class SelectExecutor
             {
                 string alias = name[..dot], field = name[(dot + 1)..];
                 if (string.Equals(alias, _alias, StringComparison.OrdinalIgnoreCase) && _cols.Contains(field))
-                    return _rec[field];
+                    return _rec.GetExpressionValue(field);
                 return _outer?.GetField(name); // correlated reference to an outer source
             }
-            if (_cols.Contains(name)) return _rec[name];
+            if (_cols.Contains(name)) return _rec.GetExpressionValue(name);
             return _outer?.GetField(name);
         }
     }
@@ -2212,7 +2217,7 @@ internal sealed class SelectExecutor
                 string alias = name[..dot], field = name[(dot + 1)..];
                 for (int i = 0; i < _src.Length; i++)
                     if (string.Equals(_src[i].Alias, alias, StringComparison.OrdinalIgnoreCase))
-                        return _recs[i] is { } r && _src[i].ColNames.Contains(field) ? r[field] : null;
+                        return _recs[i] is { } r && _src[i].ColNames.Contains(field) ? r.GetExpressionValue(field) : null;
                 return _outer?.GetField(name); // correlated reference to an outer source
             }
 
@@ -2222,7 +2227,7 @@ internal sealed class SelectExecutor
             if (count == 0) return _outer?.GetField(name);
             if (count > 1)
                 throw new FoxDbfSqlException($"Column '{name}' is ambiguous; qualify it with an alias.");
-            return _recs[found] is { } rec ? rec[name] : null;
+            return _recs[found] is { } rec ? rec.GetExpressionValue(name) : null;
         }
     }
 

@@ -294,8 +294,9 @@ public sealed class FoxDbfEnforceTxTests
     private static int ChildLiveVia(DbConnection conn, string table, string field, string val)
         => Convert.ToInt32(ExecScalar(conn, $"SELECT COUNT(*) FROM {table} WHERE {field} = '{val}'"));
 
+    // The key as a VFP WHERE sees it: TasTrade's ids are right-justified ('     1'), so the leading blanks are part of it.
     private static string Field(DbfTable t, int index, string col)
-        => t.GetRecord(index)?[col]?.ToString()?.TrimEnd() ?? string.Empty;
+        => t.GetRecord(index)?.GetExpressionValue(col)?.ToString()?.TrimEnd() ?? string.Empty;
 
     /// <summary>Read-only over the COMMITTED TasTrade original: the first parent key that has live children,
     /// plus its live-child count.</summary>

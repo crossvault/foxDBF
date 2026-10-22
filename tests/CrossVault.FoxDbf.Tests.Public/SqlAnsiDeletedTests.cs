@@ -118,8 +118,11 @@ public sealed class SqlAnsiDeletedTests : IDisposable
     {
         using var s = new VfpSession(new EvaluationContext { Ansi = false });
         s.OpenDirectory(_dir.Path);
-        // 'Smithson' (long literal) still matches the short field "Sm" and "Smith" under ANSI OFF.
-        Assert.Equal(new HashSet<int> { 1, 2, 3 }, Ids(s.Execute("SELECT id FROM person WHERE name = 'Smithson'")!));
+        // NAME is C(20): the field is the LONGER operand, so 'Smithson' is compared over its 8 characters against
+        // "Sm" + 18 blanks / "Smith" + 15 blanks — only "Smithson" matches, exactly as in VFP.
+        Assert.Equal(new HashSet<int> { 3 }, Ids(s.Execute("SELECT id FROM person WHERE name = 'Smithson'")!));
+        // The literal side shorter: compared over 'Sm' only, whichever side it stands on.
+        Assert.Equal(new HashSet<int> { 1, 2, 3 }, Ids(s.Execute("SELECT id FROM person WHERE 'Sm' = name")!));
         // 'Sm' matches every NAME whose first two chars are 'Sm'.
         Assert.Equal(new HashSet<int> { 1, 2, 3 }, Ids(s.Execute("SELECT id FROM person WHERE name = 'Sm'")!));
     }

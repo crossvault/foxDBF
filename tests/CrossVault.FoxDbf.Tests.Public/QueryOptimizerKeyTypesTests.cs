@@ -48,7 +48,7 @@ public sealed class QueryOptimizerKeyTypesTests : IClassFixture<QueryOptimizerKe
         public int RecNo { get; }
         public int RecCount { get; }
         public bool Deleted => _rec.IsDeleted;
-        public object? GetField(string name) => _rec[name];
+        public object? GetField(string name) => _rec.GetExpressionValue(name);
     }
 
     /// <summary>The ground truth: evaluate the compiled filter on EVERY non-deleted record.</summary>
@@ -249,7 +249,7 @@ public sealed class QueryOptimizerKeyTypesTests : IClassFixture<QueryOptimizerKe
     public void CharacterEquality_GeneralCollatedTag_IsOptimized()
     {
         // With a GENERAL evaluation context the optimizer must drive the GENERAL-collated GNAME tag.
-        var (result, expected) = Run("NAME == 'Müller'", General);
+        var (result, expected) = Run("NAME = 'Müller'", General);
 
         Assert.Equal(expected.OrderBy(x => x).ToArray(), result.RecordNumbers.OrderBy(x => x).ToArray());
         Assert.NotEmpty(result.RecordNumbers);
