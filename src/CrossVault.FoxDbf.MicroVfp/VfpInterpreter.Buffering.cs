@@ -119,6 +119,7 @@ public sealed partial class VfpInterpreter
         // INSERT does: blank under OFF (left out of Fields, written blank at commit), .NULL. in a NULL-able
         // column under ON (an explicit null in Fields). An omitted NOT NULL column under ON is VFP error
         // 1581 and no row; the write-through INSERT swallows that error, so the buffered one does too.
+        // (A buffered FROM MEMVAR / FROM ARRAY reads none of its values here, so it does not apply SET NULL.)
         var columns = wa.Table.Columns;
         var provided = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var (idx, v) in ae.Fields) provided[columns[idx].Name] = v;
@@ -126,7 +127,7 @@ public sealed partial class VfpInterpreter
         try
         {
             blank = DmlExecutor.OmittedColumnsBlankMask(Session, stmt.Table, columns, provided,
-                honourSetNull: stmt.SourceKind != InsertSourceKind.Array);
+                honourSetNull: stmt.SourceKind == InsertSourceKind.Values);
         }
         catch (FoxDbfSqlException) { return; }
         for (int i = 0; i < columns.Count; i++)

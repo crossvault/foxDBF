@@ -1308,14 +1308,12 @@ public sealed partial class VfpInterpreter
             while (end > 0 && s[end - 1] == '\0') end--;
             return end == s.Length ? s : string.Concat(s.AsSpan(0, end), new string(' ', s.Length - end));
         }
-        if (col.Type is 'M' or 'W')
+        if (col.Type == 'M')
         {
             // A 0 memo pointer is an EMPTY memo, not .NULL. — VFP9 stores '' that way, allocating no block —
-            // unless the null bit says .NULL.
+            // unless the null bit says .NULL. (A binary M reads as Latin1 text, so '' too.)
             var memo = rec[idx];
-            if (memo is null && !rec.IsNullFlagSet(col))
-                return col.Type == 'M' ? string.Empty : Array.Empty<byte>();   // a binary M reads as Latin1 text.
-            return memo;
+            return memo is null && !rec.IsNullFlagSet(col) ? string.Empty : memo;
         }
         return rec[idx];
     }
