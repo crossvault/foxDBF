@@ -17,8 +17,8 @@ namespace CrossVault.FoxDbf.Write;
 /// <see cref="CdxHeader.Parse(ReadOnlySpan{byte}, Encoding)"/> / <see cref="IndexFile.ReadBranchEntries"/>, and the
 /// leaf bit-width algorithm mirrors CodeBase <c>r4reinde.c</c> (validated byte-for-byte
 /// against VFP9 fixtures such as <c>vfp_test/ligtest.CDX</c>). Page layout (per VFP9):
-/// page0 = file header, page1 = its expression pool, then for each tag a header page +
-/// pool page + its B-tree pages, and finally the tag directory.
+/// page0 = file header, page1 = its expression pool, then the tag directory, and for each
+/// tag a header page + pool page + its B-tree pages in VFP's allocation order.
 /// </remarks>
 internal static class CdxIndexBuilder
 {
@@ -112,11 +112,15 @@ internal static class CdxIndexBuilder
             int headerIndex = sink.Reserve();              // tag header page
             sink.Reserve();                                // its expression-pool page
             long headerOffset = (long)headerIndex * Page;
-            uint treeRoot = BuildTree(sink, () => sink.Reserve(), p.Entries, p.KeyLen, p.Pad, indexOn: !containerIndex);
+            uint treeRoot = containerIndex
+                ? BuildTree(sink, () => sink.Reserve(), p.Entries, p.KeyLen, p.Pad, indexOn: false)
+                : BuildIndexOnTree(sink, p);
 
             WriteHeaderCommon(sink.At(headerIndex), root: treeRoot, keyLen: p.KeyLen, options: p.Options,
                 signature: p.Signature, sortOrder: p.SortOrder, descending: p.Descending,
                 keyExpr: p.KeyExpr, forExpr: p.ForExpr);
+            if (!containerIndex)
+                WriteKeyStatistics(sink.At(headerIndex), p.Entries, p.Pad);
             WriteExpressionPool(sink, headerOffset, p.KeyExpr, p.ForExpr);
         }
 
@@ -166,14 +170,28 @@ internal static class CdxIndexBuilder
         sink.Reserve();                      // its expression-pool page
         long headerOffset = (long)headerIndex * Page;
 
-        uint treeRoot = BuildTree(sink, () => sink.Reserve(), plan.Entries, plan.KeyLen, plan.Pad, indexOn: true);
+        uint treeRoot = BuildIndexOnTree(sink, plan);
 
         WriteHeaderCommon(sink.At(headerIndex), root: treeRoot, keyLen: plan.KeyLen, options: plan.Options,
             signature: plan.Signature, sortOrder: plan.SortOrder, descending: plan.Descending,
             keyExpr: plan.KeyExpr, forExpr: plan.ForExpr);
+        WriteKeyStatistics(sink.At(headerIndex), plan.Entries, plan.Pad);
         WriteExpressionPool(sink, headerOffset, plan.KeyExpr, plan.ForExpr);
 
         return new TagBlock(sink.ToArray(), headerOffset);
+    }
+
+    // INDEX ON uses the same allocation order and branch data bit for CDX tags and compact IDX trees.
+    // Keep the container (.dcx) path separate: VFP builds those indexes incrementally.
+    private static uint BuildIndexOnTree(PageSink sink, TagPlan plan)
+    {
+        int rootPage = sink.Reserve();
+        var (leaves, branches, nextPage) = TreeLayout(plan.LeafCount, plan.KeyLen, rootPage);
+        for (int page = rootPage + 1; page < nextPage; page++) sink.Reserve();
+        var pages = leaves.Concat(branches.SelectMany(level => level.Select(node => node.Page))).GetEnumerator();
+        var groups = branches.Select(level => level.Select(node => node.Count).ToList()).ToList();
+        return BuildTree(sink, () => { pages.MoveNext(); return pages.Current; },
+            plan.Entries, plan.KeyLen, plan.Pad, indexOn: true, groups: groups, branchesCarryLeafData: true);
     }
 
     // ---- compact standalone .idx (INDEX ON … TO x.idx COMPACT) ------------------------------------
@@ -185,7 +203,7 @@ internal static class CdxIndexBuilder
     /// UNIQUE 0x01 | FOR 0x08, the collation at @494), page 1 its KEY/FOR expression pool, and the tree starts on
     /// page 2. <paramref name="def"/>'s name is not stored; its collation decides the key bytes.
     /// <para>
-    /// Unlike the tags of a <see cref="Build"/>, the nodes sit where VFP9 grows them key by key
+    /// Like CDX tags built by INDEX ON, the nodes sit where VFP9 grows them key by key
     /// (<see cref="TreeLayout"/>: root on page 2, leaves and branch nodes interleaved), and every branch node
     /// carries the first leaf's 0x04 bit. The header holds VFP's five key statistics at @16
     /// (<see cref="WriteKeyStatistics"/>). Overwrites any existing file at the path.
@@ -545,8 +563,8 @@ internal static class CdxIndexBuilder
     /// page 5: 9/9/10/10/9/10/10/9…, on page 8: 10/10/10/9/10/10/9…; key length 42: 10/10/10…).
     /// </para>
     /// <para>
-    /// Only the grouping is taken from this simulation: our pages stay laid out leaves first, then each branch
-    /// level, root last. Leaves are packed greedily, as VFP does.
+    /// This helper takes only the grouping for the directory/container path. INDEX ON also uses the page
+    /// positions from <see cref="TreeLayout"/>. Leaves are packed greedily, as VFP does.
     /// </para>
     /// </summary>
     private static List<List<int>> BranchLayout(int leafCount, int keyLen, int rootPage)

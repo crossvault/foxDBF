@@ -19,6 +19,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- CDX tags built by `CreateTag`, `REINDEX` and microVFP `INDEX ON … TAG` now store VFP9's key statistics,
+  place tree pages in VFP9's allocation order, and preserve the first leaf's `0x04` bit on branch pages.
+  This applies to descending, UNIQUE, FOR and GENERAL tags as well. Unused node space remains zero-filled;
+  VFP9 can leave previous contents and process-memory bytes there, so those bytes are not reproducible.
 - microVFP `APPEND FROM` preserves blank numeric source fields as blank bytes instead of writing zero;
   explicit zero values and `.NULL.` fields remain distinct, under `SET NULL OFF` and `ON`.
 - Expressions reject chained or mixed arrow qualifiers such as `person->name->x` and `m.person->name`,
