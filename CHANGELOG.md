@@ -19,6 +19,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- Empty Date and DateTime index keys now use VFP9's `80 00 00 00 00 00 00 00` encoding in bulk builds
+  and row-by-row maintenance. Blank D/T fields retain their empty date type in KEY/FOR expressions;
+  `SEEK {}` / `SEEK CTOT('')` find them, including the first duplicate in descending order.
+  Reindex existing indexes containing empty dates to replace the old key bytes.
 - CDX tags built by `CreateTag`, `REINDEX` and microVFP `INDEX ON … TAG` now store VFP9's key statistics,
   place tree pages in VFP9's allocation order, and preserve the first leaf's `0x04` bit on branch pages.
   This applies to descending, UNIQUE, FOR and GENERAL tags as well. Unused node space remains zero-filled;

@@ -403,6 +403,9 @@ public readonly struct IndexKey
         };
         if (value is not DateOnly and not DateTime)
             return null;
+        // VFP9's empty date is Julian day zero, not the CLR sentinel's year 1.
+        if (date == default)
+            return EncodeTransformedDouble(0);
         return EncodeTransformedDouble(YmdToJulianDay(date.Year, date.Month, date.Day));
     }
 
@@ -410,6 +413,9 @@ public readonly struct IndexKey
     {
         if (value is not DateTime dt)
             return null;
+        // CTOT('') uses the same transformed-zero key as {}.
+        if (dt == default)
+            return EncodeTransformedDouble(0);
         long jdn = YmdToJulianDay(dt.Year, dt.Month, dt.Day);
         double frac = dt.TimeOfDay.TotalDays;
         return EncodeTransformedDouble(jdn + frac);

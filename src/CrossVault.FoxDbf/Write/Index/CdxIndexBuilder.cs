@@ -1343,6 +1343,20 @@ internal static class CdxIndexBuilder
             // must embed objecttype as "Field     " (C(10)), not the trimmed "Field". Re-decode the
             // raw bytes at full width for 'C' fields; a NULL-flagged field still reads as NULL.
             var value = _record[name];
+            if (value is null)
+            {
+                foreach (var col in _record.Table.Columns)
+                {
+                    if (string.Equals(col.Name, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Blank D/T fields remain typed empties in KEY/FOR expressions; genuine
+                        // .NULL. still follows the record's null flag (VFP9 empty-date oracle).
+                        if (col.Type is 'D' or 'T')
+                            return _record.GetVfpValue(name);
+                        break;
+                    }
+                }
+            }
             if (value is string)
             {
                 foreach (var col in _record.Table.Columns)
