@@ -189,6 +189,18 @@ public static class DbfDatabaseBuilder
         return blob;
     }
 
+    /// <summary>PACK DATABASE compacts the container, including its DCT, and rebuilds the DCX against
+    /// the new record numbers. Member tables are not part of this operation (VFP9-verified).</summary>
+    internal static void PackContainer(string dbcPath)
+    {
+        string dct = SidecarFile.ChangeExtension(dbcPath, ".dct");
+        using (var writer = DbfWriter.Open(dbcPath,
+                   new DbfOptions { LockMode = LockMode.Exclusive, MemoPath = dct }))
+            writer.Pack();
+        BuildStructuralDcx(dbcPath);
+        SetDbcHeaderFlag(dbcPath);
+    }
+
     /// <summary>Set the VFP container flags (memo|structural-cdx|dbc = 0x07) in header byte 28.</summary>
     private static void SetDbcHeaderFlag(string dbcPath)
     {
@@ -216,7 +228,7 @@ public static class DbfDatabaseBuilder
     /// </summary>
     private static void BuildStructuralDcx(string dbcPath)
     {
-        string dcxPath = Path.ChangeExtension(dbcPath, ".DCX");
+        string dcxPath = SidecarFile.ChangeExtension(dbcPath, ".DCX");
 
         // Order matters: VFP lays the tag B-trees down in CREATION order (OBJECTNAME first, then
         // OBJECTTYPE — verified against vfp_test/dbctest/ref.DCX, where OBJECTNAME's tree sits at the

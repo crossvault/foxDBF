@@ -349,18 +349,29 @@ SAVE TO vars.mem");
     // ─────────────────────────── §C.7 PACK DATABASE ───────────────────────────
 
     [Fact]
-    public void PackDatabase_PhysicallyRemovesDeletedRows_FromMemberTables()
+    public void PackDatabase_PreservesDeletedMemberRows_AndRejectsOpenMembers()
     {
         using var dir = new MicroVfpTestSupport.TempDir("p3misc_packdb");
-        var interp = MicroVfpTestSupport.NewTastrade(dir, out var session);
-        using var _ = session;
-
-        interp.Execute("USE customer EXCLUSIVE");
-        int before = (int)interp.EvalExpression("RECCOUNT('customer')").AsNumber;
-        interp.Execute("SET DELETED ON\nGO TOP\nDELETE\nPACK DATABASE");
-        int after = (int)interp.EvalExpression("RECCOUNT('customer')").AsNumber;
-
-        Assert.Equal(before - 1, after);   // the deleted customer row is physically gone
+        DbfDatabaseBuilder.Create(dir.File("sample.dbc"), new[]
+        {
+            new DbcTableSpec("member", "member.dbf", new[] { new DbfColumnDef("id", 'I') }),
+        });
+        using (var writer = DbfWriter.Open(dir.File("member.dbf")))
+        {
+            writer.AppendRecord(1);
+            writer.AppendRecord(2);
+            writer.Delete(0);
+        }
+        using var session = new VfpSession();
+        session.OpenDatabase(dir.File("sample.dbc"));
+        var interp = new VfpInterpreter(session);
+        interp.Execute("SET DELETED OFF\nUSE member EXCLUSIVE");
+        // The VFP9 oracle pins 1566 while a member is open, before any files are rewritten.
+        var error = Assert.Throws<MicroVfpRuntimeException>(() => interp.Execute("PACK DATABASE"));
+        Assert.Equal(1566, error.VfpErrorNumber);
+        interp.Execute("USE\nPACK DATABASE\nUSE member EXCLUSIVE\nGO 1");
+        Assert.Equal(2, interp.EvalExpression("RECCOUNT()").AsNumber);
+        Assert.True(interp.EvalExpression("DELETED()").AsLogical);
     }
 
     // ─────────────────────────── §C.7 VALIDATE DATABASE ───────────────────────────

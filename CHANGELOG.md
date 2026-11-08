@@ -8,6 +8,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP implements `INDEXSEEK(key [, move [, area [, index]]])` with VFP9's collation, EXACT,
+  deleted/filter/scope rules and `FOUND()` updates. The record pointer moves only on a requested hit.
+- BREAKING: `NORMALIZE()` now returns VFP9's decompiled expression text, expanding function abbreviations,
+  canonicalizing operators and folding constant numeric subexpressions while preserving string literals.
+- BREAKING: microVFP `FILTER()` and `SET('FILTER')` return VFP9's canonical expression text, including
+  the dots around `.AND.`, `.OR.` and `.NOT.`.
+- BREAKING: microVFP `PACK DATABASE` compacts the DBC container and its memo/index sidecars, preserving
+  member tables and their deleted records. Open member tables raise VFP9 error 1566 before any rewrite.
 - BREAKING: SQL computed columns now expose VFP9 cursor widths and decimal scales (for example,
   `LEN()` is N(10,0)). Character results are padded or truncated to their column width, including
   IIF, DISTINCT and UNION results; numeric results use VFP9's rounding, types and decimal scales.

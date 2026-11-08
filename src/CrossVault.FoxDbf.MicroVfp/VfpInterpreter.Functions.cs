@@ -57,6 +57,7 @@ public sealed partial class VfpInterpreter
             case "DELETED": r = VfpValue.Logical(FnDeleted(a)); return true;
             case "FILTER": r = VfpValue.Character(FnFilter(a)); return true;
             case "SEEK": r = VfpValue.Logical(FnSeek(a)); return true;
+            case "INDEXSEEK": r = VfpValue.Logical(FnIndexSeek(a)); return true;
             case "PCOUNT": case "PARAMETERS": r = VfpValue.Integer(CurrentCall.PassedCount); return true;
             case "PROGRAM": r = FnProgram(a); return true;
             case "TYPE": r = VfpValue.Character(TypeOf(a.Length > 0 ? a[0].AsString : string.Empty)); return true;

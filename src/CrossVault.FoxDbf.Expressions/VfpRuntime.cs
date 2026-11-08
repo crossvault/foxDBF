@@ -502,12 +502,7 @@ internal static class VfpRuntime
             // trailing blanks significant on both sides (FOXPLUS default). No bracket classes.
             case "LIKE":
             case "LIKEC": return VfpValue.Logical(Like(Arg(args, 0).AsString, Arg(args, 1).AsString));
-            // NORMALIZE(cExpr): a PRAGMATIC canonicaliser — upper-cases outside string literals, drops
-            // whitespace, rewrites the `->` alias operator to `.`, and re-emits '/" literals double-quoted
-            // (content verbatim). FLAGGED (needs a full expression compiler, out of P3 scope): VFP also folds
-            // constant arithmetic ('1+2'→'3') and treats trailing text after a complete expression as a
-            // comment ('x y'→'X') — those two behaviours are deliberately NOT reproduced.
-            case "NORMALIZE": return VfpValue.Character(Normalize(Arg(args, 0).AsString));
+            case "NORMALIZE": return VfpValue.Character(VfpExpressionText.Normalize(Arg(args, 0).AsString));
             // TXTWIDTH(cString [, cFont, nSize, cStyle]): headless — no GDI/font engine. Returns the CHARACTER
             // COUNT, which is EXACT for a fixed-pitch font (VFP: TXTWIDTH(s,'Courier New',10) == LEN(s)) and a
             // FLAGGED approximation for the proportional desktop font (that value is GUI-/machine-bound).
@@ -755,33 +750,6 @@ internal static class VfpRuntime
         }
         while (p < pat.Length && pat[p] == '*') p++;
         return p == pat.Length;
-    }
-
-    /// <summary>VFP <c>NORMALIZE()</c> — pragmatic canonicaliser (see the dispatch comment for the FLAGGED
-    /// limits). Outside string literals: upper-case letters, drop spaces/tabs, rewrite <c>-&gt;</c> to
-    /// <c>.</c>. A <c>'</c>- or <c>"</c>-delimited literal is re-emitted double-quoted with its content
-    /// verbatim (case preserved, inner spaces preserved).</summary>
-    private static string Normalize(string e)
-    {
-        var sb = new StringBuilder(e.Length);
-        int i = 0;
-        while (i < e.Length)
-        {
-            char c = e[i];
-            if (c == '\'' || c == '"')
-            {
-                char q = c;
-                i++;
-                sb.Append('"');
-                while (i < e.Length && e[i] != q) { sb.Append(e[i]); i++; }
-                if (i < e.Length) i++;                 // consume the closing delimiter
-                sb.Append('"');
-            }
-            else if (c == ' ' || c == '\t') i++;       // whitespace dropped
-            else if (c == '-' && i + 1 < e.Length && e[i + 1] == '>') { sb.Append('.'); i += 2; }
-            else { sb.Append(char.ToUpperInvariant(c)); i++; }
-        }
-        return sb.ToString();
     }
 
     private static VfpValue Replicate(VfpValue[] a)

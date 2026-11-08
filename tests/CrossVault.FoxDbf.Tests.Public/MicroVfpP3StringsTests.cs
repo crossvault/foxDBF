@@ -141,7 +141,7 @@ public sealed class MicroVfpP3StringsTests
         Assert.Equal(h.Str("STUFF('Hello',2,2,'XY')"), h.Str("STUFFC('Hello',2,2,'XY')"));
     }
 
-    // ─────────────────────────── NORMALIZE (pragmatic subset) ───────────────────────────
+    // ─────────────────────────── NORMALIZE ───────────────────────────
 
     [Fact]
     public void Normalize_UppercasesOutsideLiterals_DropsWhitespace_ArrowToDot_RequotesLiterals()
@@ -158,9 +158,6 @@ public sealed class MicroVfpP3StringsTests
         Assert.Equal("\"a b\"", h.Str("NORMALIZE(\"'a b'\")"));   // spaces INSIDE a literal survive
         Assert.Equal("\"AbC\"", h.Str("NORMALIZE(\"'AbC'\")"));   // literal content case preserved
         Assert.Equal("\"hi\"", h.Str("NORMALIZE('\"hi\"')"));
-        // FLAGGED (needs a full expression compiler — deliberately NOT reproduced, so NOT asserted here):
-        //   constant folding  NORMALIZE('1+2') → VFP '3'  (we keep '1+2')
-        //   trailing garbage  NORMALIZE('x y') → VFP 'X'  (we keep 'XY')
     }
 
     // ─────────────────────────── SYS(15) ───────────────────────────

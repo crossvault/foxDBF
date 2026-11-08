@@ -179,6 +179,57 @@ public sealed partial class VfpInterpreter
         => string.Join(",", _setFields.Select(f => (_setFieldsAlias.Length > 0 ? _setFieldsAlias + "." : string.Empty)
                                                     + f.ToUpperInvariant()));
 
+    // INDEXSEEK(key [, move [, area [, index]]]) uses SEEK's visibility and character-needle rules,
+    // but VFP9 preserves the pointer on a miss, even when movement was requested.
+    private bool FnIndexSeek(VfpValue[] a)
+    {
+        if (a.Length == 0) return false;
+        int area = a.Length > 2 ? AreaNumber(a[2]) : Session.CurrentArea;
+        if (_pendingAppendPaths is { Count: > 0 }) FlushPendingAppends(area);
+        var m = Meta(area);
+        string? identity;
+        if (a.Length <= 3)
+        {
+            identity = m.Order;
+            if (identity is null)
+                throw new MicroVfpRuntimeException("Table has no index order set.", 26);
+        }
+        else
+        {
+            var inventory = IndexInventory(area);
+            if (IsNumeric(a[3]))
+            {
+                int number = (int)a[3].AsNumber;
+                identity = number == 0 ? DefaultOrderIdentity(area)
+                    : number > 0 && number <= inventory.Count ? inventory[number - 1].Name : null;
+            }
+            else
+            {
+                identity = inventory.FirstOrDefault(slot =>
+                    string.Equals(slot.Name, a[3].AsString, StringComparison.OrdinalIgnoreCase))?.Name;
+            }
+            if (identity is null)
+                throw new MicroVfpRuntimeException("Index tag is not found.", 1683);
+        }
+        var saved = (m.RecNo, m.Eof, m.Bof, m.Found, m.Cached, m.CachedRec, m.OrderPos, m.OldVals);
+        bool found;
+        int hit;
+        try
+        {
+            found = DoSeekCore(a[0], area, identity);
+            hit = m.RecNo;
+        }
+        finally
+        {
+            (m.RecNo, m.Eof, m.Bof, m.Found, m.Cached, m.CachedRec, m.OrderPos, m.OldVals) = saved;
+        }
+        // Move to the proven hit without seeking again: VFP9 evaluates a filter UDF only once.
+        if (found && a.Length > 1 && a[1].AsLogical)
+            GoRecord(area, hit);
+        Meta(area).Found = found;
+        return found;
+    }
+
     // ─────────────────────────── KEYMATCH() ───────────────────────────
 
     /// <summary>KEYMATCH(uKey [, nWhichKey [, area]]) — .T. iff uKey exists in the addressed index, WITHOUT
