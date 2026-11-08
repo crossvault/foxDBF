@@ -22,6 +22,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- Bulk `DbfWriter.AppendRecords` now preserves each CDX tag's last-build key statistics, as VFP9
+  `APPEND FROM` and incremental appends do, including empty, deleted-record and UNIQUE-tag cases.
+  Explicit `Reindex` still recalculates these statistics.
+
 - BREAKING: Writes to tables with structural CDX tags whose collation/code page or KEY/FOR expression
   cannot be maintained exactly now fail before changing DBF, memo or index bytes, instead of deleting the
   CDX or writing approximate weights. Errors identify the tag, collation and code page; open compact IDX

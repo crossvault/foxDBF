@@ -235,13 +235,30 @@ public sealed partial class DbfWriter
             if (tags.Count == 0)
                 return;
             var appendUniqueState = CaptureAppendUniqueState(tags, existingRecordCount);
-            RebuildStructuralCdx(tags, includeDeleted: true, appendUniqueState: appendUniqueState);
+            var statistics = CaptureAppendKeyStatistics();
+            RebuildStructuralCdx(tags, includeDeleted: true, appendUniqueState: appendUniqueState,
+                preservedKeyStatistics: statistics);
         }
         catch
         {
             MarkIndexMaintenanceFailed();
             throw;
         }
+    }
+
+    private Dictionary<string, byte[]> CaptureAppendKeyStatistics()
+    {
+        // VFP9 keeps the last INDEX ON / REINDEX statistics during APPEND FROM, even for empty or
+        // UNIQUE tags. A bulk rebuild is an append optimization, not a new statistics collection.
+        using var index = IndexFile.Open(ExistingCdxPath());
+        var header = index.ReadCdxHeader(0);
+        var statistics = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (offset, name) in IndexTraversal.EnumerateCompact(index, header.Root, header.KeyLength, pad: 0x20))
+        {
+            var page = index.ReadPage(offset) ?? throw new InvalidDataException("Cannot read CDX tag statistics.");
+            statistics.Add(TrimName(name, _schema.Encoding), page.AsSpan(16, 20).ToArray());
+        }
+        return statistics;
     }
 
     private CdxIndexBuilder.AppendUniqueState? CaptureAppendUniqueState(

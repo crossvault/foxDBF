@@ -67,7 +67,7 @@ internal static class CdxIndexBuilder
     /// </summary>
     public static void Build(string cdxPath, DbfTable schema, IReadOnlyList<BuildRow> rows, IReadOnlyList<CdxTagDefinition> tags,
         EvaluationContext? evalContext = null, bool includeDeleted = false, AppendUniqueState? appendUniqueState = null,
-        bool containerIndex = false)
+        bool containerIndex = false, IReadOnlyDictionary<string, byte[]>? preservedKeyStatistics = null)
     {
         var sink = new PageSink();
         sink.Reserve();           // page 0: file header (filled last)
@@ -119,7 +119,9 @@ internal static class CdxIndexBuilder
             WriteHeaderCommon(sink.At(headerIndex), root: treeRoot, keyLen: p.KeyLen, options: p.Options,
                 signature: p.Signature, sortOrder: p.SortOrder, descending: p.Descending,
                 keyExpr: p.KeyExpr, forExpr: p.ForExpr);
-            if (!containerIndex)
+            if (preservedKeyStatistics is not null)
+                preservedKeyStatistics[p.Name].CopyTo(sink.At(headerIndex), 16);
+            else if (!containerIndex)
                 WriteKeyStatistics(sink.At(headerIndex), p.Entries, p.Pad);
             WriteExpressionPool(sink, headerOffset, p.KeyExpr, p.ForExpr);
         }
