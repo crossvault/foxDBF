@@ -22,6 +22,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: microVFP `INDEX ON … TO … DESCENDING` now raises VFP9 error 1706 without creating an IDX,
+  for both compact and uncompressed indexes. `SET INDEX TO` without `ORDER` now selects the first listed
+  IDX (or natural order when a CDX is listed first), also with `ADDITIVE`, and moves to the top when files
+  are listed; closing the indexes clears the order while keeping the record pointer.
+- microVFP `COPY TAG` now writes a compact ascending IDX with the source tag's collation, including GENERAL,
+  independently of `SET COLLATE`. It keeps the source order active, leaves the pointer at EOF and does not
+  open the new IDX, matching VFP9.
+
 - Bulk `DbfWriter.AppendRecords` now preserves each CDX tag's last-build key statistics, as VFP9
   `APPEND FROM` and incremental appends do, including empty, deleted-record and UNIQUE-tag cases.
   Explicit `Reindex` still recalculates these statistics.

@@ -384,7 +384,7 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── COPY TAG / COPY INDEXES ───────────────────────────
 
-    /// <summary>COPY TAG cTag [OF cCdx] TO cIdx — extract one compound-index tag as a standalone legacy
+    /// <summary>COPY TAG cTag [OF cCdx] TO cIdx — extract one compound-index tag as a standalone compact
     /// <c>.idx</c>, rebuilt over the live table from the tag's KEY/FOR expression (byte-sane + seekable —
     /// verified vs the VFP9 runtime). The new <c>.idx</c> is NOT auto-opened (VFP behaviour).</summary>
     private void ExecCopyTag(CopyTagStmt ct)
@@ -405,7 +405,10 @@ public sealed partial class VfpInterpreter
         string keyExpr = slot.KeyExpr;
         string? forExpr = slot.ForExpr.Length > 0 ? slot.ForExpr : null;
         bool unique = slot.Unique;
-        BuildTagOnDisk(path, w => w.CreateStandaloneIdx(idxPath, keyExpr, forExpr, unique, _ctx, !_ctx.Deleted));
+        // VFP9 keeps the source tag's collation, regardless of SET COLLATE, and writes an ascending compact
+        // IDX even for a descending tag. It leaves the source order active and the record pointer at EOF.
+        BuildTagOnDisk(path, w => w.CreateCompactIdx(idxPath, keyExpr, forExpr, unique, slot.Collation, _ctx, !_ctx.Deleted));
+        GoRecord(area, Session.AreaAt(area)!.Table.RecordCount + 1);
     }
 
     /// <summary>COPY INDEXES cIdxList | ALL [TO cCdx] — compile the named open standalone <c>.idx</c> files
