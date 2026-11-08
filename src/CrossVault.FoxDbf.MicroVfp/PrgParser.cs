@@ -1602,7 +1602,7 @@ public static class PrgParser
             return new TotalStmt(target, key, FieldsOf(segs), forE);
         }
 
-        /// <summary><c>PACK [MEMO | DBF]</c> or <c>PACK DATABASE</c> (all member tables of the current DBC).</summary>
+        /// <summary><c>PACK [MEMO | DBF]</c> or <c>PACK DATABASE</c> (the current DBC container).</summary>
         private static PrgStatement BuildPack(string text)
         {
             string kind = PrgScan.FirstWord(PrgScan.AfterFirstWord(text));

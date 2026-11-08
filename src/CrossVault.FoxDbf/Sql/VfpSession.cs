@@ -730,18 +730,22 @@ public sealed class VfpSession : IDisposable
             });
         }
 
-        CdxFile? cdx = null;
-        var src = dbf.SourcePath;
-        if (src is not null)
+        return (dbf, OpenStructuralCdx(dbf.SourcePath, dbf));
+    }
+
+    /// <summary>The same optional index discovery for read handles and a writable target's live view.</summary>
+    private static CdxFile? OpenStructuralCdx(string? path, DbfTable table)
+    {
+        if (path is not null)
         {
-            string cdxPath = SidecarFile.ChangeExtension(src, ".cdx");
+            string cdxPath = SidecarFile.ChangeExtension(path, ".cdx");
             if (File.Exists(cdxPath))
             {
-                try { cdx = CdxFile.Open(cdxPath, dbf); }
-                catch { cdx = null; }
+                try { return CdxFile.Open(cdxPath, table); }
+                catch { /* An unavailable index falls back to the scan, as in the join path. */ }
             }
         }
-        return (dbf, cdx);
+        return null;
     }
 
     /// <summary>
@@ -822,7 +826,7 @@ public sealed class VfpSession : IDisposable
             if (reopen is ReopenInfo r0) ReopenArea(r0); // a failed open/snapshot must not lose the work area.
             throw;
         }
-        return new WritableTarget(this, writer, reopen, sourcePath);
+        return new WritableTarget(this, writer, reopen, sourcePath, path);
     }
 
     /// <summary>Resolve the on-disk path of a writable table: the open DBC's long table names FIRST,
@@ -906,11 +910,12 @@ public sealed class VfpSession : IDisposable
     {
         private readonly VfpSession _session;
         private readonly ReopenInfo? _reopen;
+        private readonly string _path;
         private bool _disposed;
 
-        internal WritableTarget(VfpSession session, DbfWriter writer, ReopenInfo? reopen, string sourcePath)
+        internal WritableTarget(VfpSession session, DbfWriter writer, ReopenInfo? reopen, string sourcePath, string path)
         {
-            _session = session; Writer = writer; _reopen = reopen; SourcePath = sourcePath;
+            _session = session; Writer = writer; _reopen = reopen; SourcePath = sourcePath; _path = path;
         }
 
         // The member's path before a COW redirect, also available while its aliased area is closed.
@@ -922,6 +927,10 @@ public sealed class VfpSession : IDisposable
         /// <summary>A <see cref="DbfTable"/> view over the writer's own stream — reads see the live,
         /// just-written state, so <see cref="QueryOptimizer.FindRecords"/> matches against it.</summary>
         public DbfTable Table => Writer.Schema;
+
+        // Schema is a stream view without SourcePath. Keep the final (possibly transaction-redirected)
+        // path so candidate selection reads the index belonging to exactly the file being written.
+        internal CdxFile? OpenCdx() => OpenStructuralCdx(_path, Table);
 
         public void Dispose()
         {

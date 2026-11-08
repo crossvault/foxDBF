@@ -411,7 +411,7 @@ public sealed partial class VfpInterpreter
         ProbeEvaluate(filter);
 
         m.FilterExpr = filter;
-        m.FilterText = NormalizeFilterText(rest);
+        m.FilterText = VfpExpressionText.Normalize(rest);
     }
 
     /// <summary>VFP raises err 12 ("Variable 'X' is not found.") at SET FILTER TO time for a name that is
@@ -475,38 +475,6 @@ public sealed partial class VfpInterpreter
                 yield return ident;
             }
         }
-    }
-
-    /// <summary>Re-render a filter expression the way VFP's <c>FILTER()</c>/<c>SET("FILTER")</c> reports it for
-    /// the simple predicates the pins use: identifiers/keywords UPPER-cased and ALL whitespace stripped
-    /// OUTSIDE string literals, with single-quoted literals re-emitted double-quoted (oracle-pinned:
-    /// <c>cat = "A"</c> → <c>CAT="A"</c>, <c>  cat  =  'A'</c> → <c>CAT="A"</c>). VFP's full decompiler also
-    /// canonicalises operators (<c>&gt;=</c>→<c>=&gt;</c>, <c>AND</c>→<c>.AND.</c>); those forms are avoided in
-    /// the pinned FILTER()-text expressions, so this focused normaliser reproduces them exactly.</summary>
-    private static string NormalizeFilterText(string expr)
-    {
-        var sb = new StringBuilder(expr.Length);
-        for (int i = 0; i < expr.Length; i++)
-        {
-            char c = expr[i];
-            if (c == '"' || c == '\'' || c == '[')     // copy a string literal verbatim; normalise the delimiter.
-            {
-                char close = c == '[' ? ']' : c;
-                int start = i + 1;
-                int end = start;
-                while (end < expr.Length && expr[end] != close) end++;
-                string body = expr.Substring(start, Math.Min(end, expr.Length) - start);
-                // VFP re-emits with double quotes when the body carries none (E6: 'A' → "A"); otherwise keep
-                // single quotes so a body containing " stays representable.
-                char delim = body.IndexOf('"') < 0 ? '"' : '\'';
-                sb.Append(delim).Append(body).Append(delim);
-                i = end;                               // skip past the closing delimiter.
-                continue;
-            }
-            if (char.IsWhiteSpace(c)) continue;        // strip whitespace OUTSIDE literals.
-            sb.Append(char.ToUpperInvariant(c));
-        }
-        return sb.ToString();
     }
 
     /// <summary>Open the controlling (master) ORDER of <paramref name="area"/> across the FULL open index

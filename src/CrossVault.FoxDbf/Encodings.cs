@@ -6,22 +6,21 @@ namespace CrossVault.FoxDbf;
 /// <summary>
 /// Maps the DBF code-page / language-driver byte (header offset 29) to a numeric
 /// Windows/IBM code page (plan §A7), and resolves it to a concrete
-/// <see cref="System.Text.Encoding"/>. The table is the COMPLETE ~60-entry map taken
-/// verbatim from <c>ref/ruby-dbf/lib/dbf/encodings.rb</c>; go-dbase only covers a
-/// subset and has gaps (e.g. Baltic CP1257 = byte 0xCC, byte 0x26 is CP866), so the
-/// full table plus a <see cref="RegisterCodePage"/> custom hook is the source of truth.
+/// <see cref="System.Text.Encoding"/>. Includes the VFP9 identifiers and legacy
+/// dBase mappings, with a <see cref="RegisterCodePage"/> hook for custom drivers.
 /// </summary>
 public static class Encodings
 {
     /// <summary>Default fallback code page when the header byte is unknown (§A7: CP1252).</summary>
     public const int DefaultCodePage = 1252;
 
-    // The complete header-byte → numeric code-page table (encodings.rb verbatim, §A7).
+    // VFP9 identifiers plus the legacy ruby-dbf/dBase aliases.
     private static readonly Dictionary<byte, int> Map = new()
     {
         [0x01] = 437,  // U.S. MS-DOS
         [0x02] = 850,  // International MS-DOS
         [0x03] = 1252, // Windows ANSI
+        [0x04] = 10000, // Macintosh
         [0x08] = 865,  // Danish OEM
         [0x09] = 437,  // Dutch OEM
         [0x0a] = 850,  // Dutch OEM*
@@ -62,6 +61,8 @@ public static class Encodings
         [0x65] = 866,  // Russian MS-DOS
         [0x66] = 865,  // Nordic MS-DOS
         [0x67] = 861,  // Icelandic MS-DOS
+        [0x68] = 895,  // Kamenicky Czech MS-DOS
+        [0x69] = 620,  // Mazovia Polish MS-DOS
         [0x6a] = 737,  // Greek MS-DOS (437G)
         [0x6b] = 857,  // Turkish MS-DOS
         [0x6c] = 863,  // French-Canadian MS-DOS
@@ -70,9 +71,14 @@ public static class Encodings
         [0x7a] = 936,  // PRC GBK
         [0x7b] = 932,  // Japanese Shift-JIS
         [0x7c] = 874,  // Thai Windows/MS-DOS
+        [0x7d] = 1255, // Hebrew Windows
+        [0x7e] = 1256, // Arabic Windows
         [0x86] = 737,  // Greek OEM
         [0x87] = 852,  // Slovenian OEM
         [0x88] = 857,  // Turkish OEM
+        [0x96] = 10007, // Macintosh Cyrillic
+        [0x97] = 10029, // Macintosh Central European
+        [0x98] = 10006, // Macintosh Greek
         [0xc8] = 1250, // Eastern European Windows
         [0xc9] = 1251, // Russian Windows
         [0xca] = 1254, // Turkish Windows
@@ -133,10 +139,18 @@ public static class Encodings
             return Map.TryGetValue(codePageByte, out var cp) ? cp : null;
     }
 
+    /// <summary>The usable header code page, or zero for an unknown/unavailable driver.
+    /// Unlike the decoding fallback, this is the value reported by VFP9 CPDBF().</summary>
+    public static int ResolveAvailableCodePage(byte codePageByte)
+        => ResolveCodePage(codePageByte) is int cp && TryGetEncoding(cp) is not null ? cp : 0;
+
     // GetEncoding with replacement fallbacks (§A7: undef/invalid → :replace), null on
     // an unknown/unsupported code page so callers degrade to a fallback (never throw).
     private static Encoding? TryGetEncoding(int codePage)
     {
+        if (codePage == 620) return LegacyDosEncoding.Mazovia;
+        if (codePage == 895) return LegacyDosEncoding.Kamenicky;
+
         try
         {
             return Encoding.GetEncoding(

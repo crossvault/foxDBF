@@ -21,7 +21,7 @@ public sealed class MicroVfpRollbackAreaStateTests
 
         f.Run("BEGIN TRANSACTION\nREPLACE name WITH 'changed'\nROLLBACK");
 
-        Assert.Equal("ID>=2", f.Str("FILTER()"));
+        Assert.Equal("ID=>2", f.Str("FILTER()")); // VFP9 decompiles >= as => (M5 operator oracle).
         Assert.Equal("id INTO CHILD", f.Str("SET('RELATION')"));
         Assert.Equal("CHILD", f.Str("SET('SKIP')"));
         Assert.Equal(2m, f.Num("RECNO()"));

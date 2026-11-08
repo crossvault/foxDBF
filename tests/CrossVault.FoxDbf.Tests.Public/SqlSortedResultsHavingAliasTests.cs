@@ -130,6 +130,27 @@ public sealed class SqlSortedResultsHavingAliasTests : IDisposable
         Assert.Equal(expected, Format(general.Execute(sql)!));
     }
 
+    // VFP9 oracle: GENERAL under ENGINEBEHAVIOR 90/70; ungrouped fields under 70.
+    [Theory]
+    [InlineData("SELECT w, COUNT(*) FROM tags GROUP BY w", "_x:1 1:1 a:1 b:2 c:1 Zz:1", true)]
+    [InlineData("SELECT RTRIM(w) AS k, COUNT(*) FROM tags GROUP BY w", "_x:1 1:1 a:1 b:2 c:1 Zz:1", true)]
+    [InlineData("SELECT w AS k, COUNT(*) FROM tags GROUP BY w HAVING ASC(k) = 98", "b:2", true)]
+    [InlineData("SELECT w, COUNT(*) FROM tags GROUP BY w ORDER BY w DESC", "Zz:1 c:1 b:2 a:1 1:1 _x:1", true)]
+    [InlineData("SELECT t.w, COUNT(*) FROM tags t JOIN person p ON t.n = p.id GROUP BY t.w", "_x:1 1:1 a:1 b:2 Zz:1", true)]
+    [InlineData("SELECT ASC(w) + SUM(n) AS total FROM tags WHERE NOT ISNULL(n) GROUP BY w", "97 52 101 105 95", true)]
+    [InlineData("SELECT id % 2 AS k, name, SUM(amount) FROM person GROUP BY 1", "0:N1:120 1:N2:90", false)]
+    [InlineData("SELECT ca.acctno, ao.balance, COUNT(*)" + Join + " GROUP BY 1", "10:300:2 20:200:1 30:50:1", false)]
+    [InlineData("SELECT name, SUM(amount) FROM person", "N1:210", false)]
+    public void GroupBy_NonAggregatedValues_ComeFromLastMember(string sql, string expected, bool isGeneral)
+    {
+        using var session = new VfpSession(new EvaluationContext
+        {
+            Collation = isGeneral ? VfpCollations.General : VfpCollations.Machine,
+        });
+        session.OpenDirectory(_dir);
+        Assert.Equal(expected, Format(session.Execute(sql)!));
+    }
+
     private static string Format(SqlResult r)
         => string.Join(" ", r.Rows.Select(row => string.Join(":", row.Select(Cell))));
 

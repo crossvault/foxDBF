@@ -30,6 +30,33 @@ namespace CrossVault.FoxDbf.Expressions;
 /// </summary>
 internal static class VfpExpressionText
 {
+    /// <summary>NORMALIZE()/FILTER()/KEY() use the decompiled text with upper-case identifiers, while string
+    /// literals retain their contents (unlike FOR(), which uppercases the entire stored text).</summary>
+    public static string Normalize(string text)
+    {
+        string canonical = Canonicalize(text);
+        var result = new StringBuilder(canonical.Length);
+        for (int i = 0; i < canonical.Length; i++)
+        {
+            char c = canonical[i];
+            if (c is '\'' or '"' or '[')
+            {
+                char closing = c == '[' ? ']' : c;
+                result.Append(c);
+                while (++i < canonical.Length)
+                {
+                    result.Append(canonical[i]);
+                    if (canonical[i] == closing) break;
+                }
+            }
+            else
+            {
+                result.Append(char.ToUpperInvariant(c));
+            }
+        }
+        return result.ToString();
+    }
+
     /// <summary>The text VFP9 would store for <paramref name="text"/>, or <paramref name="text"/> itself when
     /// it is outside the reproduced subset (or does not parse).</summary>
     public static string Canonicalize(string text)
@@ -375,7 +402,7 @@ internal static class VfpExpressionText
                     TokenType.Lt => "<",
                     TokenType.Le => "<=",
                     TokenType.Gt => ">",
-                    TokenType.Ge => "=>",
+                    TokenType.Ge => "=>", // VFP9 prints => even for FILTER()/SET('FILTER') given >=.
                     TokenType.Dollar => "$",
                     TokenType.And => ".AND.",
                     TokenType.Or => ".OR.",

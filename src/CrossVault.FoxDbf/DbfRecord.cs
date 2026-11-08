@@ -121,9 +121,9 @@ public readonly struct DbfRecord
             if (!raw.IsEmpty)
             {
                 var encoding = column.IsBinary ? System.Text.Encoding.Latin1 : _table.Encoding;
-                // VFP reads the declared code page, even when the bytes happen to be valid UTF-8.
-                // Keep the public indexer's UTF-8 detection separate from expression field semantics.
-                value = FieldDecoder.DecodeCharacterPadded(column, raw, encoding, suppressUtf8Detection: true);
+                // VFP reads the declared code page, even when the bytes happen to be valid UTF-8; UTF-8 detection
+                // only applies when the table was opened with DbfOptions.DetectUtf8 (non-VFP data).
+                value = FieldDecoder.DecodeCharacterPadded(column, raw, encoding, _table.SuppressUtf8Detection);
             }
         }
         _cache[index] = value;
@@ -233,7 +233,7 @@ public readonly struct DbfRecord
         // explicit override (§A7 highest precedence) so the forced encoding wins even
         // when raw bytes are coincidentally valid UTF-8. A binary C/M column already
         // bypasses transcoding via Latin1, so the flag is moot there.
-        return FieldDecoder.Decode(column, raw, encoding, _table.EncodingIsExplicit);
+        return FieldDecoder.Decode(column, raw, encoding, _table.SuppressUtf8Detection);
     }
 
     /// <summary>

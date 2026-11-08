@@ -397,31 +397,19 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── §C.7 PACK DATABASE ───────────────────────────
 
-    /// <summary>PACK DATABASE — physical delete-compaction of EVERY member table of the current DBC
-    /// (each via <c>DbfWriter.Pack()</c>). Member tables open in a work area are closed + reopened around the
-    /// pack. FLAG: no ObjectID re-assignment and no transaction redirect for member tables (out of the RI
-    /// corpus scope).</summary>
+    /// <summary>VFP9 packs only the container and refuses with 1566 while a member table is open.</summary>
     private void ExecPackDatabase()
     {
         var db = _currentDbCleared ? null : Session.Database;
         if (db is null) return;
-        foreach (var name in db.TableNames.ToList())
+        foreach (var name in db.TableNames)
         {
             string? path = db.GetTablePath(name);
-            if (path is null || !File.Exists(path)) continue;
-            string full = Path.GetFullPath(path);
-            InvalidateCachedWriter(full);
-            var names = ReadNamesFor(path);
-            var reopen = Session.CloseAreasForPath(full);
-            // Exclusive open (read handles released above; Core Pack requires it). A member another
-            // process holds SHARED throws a sharing IOException → skipped (best-effort), others proceed.
-            try { using var w = OpenExclusiveWriter(path, names); w.Pack(); }
-            catch { /* a member that cannot be packed (locked/absent) is skipped, others proceed. */ }
-            finally { Session.ReopenAreas(reopen); }
+            if (path is not null && Session.OpenAreas.Any(w =>
+                    w.Table.SourcePath is string openPath && SamePath(openPath, path)))
+                throw new MicroVfpRuntimeException("Database has open tables or views.", 1566);
         }
-        foreach (var w in Session.OpenAreas)
-            if (_meta.TryGetValue(w.Area, out var mm)) { mm.Cached = null; mm.Ordered = null; }
-        if (Session.AreaAt(Session.CurrentArea) is not null) GoTop(Session.CurrentArea);
+        Session.RewriteDatabase(DbfDatabaseBuilder.PackContainer);
     }
 
     // ─────────────────────────── §C.7 VALIDATE DATABASE ───────────────────────────

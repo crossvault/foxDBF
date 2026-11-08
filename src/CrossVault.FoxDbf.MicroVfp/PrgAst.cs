@@ -498,7 +498,7 @@ internal sealed record MemoryDumpStmt(string? Like, NameRef? ToFile) : PrgStatem
 /// — extract/append the current DBC's stored-procedure SOURCE text. microVFP P3 §C.7.</summary>
 internal sealed record ProceduresStmt(bool Append, NameRef File) : PrgStatement;
 
-/// <summary><c>PACK DATABASE</c> — physical delete-compaction of every member table of the current DBC.
+/// <summary><c>PACK DATABASE</c> — physical delete-compaction of the current DBC container.
 /// microVFP P3 §C.7.</summary>
 internal sealed record PackDatabaseStmt : PrgStatement;
 

@@ -373,11 +373,11 @@ public sealed partial class VfpInterpreter
     }
 
     /// <summary>CPDBF([cAlias|nArea]): the code page marked in the addressed (or current) table's header,
-    /// as a VFP code-page id; 0 when no table is open.</summary>
+    /// as a VFP code-page id; 0 when the driver is unknown/unavailable or no table is open.</summary>
     private int FnCpDbf(VfpValue[] a)
     {
         var wa = AreaArg(a, 0);
-        return wa?.Table.Encoding.CodePage ?? 0;
+        return wa?.Table.CodePage ?? 0;
     }
 
     /// <summary>TEXTMERGE(cExpr [, lParse [, cDelimBegin [, cDelimEnd]]]): replace every &lt;&lt;expr&gt;&gt;

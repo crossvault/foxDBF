@@ -267,18 +267,13 @@ internal sealed class SelectExecutor
 
         var defs = BuildColumnDefs(columns);
 
-        // VFP9 carries .NULL. into the cursor/table (a NULL-able source column stays NULL-able there; a
-        // .NULL. read back is still .NULL.). Under VfpBlankFields a result value is null only for a genuine
-        // .NULL. (a set null bit, a .NULL. expression, an unmatched outer-join side), so a column that
-        // receives one is created NULL-able — otherwise the writer would store it as a blank.
-        if (VfpBlankFields)
+        // Preserve result NULLs on every SQL entry point, including a character expression such
+        // as STR(nullable_number): writing a blank would turn it into a non-NULL string.
+        for (int i = 0; i < defs.Count; i++)
         {
-            for (int i = 0; i < defs.Count; i++)
-            {
-                int col = i;
-                if (rows.Any(r => col < r.Length && r[col] is null))
-                    defs[i] = defs[i] with { Nullable = true };
-            }
+            int col = i;
+            if (rows.Any(r => col < r.Length && r[col] is null))
+                defs[i] = defs[i] with { Nullable = true };
         }
 
         if (into.Kind == IntoKind.Table)
@@ -376,7 +371,7 @@ internal sealed class SelectExecutor
         {
             case 'I': return new DbfColumnDef(name, 'I');             // Integer (fixed 4)
             case 'Y': return new DbfColumnDef(name, 'Y');             // Currency (fixed 8)
-            case 'B': return new DbfColumnDef(name, 'B');             // Double (fixed 8)
+            case 'B': return new DbfColumnDef(name, 'B', 8, col.Decimals); // Double (fixed 8)
             case 'D': return new DbfColumnDef(name, 'D');             // Date (fixed 8)
             case 'T': case '@': return new DbfColumnDef(name, 'T');   // DateTime (fixed 8)
             case 'L': return new DbfColumnDef(name, 'L');             // Logical (fixed 1)
@@ -393,7 +388,7 @@ internal sealed class SelectExecutor
                 int dec = (col.Length <= 0 && col.Decimals <= 0)
                     ? Math.Min(4, Math.Max(0, len - 2))
                     : (col.Decimals < 0 ? 0 : Math.Min(col.Decimals, Math.Max(0, len - 1)));
-                return new DbfColumnDef(name, 'N', len, dec);
+                return new DbfColumnDef(name, col.VfpType, len, dec);
             }
             default: // C / V / Q and anything else → character
             {
@@ -455,7 +450,7 @@ internal sealed class SelectExecutor
             Binder(new[] { new QualifierBinder.Source(rowAlias, from.Table,
                 new HashSet<string>(table.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase)) })
                 .CheckSelect(sel);
-            return Execute(table, ctx, sel, rowAlias);
+            return Execute(table, existing?.Cdx ?? scratchCdx, ctx, sel, rowAlias);
         }
         finally
         {
@@ -467,7 +462,7 @@ internal sealed class SelectExecutor
         }
     }
 
-    private SqlResult Execute(DbfTable table, EvaluationContext ctx, SelectStatement sel, string alias)
+    private SqlResult Execute(DbfTable table, CdxFile? cdx, EvaluationContext ctx, SelectStatement sel, string alias)
     {
         var schema = new TableSchema(table, alias);
 
@@ -481,7 +476,7 @@ internal sealed class SelectExecutor
                 VfpBlankFields));
         }, ctx);
 
-        var rows = CollectSingleRows(table, ctx, sel, alias);
+        var rows = CollectSingleRows(table, cdx, ctx, sel, alias);
 
         // (3) aggregate vs row projection. Each output row is carried together with a representative
         // row context so ORDER BY / TOP can re-evaluate row-level keys after grouping.
@@ -505,14 +500,14 @@ internal sealed class SelectExecutor
         }
 
         // (4) HAVING without grouping, DISTINCT, ORDER BY, TOP.
-        return Materialize(columns, PostProcess(pairs, sel, order, aggregate, ctx));
+        return Materialize(columns, PostProcess(pairs, sel, order, aggregate, ctx, columns));
     }
 
     /// <summary>
     /// Resolves the WHERE for a single base table into surviving rows (recno order).
     /// <para>
-    /// FAST PATH (no subquery predicate AND no outer/correlation binding) — UNCHANGED from before:
-    /// <see cref="QueryOptimizer.FindRecords"/> drives the WHERE text (full scan + residual; SET DELETED
+    /// FAST PATH (no subquery predicate, outer/correlation binding or interpreter host):
+    /// <see cref="QueryOptimizer.FindRecords"/> drives the WHERE text (structural CDX + residual; SET DELETED
     /// honoured by ctx), and the matched recnos are materialized through
     /// <see cref="DbfTable.EnumerateAll(bool)"/> so SET DELETED OFF keeps matched deleted rows.
     /// </para>
@@ -522,7 +517,7 @@ internal sealed class SelectExecutor
     /// and the predicate (or plain expression, with the outer row in scope) is evaluated per row.
     /// </para>
     /// </summary>
-    private List<Row> CollectSingleRows(DbfTable table, EvaluationContext ctx, SelectStatement sel, string alias)
+    private List<Row> CollectSingleRows(DbfTable table, CdxFile? cdx, EvaluationContext ctx, SelectStatement sel, string alias)
     {
         if (sel.WherePredicate is null && _outer is null && _host is null)
         {
@@ -532,7 +527,7 @@ internal sealed class SelectExecutor
             // correlated reference and is left untouched.
             string? filter = sel.Where?.Text;
             filter = string.IsNullOrWhiteSpace(filter) ? ".T." : StripDrivingQualifier(filter, alias);
-            var qr = _session.FindRecords(table, null, filter, ctx);
+            var qr = _session.FindRecords(table, cdx, filter, ctx);
             var hits = new HashSet<int>(qr.RecordNumbers);
             var rows = new List<Row>(hits.Count);
             int recno = 0;
@@ -1062,7 +1057,7 @@ internal sealed class SelectExecutor
                 pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, order, rcs);
             }
 
-            return Materialize(columns, PostProcess(pairs, sel, order, aggregate, ctx));
+            return Materialize(columns, PostProcess(pairs, sel, order, aggregate, ctx, columns));
         }
         finally
         {
@@ -1575,8 +1570,10 @@ internal sealed class SelectExecutor
         foreach (var members in groups)
         {
             // A whole-table aggregate over an EMPTY set still emits one row (COUNT→0, SUM→0,
-            // AVG/MIN/MAX→null). NEVER index members[0] unconditionally — use a synthetic context.
-            IRowContext rep = members.Count > 0 ? members[0] : EmptyRowContext.Instance;
+            // AVG/MIN/MAX→null). Use a synthetic context when there is no member.
+            // VFP9 takes non-aggregated values from the LAST member in source order, including
+            // differently cased GROUP BY keys that collate equal under GENERAL.
+            IRowContext rep = members.Count > 0 ? members[^1] : EmptyRowContext.Instance;
             var row = sel.Items.Select(it => ProjectAggregateItem(it, members, rep, ctx)).ToArray();
             if (sel.Having is not null
                 && !EvalHaving(sel.Having, members, AliasRow(rep, row, aliases, scope.IsSourceField), ctx))
@@ -1592,7 +1589,7 @@ internal sealed class SelectExecutor
     /// DISTINCT order, as VFP9 returns them); TOP n last.</summary>
     private static List<(object?[] row, IRowContext rep)> PostProcess(
         List<(object?[] row, IRowContext rep)> pairs, SelectStatement sel, OrderScope scope, bool aggregate,
-        EvaluationContext ctx)
+        EvaluationContext ctx, IReadOnlyList<SqlColumn> columns)
     {
         if (!aggregate && sel.Having is { } having)
         {
@@ -1610,7 +1607,12 @@ internal sealed class SelectExecutor
         }
 
         if (sel.Distinct)
+        {
+            // DISTINCT compares the stored cursor values: IIF(...,'a','ab') in C(1)
+            // is one value, even though the untruncated expressions differ.
+            pairs = pairs.ConvertAll(p => (CoerceRow(p.row, columns), p.rep));
             pairs = Distinct(pairs, ctx);
+        }
 
         if (sel.OrderBy.Count > 0)
             pairs = ApplyOrderBy(pairs, sel.OrderBy, scope, aggregate, ctx);
@@ -1650,7 +1652,7 @@ internal sealed class SelectExecutor
         if (it.Expression is not null && ContainsAggregate(it.Expression))
             return EvaluateAggregateExpression(it.Expression, members, rep, ctx);
 
-        // non-aggregate item in an aggregate query (a GROUP BY column) → value of the first member;
+        // non-aggregate item in an aggregate query (a GROUP BY column) → value of the last member;
         // an empty group has no member to read → null.
         return members.Count == 0 ? null : ToClr(it.Expression!.Evaluate(rep, ctx));
     }
@@ -1687,7 +1689,7 @@ internal sealed class SelectExecutor
         var vals = members.Select(m => arg.Evaluate(m, ctx)).Where(v => !v.IsNull).ToList();
         switch (func)
         {
-            case "SUM": return vals.Aggregate(0m, (acc, v) => acc + v.AsNumber);
+            case "SUM": return vals.Count == 0 && members.Count > 0 ? null : vals.Aggregate(0m, (acc, v) => acc + v.AsNumber);
             case "AVG": return vals.Count == 0 ? (decimal?)null : vals.Aggregate(0m, (acc, v) => acc + v.AsNumber) / vals.Count;
             case "MIN": return vals.Count == 0 ? null : Norm(ToClr(vals.Aggregate((a, b) => CompareVfp(a, b, ctx) <= 0 ? a : b)));
             case "MAX": return vals.Count == 0 ? null : Norm(ToClr(vals.Aggregate((a, b) => CompareVfp(a, b, ctx) >= 0 ? a : b)));
@@ -1999,16 +2001,11 @@ internal sealed class SelectExecutor
             if (IsAggregate(it, out var func, out var arg))
             {
                 string aggName = it.Alias ?? AggregateName(func, arg, position);
-                if (func is "MIN" or "MAX" && arg is not null)
-                {
-                    var info = SafeInfer(arg, schema);
-                    var (vc, clr) = MapInfer(info);
-                    cols.Add(new SqlColumn(aggName, vc, info.Length, info.Decimals, clr));
-                }
-                else
-                {
-                    cols.Add(new SqlColumn(aggName, 'N', 18, func == "AVG" ? 6 : 2, typeof(decimal)));
-                }
+                var info = func == "COUNT" ? new VfpTypeInfo(VfpType.Numeric, 10) : SafeInfer(arg!, schema);
+                if (func is "SUM" or "AVG" && info.Type == VfpType.Numeric && info.SqlStorageType != 'B')
+                    info = new VfpTypeInfo(info.Type, Math.Max(16, info.Length), func == "AVG" ? Math.Max(2, info.Decimals) : info.Decimals, info.SqlStorageType);
+                var (vc, clr) = MapSqlInfer(info);
+                cols.Add(new SqlColumn(aggName, vc, info.Length, info.Decimals, clr));
                 continue;
             }
 
@@ -2025,8 +2022,8 @@ internal sealed class SelectExecutor
                 }
             }
 
-            var ti = it.Expression!.InferType(schema);
-            var (typeChar, clrType) = MapInfer(ti);
+            var ti = it.Expression!.InferSqlType(schema);
+            var (typeChar, clrType) = MapSqlInfer(ti);
             cols.Add(new SqlColumn(it.Alias ?? ExpName(position), typeChar, ti.Length, ti.Decimals, clrType));
         }
         return ApplyVfpColumnNames(cols);
@@ -2067,16 +2064,11 @@ internal sealed class SelectExecutor
             if (IsAggregate(it, out var func, out var arg))
             {
                 string aggName = it.Alias ?? AggregateName(func, arg, position);
-                if (func is "MIN" or "MAX" && arg is not null)
-                {
-                    var info = SafeInfer(arg, schema);
-                    var (vc, clr) = MapInfer(info);
-                    cols.Add(new SqlColumn(aggName, vc, info.Length, info.Decimals, clr));
-                }
-                else
-                {
-                    cols.Add(new SqlColumn(aggName, 'N', 18, func == "AVG" ? 6 : 2, typeof(decimal)));
-                }
+                var info = func == "COUNT" ? new VfpTypeInfo(VfpType.Numeric, 10) : SafeInfer(arg!, schema);
+                if (func is "SUM" or "AVG" && info.Type == VfpType.Numeric && info.SqlStorageType != 'B')
+                    info = new VfpTypeInfo(info.Type, Math.Max(16, info.Length), func == "AVG" ? Math.Max(2, info.Decimals) : info.Decimals, info.SqlStorageType);
+                var (vc, clr) = MapSqlInfer(info);
+                cols.Add(new SqlColumn(aggName, vc, info.Length, info.Decimals, clr));
                 continue;
             }
 
@@ -2093,8 +2085,8 @@ internal sealed class SelectExecutor
                 }
             }
 
-            var ti = it.Expression!.InferType(schema);
-            var (typeChar, clrType) = MapInfer(ti);
+            var ti = it.Expression!.InferSqlType(schema);
+            var (typeChar, clrType) = MapSqlInfer(ti);
             cols.Add(new SqlColumn(it.Alias ?? ExpName(position), typeChar, ti.Length, ti.Decimals, clrType));
         }
         return ApplyVfpColumnNames(cols);
@@ -2271,9 +2263,15 @@ internal sealed class SelectExecutor
         return false;
     }
 
+    private static (char, Type) MapSqlInfer(VfpTypeInfo info) => info.SqlStorageType switch
+    {
+        'F' => ('F', typeof(double)),
+        'B' => ('B', typeof(double)),
+        _ => MapInfer(info)
+    };
     private static VfpTypeInfo SafeInfer(string arg, ISchema schema)
     {
-        try { return VfpExpression.Parse(arg).InferType(schema); }
+        try { return VfpExpression.Parse(arg).InferSqlType(schema); }
         catch { return new VfpTypeInfo(VfpType.Numeric); }
     }
 
@@ -2308,8 +2306,25 @@ internal sealed class SelectExecutor
     {
         var outr = new object?[row.Length];
         for (int i = 0; i < row.Length; i++)
-            outr[i] = i < cols.Count ? CoerceCell(row[i], cols[i].ClrType) : row[i];
+            outr[i] = i < cols.Count ? StoreCell(row[i], cols[i]) : row[i];
         return outr;
+    }
+
+    private static object? StoreCell(object? value, SqlColumn column)
+    {
+        if (value is not null && IsNumericBox(value))
+        {
+            if (column.VfpType == 'I') value = decimal.Truncate(Convert.ToDecimal(value));
+            else if (column.VfpType == 'Y') value = Math.Round(Convert.ToDecimal(value), 4, MidpointRounding.AwayFromZero);
+            else if (column.VfpType is 'N' or 'F' && column.Length > 0)
+                value = Math.Round(Convert.ToDecimal(value), Math.Clamp(column.Decimals, 0, 28), MidpointRounding.AwayFromZero);
+        }
+        value = CoerceCell(value, column.ClrType);
+        // A SELECT result is a VFP cursor: both direct results and INTO must expose its stored
+        // width and scale. Do this after evaluating the whole expression, not its operands.
+        if (column.VfpType == 'C' && column.Length is > 0 and <= 254 && value is string text)
+            return text.Length > column.Length ? text[..column.Length] : text.PadRight(column.Length);
+        return value;
     }
 
     private static object? CoerceCell(object? v, Type target)

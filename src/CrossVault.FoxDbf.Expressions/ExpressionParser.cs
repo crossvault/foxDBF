@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 
 namespace CrossVault.FoxDbf.Expressions;
 
@@ -18,12 +20,39 @@ internal sealed class ExpressionParser
     private readonly List<Token> _tokens;
     private int _pos;
     private int _depth;
+    private string? _sql;
+    private readonly List<(int Start, int End, string Text)> _nullTests = new();
 
     /// <summary>Recursion-depth cap so a deeply-nested expression (e.g. thousands of parentheses) throws
     /// a catchable <see cref="ExpressionException"/> instead of a fatal StackOverflowException.</summary>
     private const int MaxDepth = 400;
 
     private ExpressionParser(List<Token> tokens) => _tokens = tokens;
+
+    internal static (AstNode Root, string Text) ParseSql(string text)
+    {
+        var parser = new ExpressionParser(new ExpressionLexer(text).Tokenize()) { _sql = text };
+        var root = parser.ParseExpr(0);
+        if (parser.Peek.Type != TokenType.Eof)
+            throw new ExpressionException("Unexpected trailing input.", parser.Peek.Pos);
+        return (root, parser.SqlText(0, text.Length));
+    }
+
+    // Residual filters are reparsed by the optimizer's xBase expression engine. Keep their
+    // text in ISNULL(...) form as well as building the AST, without rewriting string literals.
+    private string SqlText(int start, int end)
+    {
+        var result = new StringBuilder();
+        int position = start;
+        foreach (var edit in _nullTests.Where(e => e.Start >= start && e.End <= end).OrderBy(e => e.Start))
+        {
+            result.Append(_sql, position, edit.Start - position);
+            result.Append(edit.Text);
+            position = edit.End;
+        }
+        result.Append(_sql, position, end - position);
+        return result.ToString();
+    }
 
     public static AstNode Parse(string text)
     {
@@ -53,10 +82,27 @@ internal sealed class ExpressionParser
 
     private AstNode ParseExprCore(int minBp)
     {
+        int start = Peek.Pos;
         var left = ParsePrefix();
         while (true)
         {
             var t = Peek;
+            if (_sql is not null && minBp <= 40 && t.Type == TokenType.Identifier &&
+                t.Text.Equals("IS", StringComparison.OrdinalIgnoreCase))
+            {
+                Next();
+                bool negate = Peek.Type == TokenType.Not;
+                if (negate) Next();
+                if (Peek.Type != TokenType.Identifier || !Peek.Text.Equals("NULL", StringComparison.OrdinalIgnoreCase))
+                    throw new ExpressionException("Expected NULL after IS / IS NOT.", Peek.Pos);
+                int end = Next().Pos + 4;
+                string operand = SqlText(start, t.Pos);
+                _nullTests.RemoveAll(e => e.Start >= start && e.End <= end);
+                _nullTests.Add((start, end, (negate ? "NOT " : "") + "ISNULL(" + operand + ")"));
+                left = new FunctionNode("ISNULL", new[] { left });
+                if (negate) left = new UnaryNode(UnOp.Not, left);
+                continue;
+            }
             int lbp = LeftBp(t.Type);
             if (lbp < minBp || lbp == 0) break;
             Next();

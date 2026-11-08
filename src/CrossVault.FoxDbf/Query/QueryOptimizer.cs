@@ -66,7 +66,8 @@ public static class QueryOptimizer
         try
         {
             var tokens = Tokenize(filter ?? string.Empty);
-            var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation, optimize: ctx.Optimize, policy: policy, entrySource: entrySource, onIndexEntryExamined: onIndexEntryExamined);
+            var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation, optimize: ctx.Optimize, policy: policy, entrySource: entrySource, onIndexEntryExamined: onIndexEntryExamined,
+                sqlAnsiOffTable: ctx.SqlSemantics && !ctx.Ansi ? table : null);
             analysis = parser.ParseTop();
         }
         catch
@@ -176,7 +177,8 @@ public static class QueryOptimizer
             try
             {
                 var tokens = Tokenize(filter ?? string.Empty);
-                var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation, optimize: ctx.Optimize, policy: policy, entrySource: entrySource, onIndexEntryExamined: onIndexEntryExamined);
+                var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation, optimize: ctx.Optimize, policy: policy, entrySource: entrySource, onIndexEntryExamined: onIndexEntryExamined,
+                    sqlAnsiOffTable: ctx.SqlSemantics && !ctx.Ansi ? table : null);
                 analysis = parser.ParseTop();
             }
             catch
@@ -293,7 +295,8 @@ public static class QueryOptimizer
             // skips the index-entry scan — the optimizability verdict is unaffected. (planOnly skips
             // the candidate scan, so entrySource is accepted for symmetry but never consulted here.)
             var tokens = Tokenize(filter ?? string.Empty);
-            var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation, planOnly: true, optimize: ctx.Optimize, policy: policy, entrySource: entrySource);
+            var parser = new BoolParser(tokens, cdx, recordCount, ctx.Collation, planOnly: true, optimize: ctx.Optimize, policy: policy, entrySource: entrySource,
+                sqlAnsiOffTable: ctx.SqlSemantics && !ctx.Ansi ? table : null);
             var analysis = parser.ParseTop();
             var leaves = parser.Leaves;
 
@@ -599,6 +602,7 @@ public static class QueryOptimizer
         private readonly CdxFile? _cdx;
         private readonly int _rc;
         private readonly IVfpCollation _collation; // the ACTIVE (context) collation, e.g. MACHINE / GENERAL
+        private readonly DbfTable? _sqlAnsiOffTable;
         private readonly bool _planOnly;    // EXPLAIN mode: classify leaves but SKIP the index-entry scan
         private readonly bool _optimize;    // SET OPTIMIZE: false → consult no index (plain full scan)
         private readonly IOptimizerPolicy? _policy; // opt-in COST seam (Highlike); null → default Core behaviour
@@ -613,10 +617,11 @@ public static class QueryOptimizer
         /// </summary>
         public readonly List<ConditionPlan> Leaves = new();
 
-        public BoolParser(List<Token> tokens, CdxFile? cdx, int recordCount, IVfpCollation? collation = null, bool planOnly = false, bool optimize = true, IOptimizerPolicy? policy = null, Func<CdxTag, IEnumerable<IndexEntry>>? entrySource = null, Action<CdxTag>? onIndexEntryExamined = null)
+        public BoolParser(List<Token> tokens, CdxFile? cdx, int recordCount, IVfpCollation? collation = null, bool planOnly = false, bool optimize = true, IOptimizerPolicy? policy = null, Func<CdxTag, IEnumerable<IndexEntry>>? entrySource = null, Action<CdxTag>? onIndexEntryExamined = null, DbfTable? sqlAnsiOffTable = null)
         {
             _t = tokens; _cdx = cdx; _rc = recordCount; _planOnly = planOnly; _optimize = optimize; _policy = policy; _entrySource = entrySource; _onExamine = onIndexEntryExamined;
             _collation = collation ?? VfpCollations.Machine;
+            _sqlAnsiOffTable = sqlAnsiOffTable;
         }
 
         /// <summary>
@@ -766,7 +771,7 @@ public static class QueryOptimizer
             {
                 var inner = span.GetRange(1, span.Count - 2);
                 if (inner.Count == 0) return Conjunct.OfBuilt(Analysis.NonOptimized(_rc));
-                var sub = new BoolParser(inner, _cdx, _rc, _collation, _planOnly, _optimize, _policy, _entrySource, _onExamine);
+                var sub = new BoolParser(inner, _cdx, _rc, _collation, _planOnly, _optimize, _policy, _entrySource, _onExamine, _sqlAnsiOffTable);
                 var subAnalysis = sub.ParseOr();
                 Leaves.AddRange(sub.Leaves); // bubble nested leaves up in source order
                 return Conjunct.OfBuilt(subAnalysis);
@@ -1584,6 +1589,19 @@ public static class QueryOptimizer
         /// </summary>
         private CharBound? MakeCharBound(CdxTag tag, CmpOp op, string literal)
         {
+            if (_sqlAnsiOffTable is { } table)
+            {
+                // VFP SQL ANSI OFF cuts BOTH operands to the shorter length. A short expression
+                // (ALLTRIM/LEFT/...) or Varchar value can match a longer literal, including the empty
+                // string. The usual literal lower bound would discard these rows. Narrow only a
+                // fixed-width C field whose value cannot be shorter than the literal; otherwise
+                // leave this leaf to the residual (other conjuncts can still use their indexes).
+                var column = table.Columns.FirstOrDefault(c => c.Type == 'C'
+                    && string.Equals(c.Name, tag.KeyExpression.Trim(), StringComparison.OrdinalIgnoreCase));
+                if (column is null || table.Encoding.GetByteCount(literal) > column.Length)
+                    return null;
+            }
+
             // <> over a collation depends on SET EXACT in a way that is unsafe to narrow here;
             // the residual handles it correctly on the full universe.
             if (op == CmpOp.Ne) return null;

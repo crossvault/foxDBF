@@ -43,6 +43,33 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - BREAKING: microVFP character reads now share SQL's NOCPTRANS, VARCHAR length and null-bit handling. SQL character
   expressions use the table code page even for bytes that happen to form valid UTF-8, preserving the
   declared field width. The public DBF indexer's UTF-8 detection remains unchanged.
+- BREAKING: microVFP `KEY()` preserves the case of string literals in its expression text, matching VFP9.
+  VFP9 operator probes also confirm that `FILTER()`, `SET('FILTER')`, `NORMALIZE()`, `KEY()` and `FOR()`
+  canonicalize both `>=` and `=>` to `=>`, and both `<=` and `=<` to `<=`.
+- Recognize VFP9 codepage identifiers for Macintosh (10000/10006/10007/10029), Hebrew
+  (1255) and Arabic (1256).
+- BREAKING: Mazovia (620) and Kamenicky (895) DBFs now decode and write using their own
+  lossless encodings instead of the fallback codepage. Unicode follows the published
+  tables with VFP9's agreeing, reversible CPCONVERT mappings taking precedence;
+  VFP9 itself has no Unicode conversion table for these two pages.
+- Unknown or unavailable codepages retain their header identifier and use `DefaultEncoding`
+  for text. `DbfTable.CodePage` and microVFP `CPDBF()` report zero for these tables.
+- BREAKING: Character fields no longer auto-detect UTF-8 by default, matching VFP9.
+  Set `DbfOptions.DetectUtf8 = true` to opt in for non-VFP data; explicit `Encoding` still wins.
+
+- microVFP implements `INDEXSEEK(key [, move [, area [, index]]])` with VFP9's collation, EXACT,
+  deleted/filter/scope rules and `FOUND()` updates. The record pointer moves only on a requested hit.
+- BREAKING: `NORMALIZE()` now returns VFP9's decompiled expression text, expanding function abbreviations,
+  canonicalizing operators and folding constant numeric subexpressions while preserving string literals.
+- BREAKING: microVFP `FILTER()` and `SET('FILTER')` return VFP9's canonical expression text, including
+  the dots around `.AND.`, `.OR.` and `.NOT.`.
+- BREAKING: microVFP `PACK DATABASE` compacts the DBC container and its memo/index sidecars, preserving
+  member tables and their deleted records. Open member tables raise VFP9 error 1566 before any rewrite.
+- BREAKING: SQL computed columns now expose VFP9 cursor widths and decimal scales (for example,
+  `LEN()` is N(10,0)). Character results are padded or truncated to their column width, including
+  IIF, DISTINCT and UNION results; numeric results use VFP9's rounding, types and decimal scales.
+  SUM over an all-NULL group returns `.NULL.`, and `INTO CURSOR/TABLE` preserves NULL character results.
+- SQL accepts `IS NULL` and `IS NOT NULL`, including compound WHERE predicates, joins and subqueries.
 - BREAKING: SQL sizes previously unsized character expression columns from the first source record, before
   filtering or sorting, as VFP9 does. In microVFP, `SELECT VARTYPE(...)` now creates C(1) instead of C(10);
   `TRANSFORM()` and string UDF results likewise use their evaluated width, with longer later values truncated
@@ -86,7 +113,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   explicit zero values and `.NULL.` fields remain distinct, under `SET NULL OFF` and `ON`.
 - Expressions reject chained or mixed arrow qualifiers such as `person->name->x` and `m.person->name`,
   including forms with spaces, as VFP9 does. Valid `alias->field` references still work.
-
+- BREAKING: SQL aggregate queries take non-aggregated values from the last row of each group, as
+  VFP9 does, including expressions, HAVING aliases and joins. Under GENERAL, grouping `B` followed
+  by `b` now returns `b` rather than `B`; aggregate calculations still include every group member.
+- Single-table SQL `SELECT`, `UPDATE` and `DELETE` now use the structural CDX for Rushmore candidate
+  selection, including open aliases and transaction working copies. UPDATE/DELETE collect their rows
+  before writing, so changing an indexed key cannot process a row twice. Results retain VFP9's
+  DELETED/EXACT/ANSI, ORDER BY, TOP and DISTINCT behavior. Under ANSI OFF, character predicates whose
+  operand may be shorter than the literal stay residual filters, preventing index bounds from losing
+  prefix matches (including `ALLTRIM(name)` and literals longer than a C field).
 - ADO.NET: a Memo column loaded with `DataTable.Load` (or `DbDataAdapter.Fill` with key info) got
   `MaxLength = 4`, the width of the memo-block pointer in the record, so any memo longer than four characters
   failed with a `ConstraintException` (#3, thanks @asmith-zinck for the report). `GetSchemaTable` now reports

@@ -57,6 +57,7 @@ public sealed partial class VfpInterpreter
             case "DELETED": r = VfpValue.Logical(FnDeleted(a)); return true;
             case "FILTER": r = VfpValue.Character(FnFilter(a)); return true;
             case "SEEK": r = VfpValue.Logical(FnSeek(a)); return true;
+            case "INDEXSEEK": r = VfpValue.Logical(FnIndexSeek(a)); return true;
             case "PCOUNT": case "PARAMETERS": r = VfpValue.Integer(CurrentCall.PassedCount); return true;
             case "PROGRAM": r = FnProgram(a); return true;
             case "TYPE": r = VfpValue.Character(TypeOf(a.Length > 0 ? a[0].AsString : string.Empty)); return true;
@@ -74,9 +75,8 @@ public sealed partial class VfpInterpreter
             case "CDX": case "MDX": r = VfpValue.Character(FnCdx(a)); return true;
             case "NDX": r = VfpValue.Character(FnNdx(a)); return true;
             case "ORDER": r = VfpValue.Character(FnOrder(a)); return true;
-            // KEY()/FOR() return the key/filter expression ALL-CAPS (hackfox s4g266 — same quirk SYS(14)
-            // honours), so KEY(n) and SYS(14,n) stay internally consistent for any lowercase-typed expr.
-            case "KEY": r = VfpValue.Character(ResolveSlot(a)?.KeyExpr.ToUpperInvariant() ?? string.Empty); return true;
+            // VFP9 KEY() preserves string literal contents; FOR() uppercases them as well as identifiers.
+            case "KEY": r = VfpValue.Character(VfpExpressionText.Normalize(ResolveSlot(a)?.KeyExpr ?? string.Empty)); return true;
             case "FOR": r = VfpValue.Character(ResolveSlot(a)?.ForExpr.ToUpperInvariant() ?? string.Empty); return true;
             case "UNIQUE": r = VfpValue.Logical(ResolveSlot(a)?.Unique ?? false); return true;
             case "DESCENDING": r = VfpValue.Logical(FnDescending(a)); return true;
