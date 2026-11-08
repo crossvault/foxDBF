@@ -74,6 +74,18 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   filtering or sorting, as VFP9 does. In microVFP, `SELECT VARTYPE(...)` now creates C(1) instead of C(10);
   `TRANSFORM()` and string UDF results likewise use their evaluated width, with longer later values truncated
   when written to the result cursor.
+- `PACK` and `ZAP` now preserve every structural CDX tag, including DBC long-field-name expressions.
+  PACK rebuilds the surviving records' keys; ZAP empties the tags. Both retain KEY/FOR definitions,
+  tag order, collation, descending and UNIQUE settings and recompute tag statistics as VFP9 does,
+  so indexed navigation, SEEK and subsequent writes continue to work without recreating the tags.
+
+- BREAKING: microVFP `INDEX ON … TO … DESCENDING` now raises VFP9 error 1706 without creating an IDX,
+  for both compact and uncompressed indexes. `SET INDEX TO` without `ORDER` now selects the first listed
+  IDX (or natural order when a CDX is listed first), also with `ADDITIVE`, and moves to the top when files
+  are listed; closing the indexes clears the order while keeping the record pointer.
+- microVFP `COPY TAG` now writes a compact ascending IDX with the source tag's collation, including GENERAL,
+  independently of `SET COLLATE`. It keeps the source order active, leaves the pointer at EOF and does not
+  open the new IDX, matching VFP9.
 - Bulk `DbfWriter.AppendRecords` now preserves each CDX tag's last-build key statistics, as VFP9
   `APPEND FROM` and incremental appends do, including empty, deleted-record and UNIQUE-tag cases.
   Explicit `Reindex` still recalculates these statistics.

@@ -106,6 +106,9 @@ public sealed partial class VfpInterpreter
         // ── INDEX ON eExpr TO <idx> [COMPACT] — build a standalone .idx and make it the controlling order. ──
         if (ix.ToIdx is not null)
         {
+            // VFP9 rejects DESCENDING for both legacy and compact standalone indexes before creating a file.
+            if (ix.Descending)
+                throw new MicroVfpRuntimeException("Cannot sort .IDX files in descending order.", 1706);
             string idxPath = ResolveSidecarPath(path, NameOf(ix.ToIdx).Trim(), ".idx");
             // VFP9 writes an uncompressed .idx unless COMPACT is given — or SET COLLATE is not MACHINE: an
             // uncompressed .idx has no collation, so VFP then writes a compact one under that collation.
@@ -250,7 +253,8 @@ public sealed partial class VfpInterpreter
 
     /// <summary>SET INDEX TO [cList] [ORDER …] [ADDITIVE] — open the listed non-structural index files in
     /// the current work area. Without ADDITIVE the previously-opened non-structural indexes are closed
-    /// first; <c>SET INDEX TO</c> (no args) closes them all. ORDER selects the controlling tag.</summary>
+    /// first; <c>SET INDEX TO</c> (no args) closes them all. Without ORDER, the first listed IDX controls;
+    /// a first-listed CDX selects natural order. A nonempty list also positions at the top.</summary>
     private void ExecSetIndex(SetIndexStmt si)
     {
         int area = Session.CurrentArea;
@@ -262,12 +266,14 @@ public sealed partial class VfpInterpreter
         if (!si.Additive)
             m.ExtraIndexes = null;   // replace: close previously-opened non-structural indexes.
 
+        string? firstFile = null;
         foreach (var f in si.Files)
         {
             string fp = ResolveExistingIndexPath(path, NameOf(f).Trim());
             if (!File.Exists(fp))
                 throw new MicroVfpRuntimeException($"SET INDEX TO: index file '{NameOf(f)}' was not found.");
             AddExtraIndex(area, fp);
+            firstFile ??= fp;
         }
 
         if (si.Order is not null)
@@ -283,11 +289,13 @@ public sealed partial class VfpInterpreter
             m.KeySet = false; m.KeyRange = false; m.KeyLow = null; m.KeyHigh = null; m.KeyVisible = null;
             GoTop(area);
         }
-        else if (!string.IsNullOrEmpty(m.Order))
+        else
         {
-            // Closing indexes may have invalidated the controlling order → revert to natural order.
-            if (OpenOrderSource(area, m.Order!) is { } src) src.Dispose();
-            else { m.Order = null; ResetOrderState(m); }
+            // VFP9 uses the first file in THIS command, including ADDITIVE, not the old controlling order
+            // or the first slot in the combined inventory. Closing all extras keeps the record pointer.
+            m.Order = firstFile is not null && IsIdxPath(firstFile) ? IdxOrderName(firstFile) : null;
+            ResetOrderState(m);
+            if (firstFile is not null) GoTop(area);
         }
     }
 

@@ -193,8 +193,7 @@ public sealed partial class DbfWriter
             _stream.Flush();
             _fpt?.Flush();
 
-            InvalidateStructuralCdx();
-            RebuildCompactIndexes();
+            RebuildIndexesAfterCompaction();
         }
         finally
         {
@@ -226,18 +225,29 @@ public sealed partial class DbfWriter
         _stream.Flush();
         _fpt?.Flush();
 
-        InvalidateStructuralCdx();
+        RebuildIndexesAfterCompaction();
+    }
+
+    private void RebuildIndexesAfterCompaction()
+    {
+        // VFP9 keeps every tag after PACK/ZAP and recomputes its build statistics, just as
+        // REINDEX does. Reusing that path also preserves creation order and canonical KEY/FOR text.
+        if (_hasStructuralCdx)
+        {
+            if (File.Exists(ExistingCdxPath()))
+                Reindex();
+            else
+                // No definitions remain to rebuild; keep the existing missing-sidecar recovery signal.
+                InvalidateStructuralCdx();
+        }
         RebuildCompactIndexes();
     }
 
     /// <summary>
-    /// §D2/§D7 — structural <c>.cdx</c> invalidation after a destructive compaction. Gated on the
-    /// TRUE byte-28-bit-0 signal (<see cref="_hasStructuralCdx"/>), NOT the lock discriminator: a
-    /// plain v0x30 table with no structural index must be left entirely alone. When the table DOES
-    /// carry a structural index we (1) delete the now-stale sidecar so VFP rebuilds it on next
-    /// <c>USE</c>, (2) clear the header's structural-CDX flag (byte 28 bit 0) so the header no longer
-    /// advertises an index that is gone — otherwise the real VFP9 runtime raises "structural .cdx not
-    /// found" and refuses to open the table — and (3) raise <see cref="ReindexNeeded"/>.
+    /// Legacy invalidation for schema rewrites, or recovery when the sidecar is already missing.
+    /// Gated on the actual structural-CDX flag, not the lock discriminator. The caller must recreate
+    /// the index; clearing the header flag prevents it from advertising a missing file.
+    /// PACK/ZAP with an existing sidecar use <see cref="RebuildIndexesAfterCompaction"/> instead.
     /// </summary>
     private void InvalidateStructuralCdx()
     {
