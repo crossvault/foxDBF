@@ -119,8 +119,20 @@ public sealed class MicroVfpDbcLongNameWriteTests : IDisposable
         var (s, vfp) = Open();
         using (s)
         {
-            // VFP9: error 12. microVFP's INSERT swallows its errors; the row must not land either way.
-            vfp.Execute("INSERT INTO customer_accounts (account_number, customer_n) VALUES (9, 'Short')");
+            // MicroVfpInsertFailureVfp9OracleTests: the physical name raises 12 and appends no row.
+            vfp.Execute("""
+                DIMENSION errors[1]
+                TRY
+                    INSERT INTO customer_accounts (account_number, customer_n) VALUES (9, 'Short')
+                CATCH TO problem
+                    savedError = ERROR()
+                    errorCount = AERROR(errors)
+                ENDTRY
+                """);
+            Assert.Equal("12", Eval(vfp, "problem.ErrorNo"));
+            Assert.Equal("0", Eval(vfp, "savedError"));
+            Assert.Equal("1", Eval(vfp, "errorCount"));
+            Assert.Equal("12", Eval(vfp, "errors[1]"));
             Assert.Equal("3", Eval(vfp, "RECCOUNT('customer_accounts')"));
         }
     }

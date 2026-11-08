@@ -758,7 +758,9 @@ public sealed class VfpSession : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(name);
         if (ReadOnly)
-            throw new FoxDbfSqlException($"The connection is read-only; cannot write to table '{name}'.");
+            // Match VFP9's protected-table write failure (USE ... NOUPDATE), including INSERT traps.
+            throw new FoxDbfSqlException($"The connection is read-only; cannot write to table '{name}'.")
+                { VfpErrorNumber = 111 };
 
         var existing = FindAreaByAlias(name)
                        ?? FindAreaByAlias(NormalizeAlias(DefaultAlias(name)));

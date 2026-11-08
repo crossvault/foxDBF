@@ -256,9 +256,30 @@ public sealed class MicroVfpAppendBlankFieldsTests : IDisposable
     {
         string path = NewTarget("t", nullable: false);
 
-        Interpreter().Execute(
-            "USE t\n=CURSORSETPROP('Buffering', 5)\nSET NULL ON\nINSERT INTO t (K) VALUES (1)\n" +
-            "SET NULL OFF\nINSERT INTO t (K) VALUES (2)\n=TABLEUPDATE(.T.)\nUSE");
+        // MicroVfpInsertFailureVfp9OracleTests: error 1581 leaves neither a row nor a pending change.
+        using var interp = Interpreter();
+        interp.Execute("""
+            USE t
+            SET MULTILOCKS ON
+            =CURSORSETPROP('Buffering', 5)
+            SET NULL ON
+            DIMENSION errors[1]
+            TRY
+                INSERT INTO t (K) VALUES (1)
+            CATCH TO problem
+                savedError = ERROR()
+                errorCount = AERROR(errors)
+            ENDTRY
+            """);
+        Assert.Equal(1581m, interp.EvalExpression("problem.ErrorNo").AsNumber);
+        Assert.Equal(0m, interp.EvalExpression("savedError").AsNumber);
+        Assert.Equal(1m, interp.EvalExpression("errorCount").AsNumber);
+        Assert.Equal(1581m, interp.EvalExpression("errors[1]").AsNumber);
+        Assert.Equal(0m, interp.EvalExpression("RECCOUNT()").AsNumber);
+        Assert.Equal(0m, interp.EvalExpression("GETNEXTMODIFIED(0)").AsNumber);
+        Assert.Equal(0, RecordCount(path));
+
+        interp.Execute("SET NULL OFF\nINSERT INTO t (K) VALUES (2)\n=TABLEUPDATE(.T.)\nUSE");
 
         Assert.Equal(1, RecordCount(path));
         Assert.Equal(new byte[] { 2, 0, 0, 0 }, Field(path, 0, "K").Bytes);

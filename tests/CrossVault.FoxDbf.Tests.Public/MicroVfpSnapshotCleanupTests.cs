@@ -28,8 +28,21 @@ public sealed class MicroVfpSnapshotCleanupTests
         using var f = new Fixture(initialRows: 1);
         f.LoadTrigger("__RI_INSERT_items", allowed: true);
 
-        f.Run("INSERT INTO items (missing) VALUES (2)");
+        // MicroVfpInsertFailureVfp9OracleTests: error 12, with no appended row.
+        f.Run("""
+            DIMENSION errors[1]
+            TRY
+                INSERT INTO items (missing) VALUES (2)
+            CATCH TO problem
+                savedError = ERROR()
+                errorCount = AERROR(errors)
+            ENDTRY
+            """);
 
+        Assert.Equal(12m, f.Num("problem.ErrorNo"));
+        Assert.Equal(0m, f.Num("savedError"));
+        Assert.Equal(1m, f.Num("errorCount"));
+        Assert.Equal(12m, f.Num("errors[1]"));
         Assert.Equal(0, f.Interp.SnapshotTempFileCount());
         Assert.Equal(1m, f.Num("RECCOUNT()"));
     }

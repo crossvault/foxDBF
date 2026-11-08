@@ -104,8 +104,10 @@ internal sealed class DmlExecutor
     {
         var cols = st.Columns!;
         if (cols.Count != values.Length)
+            // VFP9 distinguishes too few values (94) from too many (1230) for an explicit column list.
             throw new FoxDbfSqlException(
-                $"INSERT column/value count mismatch: {cols.Count} column(s) but {values.Length} value(s).");
+                $"INSERT column/value count mismatch: {cols.Count} column(s) but {values.Length} value(s).")
+                { VfpErrorNumber = values.Length < cols.Count ? 94 : 1230 };
 
         var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < cols.Count; i++)

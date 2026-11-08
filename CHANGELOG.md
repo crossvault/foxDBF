@@ -8,6 +8,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP `INSERT` error handling is verified against VFP9: unknown column names (including truncated
+  DBC field names) raise error 12; a buffered INSERT omitting a NOT NULL field under `SET NULL ON` raises
+  1581. `TRY/CATCH` and `AERROR()` retain those numbers, `ERROR()` is 0 inside CATCH, and these failures
+  leave no new row, pending buffered change, or statement snapshot.
+- INSERT with an explicit column list now reports VFP9 error 94 for too few values and 1230 for too many;
+  writes through a read-only session report error 111, instead of generic error 1 in microVFP error handlers.
 - microVFP `SEEK` and `SEEK()` under a single-value `SET KEY` stop after one step past an out-of-scope
   match, as VFP9 does; two such entries now give `FOUND() = .F.` and EOF instead of a later in-scope hit.
 - BREAKING: CDX creation rejects character keys wider than 240 characters under MACHINE or 120 under
