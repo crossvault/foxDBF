@@ -140,9 +140,9 @@ public sealed class CdxTag
     /// match its stored keys, so this refuses instead of silently seeking MACHINE bytes.</exception>
     internal byte[] EncodeCharacterKey(string s)
     {
-        if (_collationSupport == CollationSupport.Unsupported)
+        if (_collationSupport != CollationSupport.Exact)
             throw new NotSupportedException(
-                $"Index tag '{Name}' uses collating sequence '{Collation}', which is not supported for SEEK (MACHINE, GENERAL and SPANISH are).");
+                $"Index tag '{Name}' uses collating sequence '{Collation}' with code page {CharacterEncoding.CodePage}, which cannot be encoded exactly for SEEK.");
         return IndexKey.EncodeCharacterKey(s.AsSpan(), _collation, CharacterEncoding, KeyLength);
     }
 
@@ -171,7 +171,7 @@ public sealed class CdxTag
     /// <exception cref="NotSupportedException">The tag's sort sequence is unknown (see <see cref="EncodeCharacterKey"/>).</exception>
     internal CharacterSeekNeedle CreateCharacterSeekNeedle(string s, bool exact)
     {
-        if (_collationSupport == CollationSupport.Unsupported || _collation is not GeneralCollation general)
+        if (_collationSupport != CollationSupport.Exact || _collation is not GeneralCollation general)
             return new CharacterSeekNeedle(EncodeCharacterKey(s), exact, KeyPad);
         if (exact || s.Length == WeightedKeyWidth)
             return new CharacterSeekNeedle(EncodeCharacterKey(s), exact: true, KeyPad);
@@ -195,7 +195,7 @@ public sealed class CdxTag
     internal byte[] EncodeCharacterScopeKey(string s, bool exact, out bool equality)
     {
         byte[] natural;
-        if (_collation is GeneralCollation general && _collationSupport != CollationSupport.Unsupported
+        if (_collation is GeneralCollation general && _collationSupport == CollationSupport.Exact
             && !exact && s.Length != WeightedKeyWidth)
         {
             int trimmed = s.Length;
@@ -335,7 +335,7 @@ public sealed class CdxTag
     /// <c>Seek("áa")</c> lands on the first key whose heads start with those of <c>áa</c>, which may be <c>Aa</c>; a
     /// value exactly as wide as the key seeks its full key. An empty value is not found.
     /// Returns <see cref="NotFound"/> for an absent value, an unencodable type or a character key under an
-    /// unsupported collating sequence. Never throws.
+    /// unsupported collating sequence. An approximate collation throws rather than searching with wrong weights.
     /// </summary>
     public uint? Seek(object value)
     {

@@ -967,7 +967,7 @@ public static class PrgParser
 
             // Blank out the bare flag words in place (preserving offsets) so the key expression and the
             // TAG/OF/TO/FOR clause bodies carve cleanly and never swallow a trailing DESCENDING/UNIQUE/….
-            bool descending = false, unique = false, candidate = false, additive = false;
+            bool descending = false, unique = false, candidate = false, additive = false, compact = false;
             var chars = rest.ToCharArray();
             foreach (var (start, len, upper) in PrgScan.TopWords(rest))
             {
@@ -978,7 +978,8 @@ public static class PrgParser
                     case "UNIQUE": unique = true; break;
                     case "CANDIDATE": candidate = true; break;
                     case "ADDITIVE": additive = true; break;
-                    // ASCENDING / COMPACT are the defaults — recognised so they are stripped, no flag set.
+                    case "COMPACT": compact = true; break;   // a compact .idx (VFP9's default .idx is uncompressed)
+                    // ASCENDING is the default — recognised so it is stripped, no flag set.
                 }
                 for (int i = start; i < start + len; i++) chars[i] = ' ';
             }
@@ -1002,7 +1003,7 @@ public static class PrgParser
             if (keyText.Length == 0)
                 return Unparsed("INDEX", PrgScan.AfterFirstWord(text));
             return new IndexStmt(PrgExpr.Parse(keyText), tag, ofCdx, toIdx, forE,
-                descending, unique, candidate, additive);
+                descending, unique, candidate, additive, compact);
         }
 
         private static ReindexStmt BuildReindex(string text)

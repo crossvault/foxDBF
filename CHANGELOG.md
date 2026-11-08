@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Added
+
+- `DbfWriter.OpenCompactIdx` registers an existing compact standalone index for write maintenance;
+  `CloseCompactIdx` stops maintaining it. Reader-only `IdxFile.Open` does not register a writer.
+
+- Compact standalone `.idx` files: `DbfWriter.CreateCompactIdx` writes what VFP9's `INDEX ON … TO x.idx COMPACT`
+  writes. The file is one compact tree in the CDX tag format, with the collation (MACHINE, GENERAL or SPANISH) and
+  VFP's key statistics in the header, and the nodes on the pages VFP9 puts them on. microVFP keeps the `COMPACT`
+  clause instead of dropping it. As VFP9 does, it also writes a compact `.idx` for a plain `INDEX ON … TO` while
+  `SET COLLATE` is not MACHINE; before, it wrote an uncompressed MACHINE `.idx` for both. `IdxFile` reads compact
+  files: `IdxHeader` takes the KEY/FOR text from the expression pool and has a new `Collation` property;
+  `EnumerateEntries`, the microVFP orders and `SEEK` read compact leaves and honour the collation;
+  `IdxFile.Open(path, table)` resolves the key type from the table.
+
 ### Fixed
 
 - microVFP `INSERT` error handling is verified against VFP9: unknown column names (including truncated
@@ -33,6 +47,41 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   filtering or sorting, as VFP9 does. In microVFP, `SELECT VARTYPE(...)` now creates C(1) instead of C(10);
   `TRANSFORM()` and string UDF results likewise use their evaluated width, with longer later values truncated
   when written to the result cursor.
+- Bulk `DbfWriter.AppendRecords` now preserves each CDX tag's last-build key statistics, as VFP9
+  `APPEND FROM` and incremental appends do, including empty, deleted-record and UNIQUE-tag cases.
+  Explicit `Reindex` still recalculates these statistics.
+
+- BREAKING: Writes to tables with structural CDX tags whose collation/code page or KEY/FOR expression
+  cannot be maintained exactly now fail before changing DBF, memo or index bytes, instead of deleting the
+  CDX or writing approximate weights. Errors identify the tag, collation and code page; open compact IDX
+  refusals now include the code page too. GENERAL/SPANISH without exact code-page weights can no longer
+  build an index or encode a SEEK key. microVFP `USE` reports VFP error 1 for unavailable index UDFs
+  (114 for a compact IDX KEY);
+  the read-only table API can still inspect these tables. Exact collation support and hosted UDF index
+  maintenance remain separate work; no destructive compatibility option is provided.
+
+- Open compact `.idx` files now stay current through microVFP INSERT/APPEND FROM, key and FOR-field
+  REPLACE, DELETE/RECALL and PACK (MACHINE and GENERAL). `SET INDEX TO` and `USE ... INDEX` register
+  the indexes; navigation and SEEK refresh after writes. The writer API maintains registered indexes
+  through single/batch appends, updates, delete/recall and compaction.
+- BREAKING: Unsupported compact IDX definitions or collations now raise before changing table data.
+  microVFP rejects standalone-index writes through transaction/candidate/RI rollback paths and SQL
+  INSERT fallback paths that cannot maintain them, instead of silently leaving stale indexes.
+- Raw DateTime fields now round stored milliseconds through VFP9's Julian-day conversion.
+  For example, `9998-12-30 23:59:59.500` reads as midnight on December 31, while the corresponding
+  2012 boundary still rounds down. DateTime index keys inherit the corrected field value.
+
+- DateTime CDX/IDX keys now match VFP9's last-bit rounding of the fractional day, including times such as
+  `12:30:00`. Bulk builds, row-by-row maintenance and SEEK use the same encoding, so exact seeks find
+  VFP9-created keys. Reindex existing indexes containing DateTime keys to replace the old key bytes.
+- Empty Date and DateTime index keys now use VFP9's `80 00 00 00 00 00 00 00` encoding in bulk builds
+  and row-by-row maintenance. Blank D/T fields retain their empty date type in KEY/FOR expressions;
+  `SEEK {}` / `SEEK CTOT('')` find them, including the first duplicate in descending order.
+  Reindex existing indexes containing empty dates to replace the old key bytes.
+- CDX tags built by `CreateTag`, `REINDEX` and microVFP `INDEX ON … TAG` now store VFP9's key statistics,
+  place tree pages in VFP9's allocation order, and preserve the first leaf's `0x04` bit on branch pages.
+  This applies to descending, UNIQUE, FOR and GENERAL tags as well. Unused node space remains zero-filled;
+  VFP9 can leave previous contents and process-memory bytes there, so those bytes are not reproducible.
 - microVFP `APPEND FROM` preserves blank numeric source fields as blank bytes instead of writing zero;
   explicit zero values and `.NULL.` fields remain distinct, under `SET NULL OFF` and `ON`.
 - Expressions reject chained or mixed arrow qualifiers such as `person->name->x` and `m.person->name`,
@@ -92,6 +141,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   field into a C(6) tag finds nothing, as in VFP9; relate on `LEFT(name, 6)`). The interpreter now starts under VFP's default
   SET EXACT OFF instead of forcing SET EXACT ON (also on the `VfpSession` it runs on, and for a new data
   session): `name = 'ab'` matches `'abc'` and `'abcdef'` unless the program sets SET EXACT ON.
+- microVFP `INDEX ON … TO x.idx` under a `SET COLLATE` other than MACHINE writes a compact `.idx` under that
+  collation (see Added); under a sort sequence we cannot weight (GERMAN, …) it now fails as `INDEX ON … TAG` does,
+  instead of writing an uncompressed MACHINE `.idx`.
+- BREAKING: The new `IdxFile.Open(string, DbfTable)` overload makes a call with a literal `null` second argument ambiguous;
+  write `IdxFile.Open(path, (Encoding?)null)` or `IdxFile.Open(path)`.
 - BREAKING: A character `SEEK` on a GENERAL/SPANISH tag (`CdxTag.Seek(object)` and microVFP `SEEK`) uses VFP9's SET EXACT
   OFF needle: only the head weights of the value, so the diacritics of the needle are ignored and the first key
   whose heads start with them matches (`Seek("áa")` lands on `Aa`, `Seek("Müller")` on `Muller` when that sorts

@@ -11,6 +11,10 @@ namespace CrossVault.FoxDbf.Index;
 /// <c>attribute &gt; 1</c>), <c>key count u16 LE @2</c>, <c>left sibling u32 LE @4</c>,
 /// <c>right sibling u32 LE @8</c> (<c>0xFFFFFFFF</c> = none).
 /// <see cref="EnumerateEntries"/> yields the index entries in key order.
+/// <para>
+/// A COMPACT <c>.idx</c> (<see cref="IdxHeader.IsCompact"/>) is instead a single compact tree in the format of a
+/// CDX tag; it is read through <see cref="CompactTag"/>.
+/// </para>
 /// </summary>
 /// <remarks>
 /// Never throws on a malformed file — yields what is readable and terminates on a
@@ -22,8 +26,14 @@ public sealed class IdxFile : IDisposable
     private const uint NoPointer = IndexNodeHeader.NoPointer;
 
     private readonly IndexFile _index;
+    private readonly DbfTable? _table;
+    private CdxTag? _compactTag;
 
-    private IdxFile(IndexFile index) => _index = index;
+    private IdxFile(IndexFile index, DbfTable? table = null)
+    {
+        _index = index;
+        _table = table;
+    }
 
     /// <summary>Opens a legacy single index from an <c>.idx</c> path.</summary>
     public static IdxFile Open(string path) => new(IndexFile.Open(path));
@@ -37,6 +47,18 @@ public sealed class IdxFile : IDisposable
         var index = IndexFile.Open(path);
         index.TextEncoding = textEncoding;
         return new(index);
+    }
+
+    /// <summary>
+    /// Opens a standalone index from an <c>.idx</c> path for <paramref name="table"/>: its code page decodes the
+    /// KEY/FOR expressions, and its columns give a compact <c>.idx</c> its key type and pad.
+    /// </summary>
+    public static IdxFile Open(string path, DbfTable table)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+        var index = IndexFile.Open(path);
+        index.TextEncoding = table.Encoding;
+        return new(index, table);
     }
 
     /// <summary>Opens a legacy single index over an existing seekable stream.</summary>
@@ -53,13 +75,42 @@ public sealed class IdxFile : IDisposable
     public int KeyLength => Header.KeyLength;
 
     /// <summary>
+    /// The tree of a COMPACT <c>.idx</c> as a <see cref="CdxTag"/> (named after nothing — an <c>.idx</c> has no
+    /// tag name), with its collation, key type and SEEK; null for an uncompressed <c>.idx</c> or an unreadable
+    /// header.
+    /// </summary>
+    internal CdxTag? CompactTag
+    {
+        get
+        {
+            if (_compactTag is not null)
+                return _compactTag;
+            var page = _index.ReadPage(0);
+            if (page is null || (page[14] & 0x20) == 0)
+                return null;
+            var hdr = _index.ReadCdxHeader(0);
+            if (hdr.KeyExpression is null)
+                return null;   // truncated expression pool (fail closed, as CdxFile does)
+            return _compactTag = CdxFile.CreateTag(_index, _table, string.Empty, hdr);
+        }
+    }
+
+    /// <summary>
     /// Enumerates the index entries in key order: descend the interior nodes to the
     /// left-most leaf (first entry's BIG-endian child pointer), then walk the leaf
-    /// right-sibling chain reading each <c>[key][recno(BE)]</c> entry.
+    /// right-sibling chain reading each <c>[key][recno(BE)]</c> entry. A compact <c>.idx</c>
+    /// enumerates through <see cref="CompactTag"/>.
     /// </summary>
     public IEnumerable<IndexEntry> EnumerateEntries()
     {
         var header = Header;
+        if (header.IsCompact)
+            return CompactTag?.EnumerateEntries() ?? Enumerable.Empty<IndexEntry>();
+        return EnumerateUncompressed(header);
+    }
+
+    private IEnumerable<IndexEntry> EnumerateUncompressed(IdxHeader header)
+    {
         int keyLength = header.KeyLength;
         if (keyLength <= 0)
             yield break;

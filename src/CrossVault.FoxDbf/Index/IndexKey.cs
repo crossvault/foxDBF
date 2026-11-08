@@ -403,6 +403,9 @@ public readonly struct IndexKey
         };
         if (value is not DateOnly and not DateTime)
             return null;
+        // VFP9's empty date is Julian day zero, not the CLR sentinel's year 1.
+        if (date == default)
+            return EncodeTransformedDouble(0);
         return EncodeTransformedDouble(YmdToJulianDay(date.Year, date.Month, date.Day));
     }
 
@@ -410,9 +413,14 @@ public readonly struct IndexKey
     {
         if (value is not DateTime dt)
             return null;
+        // CTOT('') uses the same transformed-zero key as {}.
+        if (dt == default)
+            return EncodeTransformedDouble(0);
         long jdn = YmdToJulianDay(dt.Year, dt.Month, dt.Day);
-        double frac = dt.TimeOfDay.TotalDays;
-        return EncodeTransformedDouble(jdn + frac);
+        // VFP9 converts total Julian seconds with a rounded reciprocal. Adding a fractional day
+        // (or dividing the total by 86400) differs by one bit for e.g. 2024-01-02 12:30:00.
+        double seconds = jdn * 86_400.0 + dt.TimeOfDay.TotalSeconds;
+        return EncodeTransformedDouble(seconds * (1.0 / 86_400.0));
     }
 
     /// <summary>

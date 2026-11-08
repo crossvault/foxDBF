@@ -856,6 +856,8 @@ public sealed partial class VfpInterpreter
                     if (File.Exists(fp)) AddExtraIndex(wa.Area, fp);
                 }
 
+            ValidateIndexFunctionsOnUse(wa.Area);
+
             // Controlling order: an explicit ORDER wins; else the FIRST listed index becomes master.
             string? orderName = u.Order is null ? null : NameOf(u.Order).Trim();
             if (!string.IsNullOrEmpty(orderName))

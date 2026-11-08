@@ -96,6 +96,7 @@ public sealed partial class DbfWriter
         long appendPos = VfpLock.AppendLockPosition(_usesStructuralScheme);
         WithLock(appendPos, 1, () =>
         {
+            ValidateIndexes(CdxMaintMode.Append);
             int diskCount = (int)ReadOnDiskRecordCount();
             _recordCount = diskCount;
             existingRecordCount = diskCount;
@@ -188,6 +189,8 @@ public sealed partial class DbfWriter
             // §5.1 structural-CDX maintenance: the whole batch is durably written above; keep the append
             // lock through either incremental page edits or the large-batch rebuild.
             MaintainIndexesAfterAppendBatch(appended, existingRecordCount);
+            foreach (var (recNo, record) in appended)
+                MaintainCompactIndexes(recNo, null, new DbfRecord(_schema, record));
         });
 
         return indices;

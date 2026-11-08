@@ -103,11 +103,18 @@ public sealed partial class VfpInterpreter
         string collation = _ctx.Collation?.Name ?? "MACHINE";
         var m = Meta(area);
 
-        // ── INDEX ON eExpr TO <idx> — build a standalone legacy .idx and make it the controlling order. ──
+        // ── INDEX ON eExpr TO <idx> [COMPACT] — build a standalone .idx and make it the controlling order. ──
         if (ix.ToIdx is not null)
         {
             string idxPath = ResolveSidecarPath(path, NameOf(ix.ToIdx).Trim(), ".idx");
-            BuildTagOnDisk(path, w => w.CreateStandaloneIdx(idxPath, keyExpr, forExpr, unique, _ctx, !_ctx.Deleted));
+            // VFP9 writes an uncompressed .idx unless COMPACT is given — or SET COLLATE is not MACHINE: an
+            // uncompressed .idx has no collation, so VFP then writes a compact one under that collation.
+            bool compact = ix.Compact || !string.Equals(collation, "MACHINE", StringComparison.OrdinalIgnoreCase);
+            BuildTagOnDisk(path, w =>
+            {
+                if (compact) w.CreateCompactIdx(idxPath, keyExpr, forExpr, unique, collation, _ctx, !_ctx.Deleted);
+                else w.CreateStandaloneIdx(idxPath, keyExpr, forExpr, unique, _ctx, !_ctx.Deleted);
+            });
             AddExtraIndex(area, idxPath);
             m.Order = IdxOrderName(idxPath);
             ResetOrderState(m);
@@ -322,7 +329,7 @@ public sealed partial class VfpInterpreter
                         {
                             Name = IdxOrderName(p), FilePath = p, IsIdx = true,
                             KeyExpr = h.KeyExpression.Trim(), ForExpr = h.ForExpression.Trim(),
-                            Descending = false, Unique = h.IsUnique, Collation = "MACHINE",
+                            Descending = false, Unique = h.IsUnique, Collation = h.Collation,
                         });
                     }
                     catch { /* unreadable idx → skip */ }
@@ -392,9 +399,9 @@ public sealed partial class VfpInterpreter
         public OrderSource(IDisposable? owner) => _owner = owner;
         public void Dispose() => _owner?.Dispose();
 
-        // ── uniform key metadata across a CDX tag OR a standalone .idx (legacy .idx is always MACHINE-
-        // collated raw code-page bytes, ascending) so the SET KEY / master-tag callers work regardless
-        // of which open index the controlling order was sourced from. ──
+        // ── uniform key metadata across a CDX tag OR an uncompressed standalone .idx (always MACHINE-
+        // collated raw code-page bytes, ascending; a compact .idx is sourced as a CdxTag) so the SET KEY /
+        // master-tag callers work regardless of which open index the controlling order was sourced from. ──
         public bool IsCharacterKey => CdxTag?.IsCharacterKey ?? (IdxKeyType == IndexKeyType.Character);
         public IndexKeyType KeyType => CdxTag?.KeyType ?? IdxKeyType;
         public int KeyLength => CdxTag?.KeyLength ?? (Idx?.KeyLength ?? 0);
@@ -427,7 +434,10 @@ public sealed partial class VfpInterpreter
             {
                 if (string.Equals(IdxOrderName(p), identity, StringComparison.OrdinalIgnoreCase))
                 {
-                    var idx = IdxFile.Open(p, wa.Table.Encoding);
+                    var idx = IdxFile.Open(p, wa.Table);
+                    // A compact .idx is one CDX-format tree: it reads (collation, SEEK, key decoding) as a tag.
+                    if (idx.CompactTag is { } compactTag)
+                        return new OrderSource(idx) { CdxTag = compactTag, Name = IdxOrderName(p) };
                     return new OrderSource(idx)
                     {
                         Idx = idx, Name = IdxOrderName(p),
@@ -483,6 +493,49 @@ public sealed partial class VfpInterpreter
 
     // True while ProbeEvaluate runs: a field read at EOF/BOF yields the blank record VFP reads there, not .NULL..
     private bool _probing;
+
+    private void ValidateIndexFunctionsOnUse(int area)
+    {
+        int selected = Session.CurrentArea;
+        bool probing = _probing;
+        Session.SelectArea(area);
+        _probing = true;
+        try
+        {
+            foreach (var index in IndexInventory(area).OrderByDescending(i => i.Structural))
+                foreach (string text in new[] { index.KeyExpr, index.ForExpr })
+                {
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    var expression = VfpExpression.Parse(text);
+                    // VFP resolves a UDF while opening the index, even without a write or controlling order.
+                    // Use the host so a loaded procedure is distinguished from a missing program (error 1).
+                    if (!expression.ContainsFunction((name, _) => !VfpRuntime.EngineFunctionNames.Contains(name)))
+                        continue;
+                    try { expression.Evaluate(_row, _ctx); }
+                    catch (MicroVfpRuntimeException ex)
+                    {
+                        if (index.Structural)
+                        {
+                            Session.CloseArea(area);
+                            _meta.Remove(area);
+                        }
+                        else
+                        {
+                            // VFP has already opened the table when an explicitly listed index fails.
+                            Meta(area).ExtraIndexes?.Remove(index.FilePath);
+                        }
+                        if (index.IsIdx && text == index.KeyExpr && ex.VfpErrorNumber == 1)
+                            throw new MicroVfpRuntimeException("Index does not match the table. Delete the index file and re-create the index.", 114);
+                        throw;
+                    }
+                }
+        }
+        finally
+        {
+            _probing = probing;
+            Session.SelectArea(selected);
+        }
+    }
 
     /// <summary>The one evaluation VFP9 makes when <c>INDEX ON</c> or <c>SET FILTER TO</c> runs (verified: an
     /// unknown function raises error 1 even on an empty table or at EOF, a UDF in <c>SET FILTER</c> is called once

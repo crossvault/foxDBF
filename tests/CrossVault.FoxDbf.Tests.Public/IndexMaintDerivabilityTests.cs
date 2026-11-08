@@ -13,14 +13,14 @@ namespace CrossVault.FoxDbf.Tests;
 /// canonical DBC long-name case) can only be derived to WRONG (all-blank) key bytes — and, fatally, when the
 /// derived fallback length (C, 10) coincides with the real stored key length, the old length-only guard let
 /// it through and silently inserted blank keys on the next write. The write path must instead REFUSE to
-/// maintain such a tag and durably invalidate the sidecar (never a valid-looking-but-wrong index on disk).
+/// change the table and must preserve the sidecar, as for an unavailable VFP index expression (Q2).
 ///
 /// SAFETY: throwaway temp dir only; no committed fixture is touched.
 /// </summary>
 public sealed class IndexMaintDerivabilityTests
 {
     [Fact]
-    public void AppendWithSameLengthUnresolvableKey_DoesNotSilentlyInsertBlankKey_InvalidatesInstead()
+    public void AppendWithSameLengthUnresolvableKey_RefusesBeforeChangingFiles()
     {
         using var dir = new IndexMaintTestSupport.TempDir();
         // A C(10) column so a same-length coincidence is possible: an unresolvable KEY infers the fallback
@@ -38,19 +38,17 @@ public sealed class IndexMaintDerivabilityTests
         // reproduces the reviewer's coincidence: an unresolvable KEY whose derived length matches on disk.
         PatchKeyExpression(cdx, "name", "zzzz");   // stored decompiled: field names lower-case
 
-        bool reindexNeeded;
-        int recordCount;
+        byte[] dbfBefore = File.ReadAllBytes(dbf);
+        byte[] cdxBefore = File.ReadAllBytes(cdx);
         using (var w = DbfWriter.Open(dbf))
         {
-            w.AppendRecord("CHARLIE");            // the row is written first…
-            reindexNeeded = w.ReindexNeeded;      // …then the un-derivable tag must be flagged, not maintained
-            recordCount = w.RecordCount;
+            Assert.Throws<DbfWriteException>(() => w.AppendRecord("CHARLIE"));
+            Assert.False(w.ReindexNeeded);
+            Assert.Equal(2, w.RecordCount);
         }
 
-        Assert.Equal(3, recordCount);             // the row itself landed (only the index was affected)
-        Assert.True(reindexNeeded);               // durable signal a rebuild is owed
-        Assert.False(File.Exists(cdx));           // the stale sidecar was physically invalidated, not left with
-                                                  // a silently-wrong (all-blank) key for the new record
+        Assert.Equal(dbfBefore, File.ReadAllBytes(dbf));
+        Assert.Equal(cdxBefore, File.ReadAllBytes(cdx));
     }
 
     /// <summary>Replace the first NUL-terminated occurrence of <paramref name="from"/> (a tag KEY expression)

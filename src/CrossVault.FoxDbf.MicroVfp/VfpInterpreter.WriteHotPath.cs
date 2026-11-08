@@ -78,8 +78,13 @@ public sealed partial class VfpInterpreter
 
     private DbfWriter GetOrOpenCachedWriter(string path)
     {
+        RequireCompactIndexWriteContext(path);
         string key = Path.GetFullPath(path);
-        if (_cachedWriters.TryGetValue(key, out var w)) return w;
+        if (_cachedWriters.TryGetValue(key, out var w))
+        {
+            w.SetOpenCompactIndexes(OpenCompactIdxPaths(path), _ctx);
+            return w;
+        }
         var writer = OpenWriter(path);
         _cachedWriters[key] = writer;
         return writer;
@@ -92,7 +97,34 @@ public sealed partial class VfpInterpreter
     /// a tag un-derivable and deletes the <c>.cdx</c>, and the INSERT fast path cannot map a long column name.
     /// Writes stay positional.</summary>
     private DbfWriter OpenWriter(string path)
-        => DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared }, ReadNamesFor(path));
+    {
+        RequireCompactIndexWriteContext(path);
+        var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared }, ReadNamesFor(path));
+        try
+        {
+            writer.SetOpenCompactIndexes(OpenCompactIdxPaths(path), _ctx);
+            return writer;
+        }
+        catch { writer.Dispose(); throw; }
+    }
+
+    private void RequireCompactIndexWriteContext(string path)
+    {
+        // These rollback mechanisms snapshot DBF/FPT/CDX only. Refuse before a write
+        // rather than letting an IDX retain keys for a row that was rolled back.
+        if (OpenCompactIdxPaths(path).Count > 0 && (_txn.Count > 0 || Session.TxBeginWritePath is not null
+            || CandidateTagsFor(path) is not null || EnforceReferentialIntegrity))
+            throw new MicroVfpRuntimeException("Writing with open standalone indexes is not supported in transactions or with candidate/RI rollback enforcement.");
+    }
+
+    private List<string> OpenCompactIdxPaths(string path)
+        => Session.OpenAreas.Where(a => SamePath(a.Table.SourcePath, path))
+            .SelectMany(a => IdxFileInventory(a.Area)).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(p =>
+            {
+                using var idx = CrossVault.FoxDbf.Index.IdxFile.Open(p);
+                return idx.Header.IsCompact;
+            }).ToList();
 
     /// <summary>The column-name view of <see cref="OpenWriter"/> for <paramref name="path"/>. The EXCLUSIVE
     /// rewriters (INDEX / REINDEX / PACK / ZAP) close the areas on the file first, so they capture it before.</summary>

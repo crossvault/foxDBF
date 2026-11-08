@@ -140,6 +140,11 @@ public sealed partial class VfpInterpreter
             return;
         }
 
+        // The fallback uses a session-owned SQL writer with no standalone-index inventory.
+        if (table is not null && Session.FindAreaByAlias(table)?.Table.SourcePath is string indexedPath
+            && OpenCompactIdxPaths(indexedPath).Count > 0)
+            throw new MicroVfpRuntimeException("This INSERT path cannot maintain open standalone indexes.");
+
         // A write-through INSERT appends through the SQL DML writer (OpenWritableTarget), NOT the cached
         // interpreter writer — that foreign append bumps the on-disk record count under any writer this
         // interpreter has cached on the same table, so drop it here (a stale cached _recordCount would
@@ -965,6 +970,7 @@ public sealed partial class VfpInterpreter
 
         SnapshotForTxn(path);
         InvalidateCachedWriter(full);                   // 5.5: release the cached writer before PACK truncates the file.
+        var indexes = OpenCompactIdxPaths(path);
         var reopen = Session.CloseAreasForPath(full);   // release read handles so Pack can truncate the file.
         try
         {
@@ -972,6 +978,7 @@ public sealed partial class VfpInterpreter
             // Core Pack guard requires LockMode.Exclusive. A FOREIGN process holding the table SHARED makes
             // this open throw a sharing IOException — PACK fails cleanly, the file untouched.
             using var writer = OpenExclusiveWriter(path, names);
+            writer.SetOpenCompactIndexes(indexes, _ctx);
             writer.Pack();                              // physical delete-compaction (+ memo relocation).
         }
         finally

@@ -174,7 +174,8 @@ interp.ReleaseDataSession(s2);                 // ASESSIONS()/AUSED() enumerate 
   `TABLEREVERT()`, and `OLDVAL()`/`CURVAL()`/`GETFLDSTATE()` — a real optimistic-buffering model, not
   constants.
 - **Indexing**: `INDEX ON … TAG` (structural `.cdx`), `INDEX ON … TAG … OF <cdx>` (non-structural
-  `.cdx`), `INDEX ON … TO <idx>` (standalone `.idx`), `SET ORDER TO`, `SET INDEX TO` / `USE … INDEX`
+  `.cdx`), `INDEX ON … TO <idx> [COMPACT]` (standalone `.idx`: uncompressed as VFP9's default, compact with
+  `COMPACT` or while `SET COLLATE` is not MACHINE), `SET ORDER TO`, `SET INDEX TO` / `USE … INDEX`
   (multiple indexes per work area), `REINDEX`, `DELETE TAG`, plus introspection
   (`TAG()`/`TAGCOUNT()`/`TAGNO()`/`KEY()`/`ORDER()`/`CANDIDATE()`/`PRIMARY()`/`DESCENDING()`/`FOR()`/
   `CDX()`/`SYS(14)`/`ATAGINFO()`).

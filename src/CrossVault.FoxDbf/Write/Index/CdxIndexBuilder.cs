@@ -17,8 +17,8 @@ namespace CrossVault.FoxDbf.Write;
 /// <see cref="CdxHeader.Parse(ReadOnlySpan{byte}, Encoding)"/> / <see cref="IndexFile.ReadBranchEntries"/>, and the
 /// leaf bit-width algorithm mirrors CodeBase <c>r4reinde.c</c> (validated byte-for-byte
 /// against VFP9 fixtures such as <c>vfp_test/ligtest.CDX</c>). Page layout (per VFP9):
-/// page0 = file header, page1 = its expression pool, then for each tag a header page +
-/// pool page + its B-tree pages, and finally the tag directory.
+/// page0 = file header, page1 = its expression pool, then the tag directory, and for each
+/// tag a header page + pool page + its B-tree pages in VFP's allocation order.
 /// </remarks>
 internal static class CdxIndexBuilder
 {
@@ -67,7 +67,7 @@ internal static class CdxIndexBuilder
     /// </summary>
     public static void Build(string cdxPath, DbfTable schema, IReadOnlyList<BuildRow> rows, IReadOnlyList<CdxTagDefinition> tags,
         EvaluationContext? evalContext = null, bool includeDeleted = false, AppendUniqueState? appendUniqueState = null,
-        bool containerIndex = false)
+        bool containerIndex = false, IReadOnlyDictionary<string, byte[]>? preservedKeyStatistics = null)
     {
         var sink = new PageSink();
         sink.Reserve();           // page 0: file header (filled last)
@@ -112,11 +112,17 @@ internal static class CdxIndexBuilder
             int headerIndex = sink.Reserve();              // tag header page
             sink.Reserve();                                // its expression-pool page
             long headerOffset = (long)headerIndex * Page;
-            uint treeRoot = BuildTree(sink, () => sink.Reserve(), p.Entries, p.KeyLen, p.Pad, indexOn: !containerIndex);
+            uint treeRoot = containerIndex
+                ? BuildTree(sink, () => sink.Reserve(), p.Entries, p.KeyLen, p.Pad, indexOn: false)
+                : BuildIndexOnTree(sink, p);
 
             WriteHeaderCommon(sink.At(headerIndex), root: treeRoot, keyLen: p.KeyLen, options: p.Options,
                 signature: p.Signature, sortOrder: p.SortOrder, descending: p.Descending,
                 keyExpr: p.KeyExpr, forExpr: p.ForExpr);
+            if (preservedKeyStatistics is not null)
+                preservedKeyStatistics[p.Name].CopyTo(sink.At(headerIndex), 16);
+            else if (!containerIndex)
+                WriteKeyStatistics(sink.At(headerIndex), p.Entries, p.Pad);
             WriteExpressionPool(sink, headerOffset, p.KeyExpr, p.ForExpr);
         }
 
@@ -166,14 +172,109 @@ internal static class CdxIndexBuilder
         sink.Reserve();                      // its expression-pool page
         long headerOffset = (long)headerIndex * Page;
 
-        uint treeRoot = BuildTree(sink, () => sink.Reserve(), plan.Entries, plan.KeyLen, plan.Pad, indexOn: true);
+        uint treeRoot = BuildIndexOnTree(sink, plan);
 
         WriteHeaderCommon(sink.At(headerIndex), root: treeRoot, keyLen: plan.KeyLen, options: plan.Options,
             signature: plan.Signature, sortOrder: plan.SortOrder, descending: plan.Descending,
             keyExpr: plan.KeyExpr, forExpr: plan.ForExpr);
+        WriteKeyStatistics(sink.At(headerIndex), plan.Entries, plan.Pad);
         WriteExpressionPool(sink, headerOffset, plan.KeyExpr, plan.ForExpr);
 
         return new TagBlock(sink.ToArray(), headerOffset);
+    }
+
+    // INDEX ON uses the same allocation order and branch data bit for CDX tags and compact IDX trees.
+    // Keep the container (.dcx) path separate: VFP builds those indexes incrementally.
+    private static uint BuildIndexOnTree(PageSink sink, TagPlan plan)
+    {
+        int rootPage = sink.Reserve();
+        var (leaves, branches, nextPage) = TreeLayout(plan.LeafCount, plan.KeyLen, rootPage);
+        for (int page = rootPage + 1; page < nextPage; page++) sink.Reserve();
+        var pages = leaves.Concat(branches.SelectMany(level => level.Select(node => node.Page))).GetEnumerator();
+        var groups = branches.Select(level => level.Select(node => node.Count).ToList()).ToList();
+        return BuildTree(sink, () => { pages.MoveNext(); return pages.Current; },
+            plan.Entries, plan.KeyLen, plan.Pad, indexOn: true, groups: groups, branchesCarryLeafData: true);
+    }
+
+    // ---- compact standalone .idx (INDEX ON … TO x.idx COMPACT) ------------------------------------
+
+    /// <summary>
+    /// Build a COMPACT standalone <c>.idx</c> at <paramref name="idxPath"/> — what VFP9's
+    /// <c>INDEX ON … TO x.idx COMPACT</c> writes (and plain <c>TO x.idx</c> under a collation other than MACHINE).
+    /// The file is one compact tree, the same format as a CDX tag: page 0 holds a tag header (options 0x20 |
+    /// UNIQUE 0x01 | FOR 0x08, the collation at @494), page 1 its KEY/FOR expression pool, and the tree starts on
+    /// page 2. <paramref name="def"/>'s name is not stored; its collation decides the key bytes.
+    /// <para>
+    /// Like CDX tags built by INDEX ON, the nodes sit where VFP9 grows them key by key
+    /// (<see cref="TreeLayout"/>: root on page 2, leaves and branch nodes interleaved), and every branch node
+    /// carries the first leaf's 0x04 bit. The header holds VFP's five key statistics at @16
+    /// (<see cref="WriteKeyStatistics"/>). Overwrites any existing file at the path.
+    /// </para>
+    /// </summary>
+    internal static void BuildCompactIdx(string idxPath, DbfTable schema, IReadOnlyList<BuildRow> rows, CdxTagDefinition def,
+        EvaluationContext? evalContext = null, bool includeDeleted = false)
+    {
+        if (def.Descending)
+            throw new DbfWriteException("Cannot sort .IDX files in descending order.");
+
+        var p = PlanTag(schema, rows, def, evalContext, includeDeleted, appendUniqueState: null, standalone: true);
+        var (leafPages, branches, nextPage) = TreeLayout(p.LeafCount, p.KeyLen, rootPage: 2);
+
+        var sink = new PageSink();
+        for (int i = 0; i < nextPage; i++) sink.Reserve();
+
+        // BuildTree takes the leaves' pages first, then each branch level's in key order.
+        var pages = leafPages.Concat(branches.SelectMany(level => level.Select(node => node.Page))).GetEnumerator();
+        var groups = branches.Select(level => level.Select(node => node.Count).ToList()).ToList();
+        uint root = BuildTree(sink, () => { pages.MoveNext(); return pages.Current; },
+            p.Entries, p.KeyLen, p.Pad, indexOn: true, groups: groups, branchesCarryLeafData: true);
+
+        var header = sink.At(0);
+        WriteHeaderCommon(header, root: root, keyLen: p.KeyLen, options: p.Options, signature: p.Signature,
+            sortOrder: p.SortOrder, descending: false, keyExpr: p.KeyExpr, forExpr: p.ForExpr);
+        WriteKeyStatistics(header, p.Entries, p.Pad);
+        WriteExpressionPool(sink, headerOffset: 0, p.KeyExpr, p.ForExpr);
+
+        File.WriteAllBytes(idxPath, sink.ToArray());
+    }
+
+    /// <summary>
+    /// The five key statistics VFP9 keeps at @16..35 of a tag header (32-bit LE each), over the entries in key
+    /// order: the entry count; the number of entries whose key differs from the one before (the first is compared
+    /// with an all-<paramref name="pad"/> key, so a blank first key is not counted); the sum of the record-number
+    /// distances |r(i) − r(i−1)|; the sum of sign(|d(i)| − |d(i−1)|) over those distances (signed); and the number
+    /// of steps down, r(i) &lt; r(i−1). Derived from VFP9 compact <c>.idx</c> files: 300- to 12000-row tables with
+    /// duplicates, blank keys, FOR and UNIQUE, and every arrangement of short key sequences.
+    /// </summary>
+    private static void WriteKeyStatistics(byte[] header, List<Entry> entries, byte pad)
+    {
+        uint distinct = 0, distanceSum = 0, descents = 0;
+        int trend = 0;
+        byte[]? previous = null;
+        long previousDistance = -1;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var key = entries[i].Key;
+            bool same = previous is null
+                ? key.AsSpan().IndexOfAnyExcept(pad) < 0
+                : key.AsSpan().SequenceEqual(previous);
+            if (!same) distinct++;
+            previous = key;
+
+            if (i == 0) continue;
+            if (entries[i].Recno < entries[i - 1].Recno) descents++;
+            long distance = Math.Abs((long)entries[i].Recno - entries[i - 1].Recno);
+            distanceSum += (uint)distance;
+            if (previousDistance >= 0)
+                trend += Math.Sign(distance - previousDistance);
+            previousDistance = distance;
+        }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(16), (uint)entries.Count);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(20), distinct);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(24), distanceSum);
+        BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(28), trend);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(32), descents);
     }
 
     /// <summary>The 10-byte, space-padded tag-directory key for <paramref name="name"/> — the exact bytes the
@@ -201,8 +302,11 @@ internal static class CdxIndexBuilder
         public byte[] ForExpr = Array.Empty<byte>();
     }
 
+    // standalone: plan the single tree of a COMPACT standalone .idx — no tag name, and the options byte lacks the
+    // compound bit (0x20 instead of 0x60).
     private static TagPlan PlanTag(DbfTable schema, IReadOnlyList<BuildRow> rows, CdxTagDefinition def,
-        EvaluationContext? evalContext, bool includeDeleted, AppendUniqueState? appendUniqueState)
+        EvaluationContext? evalContext, bool includeDeleted, AppendUniqueState? appendUniqueState,
+        bool standalone = false)
     {
         string keyExpr = def.KeyExpression ?? string.Empty;
         bool hasFor = !string.IsNullOrWhiteSpace(def.ForExpression);
@@ -222,11 +326,12 @@ internal static class CdxIndexBuilder
         // Tag name and KEY/FOR text are stored in the TABLE's code page, as VFP9 does ('ó' of razónsoc is
         // 0xF3 in a CP1252 table, 0xA2 in a CP850 one) — never as '?'.
         var textEncoding = schema.Encoding;
-        byte[] nameKey = MakeNameKey(def.Name, textEncoding);
-        byte[] keyText = CodePageText.Encode(keyExpr, textEncoding, "CDX tag KEY expression", m => new DbfWriteException(m));
-        byte[] forText = CodePageText.Encode(forExpr, textEncoding, "CDX tag FOR expression", m => new DbfWriteException(m));
+        string what = standalone ? "compact IDX" : "CDX tag";
+        byte[] nameKey = standalone ? Array.Empty<byte>() : MakeNameKey(def.Name, textEncoding);
+        byte[] keyText = CodePageText.Encode(keyExpr, textEncoding, $"{what} KEY expression", m => new DbfWriteException(m));
+        byte[] forText = CodePageText.Encode(forExpr, textEncoding, $"{what} FOR expression", m => new DbfWriteException(m));
         if (keyText.Length + forText.Length + 2 > Page)
-            throw new DbfWriteException("CDX tag KEY + FOR expressions exceed the 512-byte expression pool.");
+            throw new DbfWriteException($"{what} KEY + FOR expressions exceed the 512-byte expression pool.");
 
         // The per-row KEY/FOR derivation (collation, key type/length, FOR filter, encoding) is factored
         // into a reusable TagKeyComputer — the SAME primitive the incremental write-path maintenance
@@ -261,7 +366,7 @@ internal static class CdxIndexBuilder
                 entries = DropDuplicateKeys(entries);
         }
 
-        byte options = (byte)0x60; // compound | compact
+        byte options = standalone ? (byte)0x20 : (byte)0x60; // [compound |] compact
         if (def.Unique) options |= 0x01;
         if (hasFor) options |= 0x08;
 
@@ -371,11 +476,6 @@ internal static class CdxIndexBuilder
         }
     }
 
-    /// <summary>True when keys under <paramref name="collation"/> can be written for a table in
-    /// <paramref name="schema"/>'s code page (MACHINE, GENERAL, SPANISH); false for an unknown sequence.</summary>
-    internal static bool CanReproduceCollation(DbfTable schema, string? collation)
-        => VfpCollations.Resolve(collation, schema.Encoding.CodePage, out _) != CollationSupport.Unsupported;
-
     /// <summary>
     /// Build the <see cref="TagKeyComputer"/> for <paramref name="def"/> against <paramref name="schema"/>.
     /// The per-tag collation ALWAYS wins (it is baked into the tag header), but the KEY/FOR expressions
@@ -385,11 +485,10 @@ internal static class CdxIndexBuilder
     internal static TagKeyComputer CreateKeyComputer(DbfTable schema, CdxTagDefinition def, EvaluationContext? evalContext)
     {
         // The stored keys are weighted in the TABLE code page (VFP9: CP850 GENERAL expands Ä to AE, CP1252 does
-        // not). An unknown sequence cannot be reproduced at all: refuse rather than write MACHINE bytes under a
-        // foreign sort-sequence name (incremental maintenance then invalidates the CDX instead of corrupting it).
-        if (VfpCollations.Resolve(def.Collation, schema.Encoding.CodePage, out var collation) == CollationSupport.Unsupported)
+        // not). Approximate weights are not VFP keys either: refuse before writing any index bytes.
+        if (VfpCollations.Resolve(def.Collation, schema.Encoding.CodePage, out var collation) != CollationSupport.Exact)
             throw new DbfWriteException(
-                $"Collating sequence '{def.Collation}' is not supported for CDX keys (MACHINE, GENERAL and SPANISH are).");
+                $"Cannot derive index tag '{def.Name}' exactly (collation '{def.Collation}', code page {schema.Encoding.CodePage}).");
         var ctx = new EvaluationContext
         {
             // KEY/FOR comparisons run on the decoded text (VFP: in the current code page), so they use the
@@ -460,64 +559,83 @@ internal static class CdxIndexBuilder
     /// page 5: 9/9/10/10/9/10/10/9…, on page 8: 10/10/10/9/10/10/9…; key length 42: 10/10/10…).
     /// </para>
     /// <para>
-    /// Only the grouping is taken from this simulation: our pages stay laid out leaves first, then each branch
-    /// level, root last. Leaves are packed greedily, as VFP does.
+    /// This helper takes only the grouping for the directory/container path. INDEX ON also uses the page
+    /// positions from <see cref="TreeLayout"/>. Leaves are packed greedily, as VFP does.
     /// </para>
     /// </summary>
     private static List<List<int>> BranchLayout(int leafCount, int keyLen, int rootPage)
+        => TreeLayout(leafCount, keyLen, rootPage).Branches
+            .Select(level => level.Select(node => node.Count).ToList())
+            .ToList();
+
+    /// <summary>A node of a laid-out tree: its page number and (for a branch) its child count.</summary>
+    internal readonly record struct TreeNode(int Page, int Count);
+
+    /// <summary>
+    /// The tree <see cref="BranchLayout"/> describes, with the PAGE of every node: the leaves in key order, the
+    /// branch levels from the leaf parents up to the root, and the first page after the tree. Pages are handed out
+    /// in the order VFP9 creates the nodes: the root keeps <paramref name="rootPage"/>, the first split puts the
+    /// right leaf on the next page and the left one on the page after, every later leaf takes the next page, and
+    /// the branch nodes its arrival splits off follow it, bottom-up (a root split: the right half first).
+    /// </summary>
+    internal static (List<int> Leaves, List<List<TreeNode>> Branches, int NextPage) TreeLayout(
+        int leafCount, int keyLen, int rootPage)
     {
-        var levels = new List<List<int>>();          // per level: child count of each node
-        if (leafCount <= 1) return levels;            // a single leaf is the root
+        var branches = new List<List<TreeNode>>();   // per level: the nodes in key order
+        if (leafCount <= 1)
+            return (new List<int> { rootPage }, branches, rootPage + 1);   // a single leaf is the root
 
         int entrySize = keyLen + 8;
         int cap = Math.Max(2, (Page - StdHeader) / entrySize);
         bool givesUpLast = entrySize < 50;
         int next = rootPage + 1;
-        var lastPage = new List<int>();               // page of the rightmost node of each level
 
         // The root leaf splits: two new leaves (left on rootPage+2, right on rootPage+1), the root becomes a branch.
-        next += 2;
-        levels.Add(new List<int> { 2 });
-        lastPage.Add(rootPage);
+        int rightLeaf = next++;
+        int leftLeaf = next++;
+        var leaves = new List<int> { leftLeaf, rightLeaf };
+        branches.Add(new List<TreeNode> { new(rootPage, 2) });
 
         for (int leaf = 2; leaf < leafCount; leaf++)
         {
-            next++;                                   // the new leaf's page
+            leaves.Add(next++);                       // the new leaf's page
             for (int h = 0; ; h++)
             {
-                var level = levels[h];
-                if (level[^1] < cap)
+                var level = branches[h];
+                var node = level[^1];
+                if (node.Count < cap)
                 {
-                    level[^1]++;
+                    level[^1] = node with { Count = node.Count + 1 };
                     break;
                 }
 
-                int keep = givesUpLast && (lastPage[h] & 1) == 1 ? cap - 1 : cap;
-                if (lastPage[h] == rootPage)
+                int keep = givesUpLast && (node.Page & 1) == 1 ? cap - 1 : cap;
+                if (node.Page == rootPage)
                 {
                     // Root split: the root's children go to two new nodes, the root (same page) gets a level above.
                     int right = next++;
-                    next++;                           // the left node
-                    level[^1] = keep;
-                    level.Add(cap + 1 - keep);
-                    lastPage[h] = right;
-                    levels.Add(new List<int> { 2 });
-                    lastPage.Add(rootPage);
+                    int left = next++;
+                    level[^1] = new TreeNode(left, keep);
+                    level.Add(new TreeNode(right, cap + 1 - keep));
+                    branches.Add(new List<TreeNode> { new(rootPage, 2) });
                     break;
                 }
 
-                level[^1] = keep;
-                level.Add(cap + 1 - keep);
-                lastPage[h] = next++;
+                level[^1] = node with { Count = keep };
+                level.Add(new TreeNode(next++, cap + 1 - keep));
             }
         }
-        return levels;
+        return (leaves, branches, next);
     }
 
     /// <summary>Build the compact B-tree for <paramref name="entries"/> and return the root page offset.
-    /// Pages are taken from <paramref name="alloc"/> (either fresh reservations or a pre-reserved range).
-    /// <paramref name="indexOn"/>: the leaves carry the 0x04 bit as INDEX ON sets it (see <see cref="PackLeaves"/>).</summary>
-    private static uint BuildTree(PageSink sink, Func<int> alloc, List<Entry> entries, int keyLen, byte pad, bool indexOn)
+    /// Pages are taken from <paramref name="alloc"/> (either fresh reservations or a pre-reserved range), leaves
+    /// first, then each branch level in key order. <paramref name="indexOn"/>: the leaves carry the 0x04 bit as
+    /// INDEX ON sets it (see <see cref="PackLeaves"/>). <paramref name="groups"/> overrides the branch grouping
+    /// (default: <see cref="BranchLayout"/> from the first leaf's page); <paramref name="branchesCarryLeafData"/>
+    /// gives every branch node the 0x04 bit of the first leaf, as VFP9 does on the trees it grows key by key.</summary>
+    private static uint BuildTree(PageSink sink, Func<int> alloc, List<Entry> entries, int keyLen, byte pad, bool indexOn,
+        List<List<int>>? groups = null, bool branchesCarryLeafData = false)
     {
         var leaves = PackLeaves(entries, keyLen, pad, indexOn);
 
@@ -553,14 +671,15 @@ internal static class CdxIndexBuilder
 
         // Group them into branch levels the way VFP9 does; the layout depends on where the tree starts, which
         // is the first page handed out (the first leaf's).
-        foreach (var groups in BranchLayout(leaves.Count, keyLen, rootPage: leaves[0].Index))
-            level = BuildBranchLevel(sink, alloc, level, keyLen, groups);
+        ushort branchExtra = branchesCarryLeafData ? leaves[0].AttrExtra : (ushort)0;
+        foreach (var levelGroups in groups ?? BranchLayout(leaves.Count, keyLen, rootPage: leaves[0].Index))
+            level = BuildBranchLevel(sink, alloc, level, keyLen, levelGroups, branchExtra);
 
         return level[0].Offset;
     }
 
     private static List<ChildRef> BuildBranchLevel(PageSink sink, Func<int> alloc, List<ChildRef> children, int keyLen,
-        List<int> groups)
+        List<int> groups, ushort attrExtra = 0)
     {
         var nodes = new List<(int index, List<ChildRef> kids)>(groups.Count);
         int start = 0;
@@ -579,7 +698,7 @@ internal static class CdxIndexBuilder
             var (index, kids) = nodes[n];
             uint left = n > 0 ? (uint)(nodes[n - 1].index * Page) : NoPtr;
             uint right = n < nodes.Count - 1 ? (uint)(nodes[n + 1].index * Page) : NoPtr;
-            WriteBranch(sink.At(index), kids, keyLen, (ushort)(isRoot ? AttrRoot : 0), left, right);
+            WriteBranch(sink.At(index), kids, keyLen, (ushort)((isRoot ? AttrRoot : 0) | attrExtra), left, right);
 
             var last = kids[^1];
             result.Add(new ChildRef((uint)(index * Page), last.SeparatorKey, last.SeparatorRecno));
@@ -1219,6 +1338,20 @@ internal static class CdxIndexBuilder
             // must embed objecttype as "Field     " (C(10)), not the trimmed "Field". Re-decode the
             // raw bytes at full width for 'C' fields; a NULL-flagged field still reads as NULL.
             var value = _record[name];
+            if (value is null)
+            {
+                foreach (var col in _record.Table.Columns)
+                {
+                    if (string.Equals(col.Name, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Blank D/T fields remain typed empties in KEY/FOR expressions; genuine
+                        // .NULL. still follows the record's null flag (VFP9 empty-date oracle).
+                        if (col.Type is 'D' or 'T')
+                            return _record.GetVfpValue(name);
+                        break;
+                    }
+                }
+            }
             if (value is string)
             {
                 foreach (var col in _record.Table.Columns)

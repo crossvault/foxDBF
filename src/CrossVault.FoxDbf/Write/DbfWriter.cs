@@ -244,7 +244,7 @@ public sealed partial class DbfWriter : IDisposable
     // ---- incremental CDX maintenance test seam (project-review finding 5.1) -----
     // Test-only fault injector: when true, the NEXT write-path index-maintenance pass MUST throw so
     // the crash-safety backstop can be proven — the data row is written FIRST, then on a maintenance
-    // failure <see cref="ReindexNeeded"/> is raised (so the next ordered read / VFP USE rebuilds) and
+    // failure <see cref="ReindexNeeded"/> is raised (the caller must explicitly rebuild the index) and
     // the exception is rethrown (never leave a half-edited page silently). Honoured by the incremental
     // maintenance the implementer wires into AppendCore/UpdateCore; NEVER set outside tests.
     internal bool FailIndexMaintenanceForTests { get; set; }
@@ -565,6 +565,7 @@ public sealed partial class DbfWriter : IDisposable
         int resultIndex = 0;
         WithLock(appendPos, 1, () =>
         {
+            ValidateIndexes(CdxMaintMode.Append);
             int diskCount = (int)ReadOnDiskRecordCount();
             _recordCount = diskCount;
 
@@ -622,6 +623,7 @@ public sealed partial class DbfWriter : IDisposable
             // §5.1 incremental maintenance: keep the append byte-range lock through the structural-CDX
             // read/modify/write so a second Shared writer cannot interleave page edits.
             MaintainIndexesAfterAppend(newCount, new DbfRecord(_schema, record));
+            MaintainCompactIndexes(newCount, null, new DbfRecord(_schema, record));
         });
 
         return resultIndex;
@@ -645,7 +647,7 @@ public sealed partial class DbfWriter : IDisposable
         long offset = _headerLength + (long)index * _recordLength;
         // §5.1: the pre-image (old row) is needed to compute each tag's OLD key and the post-image for the
         // NEW key. Read it when index maintenance is active, regardless of any KeepValue slot.
-        bool maintain = ShouldMaintainIndexes();
+        bool maintain = ShouldMaintainIndexes() || _openCompactIndexes.Count > 0;
         byte[]? oldRecordBytes = null;
         byte[]? writtenRecord = null;
 
@@ -654,6 +656,7 @@ public sealed partial class DbfWriter : IDisposable
         long recPos = VfpLock.RecordLockPosition(index + 1, _usesStructuralScheme, _headerLength, _recordLength);
         WithLock(recPos, 1, () =>
         {
+            ValidateIndexes();
             var columns = _schema.Columns;
 
             // KeepValue sentinel: a field whose EXISTING on-disk bytes must survive the full-row
@@ -735,6 +738,8 @@ public sealed partial class DbfWriter : IDisposable
             if (maintain && oldRecordBytes is not null && writtenRecord is not null)
                 MaintainIndexesAfterUpdate(index + 1,
                     new DbfRecord(_schema, oldRecordBytes), new DbfRecord(_schema, writtenRecord));
+            if (oldRecordBytes is not null && writtenRecord is not null)
+                MaintainCompactIndexes(index + 1, new DbfRecord(_schema, oldRecordBytes), new DbfRecord(_schema, writtenRecord));
         });
     }
 
@@ -766,10 +771,18 @@ public sealed partial class DbfWriter : IDisposable
         long recPos = VfpLock.RecordLockPosition(index + 1, _usesStructuralScheme, _headerLength, _recordLength);
         WithLock(recPos, 1, () =>
         {
+            ValidateIndexes();
             long offset = _headerLength + (long)index * _recordLength;
+            byte[]? before = _openCompactIndexes.Count > 0 ? ReadRaw(_handle, offset, _recordLength) : null;
             _stream.Seek(offset, SeekOrigin.Begin);
             _stream.WriteByte(flag);
             _stream.Flush();
+            if (before is not null)
+            {
+                var after = (byte[])before.Clone();
+                after[0] = flag;
+                MaintainCompactIndexes(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));
+            }
         });
     }
 

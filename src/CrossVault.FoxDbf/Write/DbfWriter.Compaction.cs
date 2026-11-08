@@ -41,6 +41,7 @@ public sealed partial class DbfWriter
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         RequireExclusiveForCompaction();
+        ValidateIndexes();
         // Exclusive is now guaranteed → the whole-file lock is a no-op (WithLock passes straight
         // through in LockMode.Exclusive); kept for symmetry with the historical §D3 bracket.
         var (fileStart, fileLength) = VfpLock.FileLockRange();
@@ -55,6 +56,7 @@ public sealed partial class DbfWriter
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         RequireExclusiveForCompaction();
+        ValidateIndexes();
         var (fileStart, fileLength) = VfpLock.FileLockRange();
         WithLock(fileStart, fileLength, ZapCore);
     }
@@ -192,6 +194,7 @@ public sealed partial class DbfWriter
             _fpt?.Flush();
 
             InvalidateStructuralCdx();
+            RebuildCompactIndexes();
         }
         finally
         {
@@ -224,6 +227,7 @@ public sealed partial class DbfWriter
         _fpt?.Flush();
 
         InvalidateStructuralCdx();
+        RebuildCompactIndexes();
     }
 
     /// <summary>

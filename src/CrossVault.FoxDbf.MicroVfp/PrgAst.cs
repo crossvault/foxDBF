@@ -216,8 +216,9 @@ internal sealed record SetOrderStmt(NameRef? Order, NameRef? In, bool? Direction
 /// <summary><c>INDEX ON eKey [TAG cTag [OF cCdx] | TO cIdx] [FOR lExpr] [ASCENDING|DESCENDING]
 /// [UNIQUE|CANDIDATE] [ADDITIVE] [COMPACT]</c> — build/replace an index. <see cref="Tag"/> targets a
 /// CDX tag (structural when <see cref="OfCdx"/> is null); <see cref="ToIdx"/> targets a standalone
-/// <c>.idx</c> (unsupported — the interpreter throws). <see cref="Candidate"/> is CANDIDATE (a
-/// duplicate-key is an error), <see cref="Unique"/> is UNIQUE (keep first per key).
+/// <c>.idx</c>, compact when <see cref="Compact"/> is set (VFP9's default <c>.idx</c> is uncompressed).
+/// <see cref="Candidate"/> is CANDIDATE (a duplicate-key is an error), <see cref="Unique"/> is UNIQUE (keep first
+/// per key).
 /// microVFP P1 gap #1 — INDEX/ORDER WRITE model.</summary>
 internal sealed record IndexStmt(
     PrgExpr Key,
@@ -228,7 +229,8 @@ internal sealed record IndexStmt(
     bool Descending,
     bool Unique,
     bool Candidate,
-    bool Additive) : PrgStatement;
+    bool Additive,
+    bool Compact = false) : PrgStatement;
 
 /// <summary><c>REINDEX [IN area]</c> — rebuild every open tag of a work area from live data.
 /// microVFP P1 gap #1 — INDEX/ORDER WRITE model.</summary>

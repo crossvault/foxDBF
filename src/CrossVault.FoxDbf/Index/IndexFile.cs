@@ -114,11 +114,16 @@ public sealed class IndexFile : IDisposable
         return CdxHeader.Parse(buf, TextEncoding);
     }
 
-    /// <summary>Reads and parses a legacy single-IDX header (offset 0).</summary>
+    /// <summary>Reads and parses a standalone-IDX header (offset 0): the uncompressed 512-byte header, or the
+    /// CDX-tag header and its expression pool of a compact <c>.idx</c>.</summary>
     public IdxHeader ReadIdxHeader(long byteOffset = 0)
     {
         var page = ReadPage(byteOffset);
-        return page is null ? default : IdxHeader.Parse(page, TextEncoding);
+        if (page is null)
+            return default;
+        if ((page[14] & 0x20) != 0)
+            return IdxHeader.FromCompact(ReadCdxHeader(byteOffset));
+        return IdxHeader.Parse(page, TextEncoding);
     }
 
     /// <summary>

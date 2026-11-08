@@ -510,6 +510,12 @@ public sealed partial class VfpInterpreter
     /// </summary>
     private void RefreshAfterInPlaceWrite(string path, VfpSession.WorkArea wa, IReadOnlyList<string> replacedFields)
     {
+        if (OpenCompactIdxPaths(path).Count > 0)
+        {
+            ReopenFileAreas(path);
+            ResetMetaCachesForPath(path);
+            return;
+        }
         if (Session.TxBeginWritePath is not null || AnyStructuralTagKeyTouchedBy(wa, replacedFields))
         {
             ReopenFileAreas(path, replacedFields);   // cold: cdx pages moved / tx copy — reopen handles fresh.
@@ -567,6 +573,7 @@ public sealed partial class VfpInterpreter
     /// </summary>
     private string BeginTxWrite(string path)
     {
+        RequireCompactIndexWriteContext(path);
         if (Session.TxBeginWritePath is null) return path;   // autocommit — unchanged.
         string writePath = Session.RedirectWritePath(path);  // live → private copy (idempotent for a copy path).
         if (!SamePath(writePath, path))

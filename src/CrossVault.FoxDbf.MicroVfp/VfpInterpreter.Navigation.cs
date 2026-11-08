@@ -1327,6 +1327,7 @@ public sealed partial class VfpInterpreter
         IndexKeyType.Character => string.CompareOrdinal(decoded.AsString ?? string.Empty, key.AsString ?? string.Empty),
         IndexKeyType.Date => (decoded.AsDate ?? default).CompareTo(
             key.ToClr() is DateOnly d ? d : (key.ToClr() is DateTime dt ? DateOnly.FromDateTime(dt) : default)),
+        IndexKeyType.DateTime => (decoded.AsDateTime ?? default).CompareTo(key.AsDateTime),
         _ => 0,
     };
 
