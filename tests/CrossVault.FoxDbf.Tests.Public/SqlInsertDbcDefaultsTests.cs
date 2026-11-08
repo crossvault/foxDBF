@@ -19,6 +19,48 @@ namespace CrossVault.FoxDbf.Tests;
 /// </summary>
 public sealed class SqlInsertDbcDefaultsTests
 {
+    [Theory]
+    [InlineData(0)] // closed target
+    [InlineData(1)] // direct append
+    [InlineData(2)] // custom alias
+    [InlineData(3)] // buffered alias
+    [InlineData(4)] // RI/SQL fallback
+    public void MicroVfp_Insert_FailingDefault_RaisesAndWritesNoRow(int mode)
+    {
+        using var dir = new MicroVfpTestSupport.TempDir("ins_default_error");
+        string copy = TastradeCopy(dir);
+        int before = LastOrder(copy).Count;
+        using var session = new VfpSession();
+        session.OpenDatabase(Path.Combine(copy, "tastrade.dbc"));
+        using var vfp = new VfpInterpreter(session);
+        // Deliberately do not load newid(): its DEFAULT must raise error 1, not lose the INSERT silently.
+        string target = mode is 2 or 3 ? "x" : "orders";
+        if (mode > 0) vfp.Execute($"USE tastrade!orders IN 0 ALIAS {target}");
+        if (mode == 3) vfp.Execute("SET MULTILOCKS ON\n=CURSORSETPROP('Buffering', 5, 'x')");
+        if (mode == 4) vfp.EnforceReferentialIntegrity = true;
+        vfp.Execute($"""
+            caught = 0
+            DIMENSION laError[1]
+            TRY
+                INSERT INTO {target} (shipper_id) VALUES ('ZZ')
+            CATCH TO problem
+                caught = problem.ErrorNo
+                savedError = ERROR()
+                =AERROR(laError)
+                arrayError = laError[1]
+            ENDTRY
+            """);
+        Assert.Equal(1, vfp.Memory.Get("caught").AsNumber);
+        Assert.Equal(0, vfp.Memory.Get("savedError").AsNumber);
+        Assert.Equal(1, vfp.Memory.Get("arrayError").AsNumber);
+        var error = Assert.Throws<MicroVfpRuntimeException>(() =>
+            vfp.Execute($"INSERT INTO {target} (shipper_id) VALUES ('ZZ')"));
+        Assert.Equal(1, error.VfpErrorNumber);
+        if (mode == 3) vfp.Execute("=TABLEUPDATE(.T., .T., 'x')");
+        vfp.Execute("CLOSE TABLES ALL");
+        Assert.Equal(before, LastOrder(copy).Count);
+    }
+
     private static string TastradeCopy(MicroVfpTestSupport.TempDir dir)
         => MicroVfpTestSupport.CopyDatabase(Path.Combine(Fixtures.RepoRoot, "Tastrade_VFPData"), dir);
 
@@ -97,7 +139,11 @@ public sealed class SqlInsertDbcDefaultsTests
 
         var vfp = Interpreter(copy, out var session);
         using (session)
-            vfp.Execute("SET NULL ON\nINSERT INTO orders (shipper_id) VALUES ('ZZ')\nCLOSE TABLES ALL");
+        {
+            vfp.Execute("SET NULL ON\ncaught = 0\nTRY\nINSERT INTO orders (shipper_id) VALUES ('ZZ')\n" +
+                        "CATCH TO problem\ncaught = problem.ErrorNo\nENDTRY\nCLOSE TABLES ALL");
+            Assert.Equal(1581, vfp.Memory.Get("caught").AsNumber);
+        }
 
         Assert.Equal(before, LastOrder(copy).Count);
         Assert.Equal(orders + 1, Counter(copy, "ORDERS"));

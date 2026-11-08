@@ -198,7 +198,10 @@ public sealed class SqlInsertOmittedColumnsTests : IDisposable
         {
             s.OpenDirectory(_dir.Path);
             var vfp = Interpreter(s);
-            vfp.Execute("SET NULL ON\nINSERT INTO tx (K) VALUES (1)\nCLOSE TABLES ALL");
+            var error = Assert.Throws<FoxDbfSqlException>(() =>
+                vfp.Execute("SET NULL ON\nINSERT INTO tx (K) VALUES (1)"));
+            Assert.Equal(1581, error.VfpErrorNumber);
+            vfp.Execute("CLOSE TABLES ALL");
         }
         Assert.Equal(0, RecordCount(path));
     }

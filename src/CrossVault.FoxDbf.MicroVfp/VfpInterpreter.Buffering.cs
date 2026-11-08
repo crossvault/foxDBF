@@ -99,37 +99,23 @@ public sealed partial class VfpInterpreter
             var col = wa.Table.Columns[idx];
             ae.Fields[idx] = v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
         }
-        // A DBC member's omitted column takes its field DEFAULT now, once: VFP9 shows it in the buffered row
-        // before TABLEUPDATE, which does not evaluate it again (probed).
-        if (stmt.SourceKind == InsertSourceKind.Values
-            && DmlExecutor.DbcDefaultExpressions(Session, stmt.Table, wa.Table.Columns) is { } defaults)
-        {
-            var indexes = new List<int>();
-            var expressions = new List<string>();
-            for (int i = 0; i < defaults.Length; i++)
-                if (defaults[i] is { } expression && !ae.Fields.ContainsKey(i)) { indexes.Add(i); expressions.Add(expression); }
-            if (indexes.Count > 0)
-            {
-                var values = EvalDbcDefault(stmt.Table, expressions);
-                for (int k = 0; k < indexes.Count; k++) ae.Fields[indexes[k]] = values[k];
-            }
-        }
-
         // The columns the INSERT omits follow SET NULL as it is NOW, at INSERT time — as the write-through
         // INSERT does: blank under OFF (left out of Fields, written blank at commit), .NULL. in a NULL-able
         // column under ON (an explicit null in Fields). An omitted NOT NULL column under ON is VFP error
-        // 1581 and no row; the write-through INSERT swallows that error, so the buffered one does too.
+        // 1581 and no row, before any later field DEFAULT is evaluated.
         // (A buffered FROM MEMVAR / FROM ARRAY reads none of its values here, so it does not apply SET NULL.)
         var columns = wa.Table.Columns;
         var provided = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var (idx, v) in ae.Fields) provided[columns[idx].Name] = v;
-        bool[] blank;
-        try
+        // DEFAULTs run once, in field order, before the append becomes visible in the buffer.
+        if (stmt.SourceKind == InsertSourceKind.Values)
         {
-            blank = DmlExecutor.OmittedColumnsBlankMask(Session, stmt.Table, columns, provided,
-                honourSetNull: stmt.SourceKind == InsertSourceKind.Values);
+            DmlExecutor.EvaluateDbcDefaults(Session, stmt.Table, columns, provided);
+            for (int i = 0; i < columns.Count; i++)
+                if (provided.TryGetValue(columns[i].Name, out var value)) ae.Fields[i] = value;
         }
-        catch (FoxDbfSqlException) { return; }
+        bool[] blank = DmlExecutor.OmittedColumnsBlankMask(Session, stmt.Table, columns, provided,
+            honourSetNull: stmt.SourceKind == InsertSourceKind.Values);
         for (int i = 0; i < columns.Count; i++)
             if (!columns[i].IsSystem && !columns[i].IsAutoIncrement && !blank[i] && !ae.Fields.ContainsKey(i))
                 ae.Fields[i] = null;

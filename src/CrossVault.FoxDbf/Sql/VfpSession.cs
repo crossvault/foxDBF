@@ -116,15 +116,15 @@ public sealed class VfpSession : IDisposable
     internal IVfpMemoryBridge? MemoryBridge { get; set; }
 
     /// <summary>
-    /// Evaluates the DBC field <c>DEFAULT</c> expressions of one INSERT row (arguments: the target table and
-    /// the expressions in field order) to the CLR values the INSERT writes, with the target as the current
-    /// work area, or throws an expression's error. Set by the microVFP interpreter only while it executes an
+    /// Evaluates the DBC field <c>DEFAULT</c> expressions of one INSERT row (arguments: the target table,
+    /// fields/expressions in field order, and the supplied values). Fills the values the INSERT writes,
+    /// with the target as the current work area, or throws an expression's error. Set only while executing an
     /// <c>INSERT</c>, so the SQL DML executor fills a DBC member's omitted columns from their DEFAULTs as VFP9
     /// does (a DEFAULT may call a stored-procedure UDF, which only the interpreter can run).
     /// <see langword="null"/> on the raw SQL / ADO.NET path, which writes omitted columns as stored (the
     /// opt-in ADO.NET <c>EnforceRules</c> model evaluates the DEFAULTs itself).
     /// </summary>
-    internal Func<string, IReadOnlyList<string>, object?[]>? DbcDefaultEvaluator { get; set; }
+    internal Action<string, IReadOnlyList<(string Field, string Expression)>, Dictionary<string, object?>>? DbcDefaultEvaluator { get; set; }
 
     /// <summary>
     /// The optional query ACCELERATOR (e.g. the Highlike engine) that SELECT / DML candidate-set
@@ -647,7 +647,7 @@ public sealed class VfpSession : IDisposable
         }
 
         w.Dispose();
-        _areas[area] = new WorkArea(area, dbf, cdx, w.Alias, w.Exclusive, w.NoUpdate);
+        _areas[area] = new WorkArea(area, dbf, cdx, w.Alias, w.Exclusive, w.NoUpdate) { OpenSequence = w.OpenSequence };
     }
 
     /// <summary>An already-open work area whose alias matches <paramref name="name"/>, else null.</summary>
@@ -657,6 +657,17 @@ public sealed class VfpSession : IDisposable
             if (string.Equals(w.Alias, name, StringComparison.OrdinalIgnoreCase))
                 return w;
         return null;
+    }
+
+    /// <summary>VFP INSERT by DBC member name reuses the most recently opened instance of its file,
+    /// even when another instance is current or has a higher work-area number.</summary>
+    internal WorkArea? FindInsertArea(string name)
+    {
+        if (FindAreaByAlias(name) is { } alias) return alias;
+        if (_db is null || !TryDbcName(name, out var member) || _db.GetTablePath(member) is not { } path) return null;
+        if (TxRedirectReadPath is { } redirect) path = redirect(path);
+        return _areas.Values.Where(w => string.Equals(w.Table.SourcePath, path, StringComparison.OrdinalIgnoreCase))
+            .MaxBy(w => w.OpenSequence);
     }
 
     /// <summary>Find an open work area whose table resolves to the same on-disk file as
@@ -765,7 +776,7 @@ public sealed class VfpSession : IDisposable
             path = existing.Table.SourcePath
                    ?? throw new FoxDbfSqlException($"Open table '{name}' has no source path on disk to write to.");
             readColumns = existing.Table.Columns;
-            reopen = new ReopenInfo(existing.Area, existing.Table.SourcePath!, existing.Alias, existing.Exclusive, existing.NoUpdate);
+            reopen = new ReopenInfo(existing.Area, existing.Table.SourcePath!, existing.Alias, existing.Exclusive, existing.NoUpdate, existing.OpenSequence);
             _areas.Remove(existing.Area);
             existing.Dispose(); // release the read handle so the writer can open the file.
         }
@@ -780,12 +791,13 @@ public sealed class VfpSession : IDisposable
             {
                 exclusive = aliased.Exclusive;
                 readColumns = aliased.Table.Columns;
-                reopen = new ReopenInfo(aliased.Area, path, aliased.Alias, aliased.Exclusive, aliased.NoUpdate);
+                reopen = new ReopenInfo(aliased.Area, path, aliased.Alias, aliased.Exclusive, aliased.NoUpdate, aliased.OpenSequence);
                 _areas.Remove(aliased.Area);
                 aliased.Dispose();
             }
         }
 
+        string sourcePath = path;
         DbfWriter writer;
         try
         {
@@ -808,7 +820,7 @@ public sealed class VfpSession : IDisposable
             if (reopen is ReopenInfo r0) ReopenArea(r0); // a failed open/snapshot must not lose the work area.
             throw;
         }
-        return new WritableTarget(this, writer, reopen);
+        return new WritableTarget(this, writer, reopen, sourcePath);
     }
 
     /// <summary>Resolve the on-disk path of a writable table: the open DBC's long table names FIRST,
@@ -855,10 +867,11 @@ public sealed class VfpSession : IDisposable
     {
         int saved = _currentArea;
         Use(r.Table, r.Area, r.Alias, again: false, exclusive: r.Exclusive, noUpdate: r.NoUpdate);
+        _areas[r.Area].OpenSequence = r.OpenSequence;
         _currentArea = saved;
     }
 
-    internal readonly record struct ReopenInfo(int Area, string Table, string Alias, bool Exclusive, bool NoUpdate);
+    internal readonly record struct ReopenInfo(int Area, string Table, string Alias, bool Exclusive, bool NoUpdate, long OpenSequence);
 
     /// <summary>Close (release the handle of) every open work area whose table resolves to
     /// <paramref name="fullPath"/>, returning the reopen descriptors so an ALTER can re-open them after
@@ -870,7 +883,7 @@ public sealed class VfpSession : IDisposable
         WorkArea? wa;
         while ((wa = FindAreaByPath(fullPath)) is not null)
         {
-            closed.Add(new ReopenInfo(wa.Area, fullPath, wa.Alias, wa.Exclusive, wa.NoUpdate));
+            closed.Add(new ReopenInfo(wa.Area, fullPath, wa.Alias, wa.Exclusive, wa.NoUpdate, wa.OpenSequence));
             _areas.Remove(wa.Area);
             wa.Dispose();
         }
@@ -893,10 +906,13 @@ public sealed class VfpSession : IDisposable
         private readonly ReopenInfo? _reopen;
         private bool _disposed;
 
-        internal WritableTarget(VfpSession session, DbfWriter writer, ReopenInfo? reopen)
+        internal WritableTarget(VfpSession session, DbfWriter writer, ReopenInfo? reopen, string sourcePath)
         {
-            _session = session; Writer = writer; _reopen = reopen;
+            _session = session; Writer = writer; _reopen = reopen; SourcePath = sourcePath;
         }
+
+        // The member's path before a COW redirect, also available while its aliased area is closed.
+        internal string SourcePath { get; }
 
         /// <summary>The open writer for the target table.</summary>
         public DbfWriter Writer { get; }
@@ -1013,6 +1029,8 @@ public sealed class VfpSession : IDisposable
     /// <summary>One open work area: a table handle + its (optional) CDX + alias + open mode.</summary>
     internal sealed class WorkArea : IDisposable
     {
+        private static long _nextOpenSequence;
+        internal long OpenSequence { get; set; } = System.Threading.Interlocked.Increment(ref _nextOpenSequence);
         public int Area { get; }
         public DbfTable Table { get; }
         public CdxFile? Cdx { get; }

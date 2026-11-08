@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: microVFP `INSERT` now propagates failures instead of silently dropping the row. A failing DBC
+  field `DEFAULT` raises a catchable VFP error and leaves no partial row. DEFAULTs also apply through custom
+  aliases and see the supplied field values, earlier DEFAULTs, and the new record in `RECCOUNT()`, as in VFP9.
 - microVFP SQL resolves missing source fields through memory variables instead of the current work area's
   fields, including in uncorrelated subqueries. Undefined variables raise VFP9 error 12 when evaluated.
   Qualified references are checked before filtering: a field name is not an alias (error 13), and a scalar

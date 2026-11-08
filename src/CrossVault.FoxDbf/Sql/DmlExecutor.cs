@@ -46,6 +46,8 @@ internal sealed class DmlExecutor
 
     private SqlResult Insert(InsertStatement st)
     {
+        if (_session.DbcDefaultEvaluator is not null && _session.FindInsertArea(st.Table) is { } area)
+            st = st with { Table = area.Alias };
         // Memory-source forms (VFP idioms heavily used in real SPs) map through the ACTIVE session's memvar
         // store via the bound interpreter's bridge, then append through the SAME writer path as VALUES — so
         // index maintenance, the COW transaction seam and buffering all apply unchanged.
@@ -80,8 +82,7 @@ internal sealed class DmlExecutor
         var values = EvaluateValues(session, st);
         if (st.Columns is null) { AppendAllColumns(writer, columns, values); return; }
         var map = MapValues(st, columns, values);
-        if (PendingDbcDefaults(session, st.Table, columns, map) is { } pending)
-            pending.Fill(columns, map, session.DbcDefaultEvaluator!(st.Table, pending.Expressions));
+        EvaluateDbcDefaults(session, st.Table, columns, map);
         writer.AppendRecord(map, OmittedColumnsBlankMask(session, st.Table, columns, map, honourSetNull: true));
     }
 
@@ -236,8 +237,21 @@ internal sealed class DmlExecutor
 
     /// <summary>The DBC rules of <paramref name="table"/> when it is a member of the session's open database,
     /// else <see langword="null"/> (a free table).</summary>
-    private static DbcTableRules? TableRules(VfpSession session, string table)
-        => session.Database is { } database && database.TryGetTableRules(table, out var rules) ? rules : null;
+    private static DbcTableRules? TableRules(VfpSession session, string table, string? sourcePath = null)
+    {
+        if (session.Database is not { } database) return null;
+        // An alias can even shadow a different DBC member's name: its file determines the defaults.
+        sourcePath ??= session.FindAreaByAlias(table)?.Table.SourcePath;
+        if (sourcePath is not null)
+        {
+            if (session.TxLivePath is { } toLive) sourcePath = toLive(sourcePath);
+            foreach (string member in database.TableNames)
+                if (string.Equals(database.GetTablePath(member), sourcePath, StringComparison.OrdinalIgnoreCase))
+                    return database.GetTableRules(member);
+            return null;
+        }
+        return database.TryGetTableRules(table, out var rules) ? rules : null;
+    }
 
     /// <summary>The DBC Field record of <paramref name="col"/>, the <paramref name="field"/>-th non-system
     /// column: by position when the DBC lists one Field per column (a long field name need not match the
@@ -256,18 +270,25 @@ internal sealed class DmlExecutor
     /// it, so the raw SQL / ADO.NET path leaves the row as given. VFP evaluates them with the target table as
     /// the current work area (a UDF such as <c>newid()</c> / <c>createid()</c> reads <c>ALIAS()</c> and
     /// <c>RECCOUNT()</c>), and <paramref name="target"/> has released that area for the write, so the write is
-    /// closed while they run (restoring the area) and reopened after. <c>RECCOUNT()</c> therefore does not yet
-    /// count the new row, where VFP's does. A DEFAULT that errors propagates and nothing is written.
+    /// closed while they run (restoring the area) and reopened after. The interpreter exposes the pending
+    /// row during evaluation without writing it. A DEFAULT that errors propagates and nothing is written.
     /// </summary>
     private static void FillDbcDefaults(VfpSession session, string table, ref VfpSession.WritableTarget target,
         Dictionary<string, object?> map)
     {
         var columns = target.Writer.Schema.Columns;
-        if (PendingDbcDefaults(session, table, columns, map) is not { } pending) return;
+        if (PendingDbcDefaults(session, table, columns, map, target.SourcePath) is not { } pending) return;
         target.Dispose();
-        var values = session.DbcDefaultEvaluator!(table, pending.Expressions);
+        session.DbcDefaultEvaluator!(table, pending, map);
         target = session.OpenWritableTarget(table);
-        pending.Fill(columns, map, values);
+    }
+
+    /// <summary>Shared field-order evaluation for direct and buffered INSERTs, before either appends a row.</summary>
+    internal static void EvaluateDbcDefaults(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
+        Dictionary<string, object?> map)
+    {
+        if (PendingDbcDefaults(session, table, columns, map) is { } pending)
+            session.DbcDefaultEvaluator!(table, pending, map);
     }
 
     /// <summary>The omitted columns of <paramref name="map"/>'s row that have a DBC DEFAULT, when the session
@@ -275,14 +296,13 @@ internal sealed class DmlExecutor
     /// member of its open database; else <see langword="null"/>. VFP9 walks the fields in order and, under
     /// <c>SET NULL ON</c>, stops at the first omitted NOT NULL field without a DEFAULT (error 1581, raised by
     /// <see cref="OmittedColumnsBlankMask"/>), so the DEFAULTs after it never run (probed with a counting UDF).</summary>
-    private static PendingDefaults? PendingDbcDefaults(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
-        Dictionary<string, object?> map)
+    private static List<(string Field, string Expression)>? PendingDbcDefaults(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
+        Dictionary<string, object?> map, string? sourcePath = null)
     {
-        if (session.DbcDefaultEvaluator is null || DbcDefaultExpressions(session, table, columns) is not { } defaults)
+        if (session.DbcDefaultEvaluator is null || DbcDefaultExpressions(session, table, columns, sourcePath) is not { } defaults)
             return null;
         bool nullOn = session.Context.NullSetting;
-        List<int>? indexes = null;
-        List<string>? expressions = null;
+        List<(string Field, string Expression)>? pending = null;
         for (int i = 0; i < columns.Count; i++)
         {
             var col = columns[i];
@@ -292,28 +312,18 @@ internal sealed class DmlExecutor
                 if (nullOn && !col.IsNullable && !col.IsAutoIncrement) break;
                 continue;
             }
-            (indexes ??= new List<int>()).Add(i);
-            (expressions ??= new List<string>()).Add(expression);
+            (pending ??= new()).Add((col.Name, expression));
         }
-        return indexes is null ? null : new PendingDefaults(indexes, expressions!);
-    }
-
-    /// <summary>The omitted columns (by position in the writer's schema) whose DEFAULT expressions are to be
-    /// evaluated, in field order.</summary>
-    private sealed record PendingDefaults(List<int> Indexes, List<string> Expressions)
-    {
-        public void Fill(IReadOnlyList<DbfColumn> columns, Dictionary<string, object?> map, IReadOnlyList<object?> values)
-        {
-            for (int k = 0; k < Indexes.Count; k++) map[columns[Indexes[k]].Name] = values[k];
-        }
+        return pending;
     }
 
     /// <summary>The DBC field <c>DEFAULT</c> expression of each of <paramref name="columns"/> (null where it has
     /// none), or <see langword="null"/> when <paramref name="table"/> is not a member of the session's open
     /// database or no field has a DEFAULT.</summary>
-    internal static string?[]? DbcDefaultExpressions(VfpSession session, string table, IReadOnlyList<DbfColumn> columns)
+    internal static string?[]? DbcDefaultExpressions(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
+        string? sourcePath = null)
     {
-        if (TableRules(session, table) is not { } rules) return null;
+        if (TableRules(session, table, sourcePath) is not { } rules) return null;
         string?[]? defaults = null;
         int field = -1;
         for (int i = 0; i < columns.Count; i++)

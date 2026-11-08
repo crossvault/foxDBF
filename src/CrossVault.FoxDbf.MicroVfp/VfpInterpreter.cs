@@ -1245,6 +1245,12 @@ public sealed partial class VfpInterpreter
     // Falls through to the raw on-disk read when the area is unbuffered / the field is unedited.
     private object? ReadField(VfpSession.WorkArea wa, string field)
     {
+        if (DefaultRowFor(wa.Area) is { } pending && Meta(wa.Area).RecNo == pending.RecNo)
+        {
+            var col = wa.Table.Columns[ColumnIndex(wa.Table, field)];
+            if (!pending.Values.TryGetValue(col.Name, out var value)) return BlankFor(col);
+            return value is string text && col.Type == 'C' ? FitToField(col, text) : value;
+        }
         if (_meta.TryGetValue(wa.Area, out var mm) && mm.Buffering > 1 && mm.Buf is { } buf)
         {
             int idx = ColumnIndex(wa.Table, field);

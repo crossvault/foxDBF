@@ -849,6 +849,7 @@ public sealed partial class VfpInterpreter
     {
         int rc = wa.Table.RecordCount;
         if (_meta.TryGetValue(area, out var m) && m.Buffering > 1 && m.Buf is { } buf) rc += buf.Appends.Count;
+        if (DefaultRowFor(area) is { } pending) rc = Math.Max(rc, pending.RecNo);
         return rc;
     }
 

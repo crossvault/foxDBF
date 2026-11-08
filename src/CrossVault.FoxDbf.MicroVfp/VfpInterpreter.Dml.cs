@@ -27,31 +27,61 @@ public sealed partial class VfpInterpreter
         finally { Session.DbcDefaultEvaluator = previous; }
     }
 
-    private Func<string, IReadOnlyList<string>, object?[]>? _dbcDefaultEvaluator;
+    private Action<string, IReadOnlyList<(string Field, string Expression)>, Dictionary<string, object?>>? _dbcDefaultEvaluator;
+
+    private sealed record DefaultRow(int Area, int RecNo, Dictionary<string, object?> Values, DefaultRow? Previous);
+    private DefaultRow? _defaultRow;
+
+    private DefaultRow? DefaultRowFor(int area)
+    {
+        for (var row = _defaultRow; row is not null; row = row.Previous)
+            if (row.Area == area) return row;
+        return null;
+    }
 
     /// <summary>The DBC field DEFAULTs of one row inserted into <paramref name="table"/>, evaluated in field
     /// order with the target as the current work area, as VFP9 does (probed: <c>ALIAS()</c> inside a DEFAULT
     /// UDF is the target's) — opened in a free area for the evaluation when it is not open, closed again
     /// after. The previous current area is restored. Unlike <see cref="EvalExpression"/> an error propagates
     /// (VFP raises it and writes no row); a UDF runs from the loaded stored procedures.</summary>
-    private object?[] EvalDbcDefault(string table, IReadOnlyList<string> expressions)
+    private void EvalDbcDefault(string table, IReadOnlyList<(string Field, string Expression)> defaults,
+        Dictionary<string, object?> values)
     {
         int saved = Session.CurrentArea;
         int opened = 0;
         try
         {
-            var wa = Session.FindAreaByAlias(table);
+            var wa = Session.FindInsertArea(table);
             if (wa is null)
             {
-                try { Session.Use(table, inArea: 0); wa = Session.FindAreaByAlias(table); opened = wa?.Area ?? 0; }
-                catch { wa = null; }
+                Session.SelectArea(0);
+                Session.Use(table);
+                wa = Session.AreaAt(Session.CurrentArea)
+                    ?? throw new MicroVfpRuntimeException($"Cannot open INSERT target '{table}'.", 1);
+                opened = wa.Area;
             }
-            if (wa is not null) Session.SelectArea(wa.Area);
-
-            var values = new object?[expressions.Count];
-            for (int i = 0; i < values.Length; i++)
-                values[i] = ParseExpressionCached(MicroVfpExprRewrite.Normalize(expressions[i])).Evaluate(_row, _ctx).ToClr();
-            return values;
+            FlushPendingAppends(wa.Area);
+            wa = Session.AreaAt(wa.Area)!;
+            Session.SelectArea(wa.Area);
+            var meta = Meta(wa.Area);
+            var savedPosition = (meta.RecNo, meta.Eof, meta.Bof);
+            var previous = _defaultRow;
+            // VFP evaluates against the new row: supplied VALUES and earlier DEFAULTs are visible,
+            // and RECCOUNT includes it. Keep that row in memory so a failed DEFAULT cannot half-append.
+            int recno = EffCount(wa.Area, wa) + 1;
+            _defaultRow = new DefaultRow(wa.Area, recno, values, previous);
+            meta.RecNo = recno;
+            meta.Eof = meta.Bof = false;
+            try
+            {
+                foreach (var (field, expression) in defaults)
+                    values[field] = ParseExpressionCached(MicroVfpExprRewrite.Normalize(expression)).Evaluate(_row, _ctx).ToClr();
+            }
+            finally
+            {
+                _defaultRow = previous;
+                (meta.RecNo, meta.Eof, meta.Bof) = savedPosition;
+            }
         }
         finally
         {
@@ -71,14 +101,14 @@ public sealed partial class VfpInterpreter
         // the new record, and a .F. return (a missing parent key) ROLLS THE INSERTED ROW BACK, exactly as
         // VFP9 blocks such an INSERT. The target table is resolved from the PARSED statement (NOT the
         // current area — INSERT-SQL need not have selected onto the new record). When RI is off / the
-        // table is free / it has no bound insert trigger, a plain best-effort insert with no enforcement.
+        // table is free / it has no bound insert trigger, perform a plain insert with no RI enforcement.
         // BUFFERING (mode>1): defer the append into the target area's buffer (visible on the live cursor,
         // flushed at TABLEUPDATE for table buffering, or on the next pointer move for row buffering 2/3).
         // Gated on _anyBuffering so the default write-through INSERT path (and every Buffering=1 test) pays
         // only a bool check. Skipped while replaying at commit.
         if (_anyBuffering && !_inBufferCommit
             && ResolveInsertStatement(ins) is { } bufStmt
-            && Session.FindAreaByAlias(bufStmt.Table) is { } bufWa
+            && Session.FindInsertArea(bufStmt.Table) is { } bufWa
             && _meta.TryGetValue(bufWa.Area, out var bufMeta) && bufMeta.Buffering > 1)
         {
             VfpInsertProfile.Stop(VfpInsertProfileBucket.BufferingRiChecks, checkStart);
@@ -116,7 +146,7 @@ public sealed partial class VfpInterpreter
         // otherwise reject a later REPLACE of the appended row). Cheap; INSERT is not the hot gate path.
         if (table is not null)
         {
-            var targetPath = Session.FindAreaByAlias(table)?.Table.SourcePath;
+            var targetPath = Session.FindInsertArea(table)?.Table.SourcePath;
             // Batch 4: this INSERT is about to fall back to Session.Execute → OpenWritableTarget, a SECOND
             // writer that reads the on-disk record count. Persist any DEFERRED fast appends on this file FIRST —
             // unconditionally, even under a held RLOCK/FLOCK — so the foreign writer never reads a stale count
@@ -130,7 +160,7 @@ public sealed partial class VfpInterpreter
         // one of its keys must RAISE (VFP). The row is written (funnelling the incremental maintenance),
         // then each candidate tag is re-checked; a violation rolls the write back + raises.
         if (table is not null
-            && Session.FindAreaByAlias(table)?.Table.SourcePath is string candPath
+            && Session.FindInsertArea(table)?.Table.SourcePath is string candPath
             && CandidateTagsFor(candPath) is not null)
         {
             VfpInsertProfile.Stop(VfpInsertProfileBucket.InsertTargetColumnResolution, targetStart);
@@ -147,9 +177,14 @@ public sealed partial class VfpInterpreter
         if (!EnforceReferentialIntegrity || table is null)
         {
             VfpInsertProfile.Stop(VfpInsertProfileBucket.BufferingRiChecks, checkStart);
-            SnapshotForTxn(ResolveInsertWritePath(table));
+            string? insertPath = ResolveInsertWritePath(table);
+            SnapshotForTxn(insertPath);
             long sqlStart = VfpInsertProfile.Start();
-            try { Session.Execute(ins.Sql); } catch { /* best-effort; INSERT is not a target path */ }
+            try
+            {
+                Session.Execute(ins.Sql);
+                if (insertPath is not null) ReopenFileAreas(insertPath);
+            }
             finally { VfpInsertProfile.Stop(VfpInsertProfileBucket.SqlDmlFallback, sqlStart); }
             return;
         }
@@ -157,21 +192,33 @@ public sealed partial class VfpInterpreter
         // Resolve a work area for the target up front (opening one if the caller did not have it open) so
         // we can snapshot its .dbf for a revertible insert AND position the trigger on the new record.
         bool openedHere = false;
-        var wa = Session.FindAreaByAlias(table);
+        var wa = Session.FindInsertArea(table);
         if (wa is null)
         {
-            try { Session.Use(table, inArea: 0); wa = Session.FindAreaByAlias(table); openedHere = wa is not null; }
-            catch { wa = null; }
+            int savedArea = Session.CurrentArea;
+            try
+            {
+                Session.SelectArea(0);
+                Session.Use(table);
+                wa = Session.AreaAt(Session.CurrentArea);
+            }
+            finally { Session.SelectArea(savedArea); }
+            openedHere = wa is not null;
         }
 
         // No resolvable target / no bound insert trigger ⇒ plain DML, no enforcement (free table or no rule).
         if (wa is null || ResolveTriggerProc(RiEvent.Insert, wa) is null)
         {
-            SnapshotForTxn(ResolveInsertWritePath(table));
+            string? insertPath = ResolveInsertWritePath(table);
+            SnapshotForTxn(insertPath);
             if (openedHere && wa is not null) { Session.CloseArea(wa.Area); _meta.Remove(wa.Area); }
             VfpInsertProfile.Stop(VfpInsertProfileBucket.BufferingRiChecks, checkStart);
             long sqlStart = VfpInsertProfile.Start();
-            try { Session.Execute(ins.Sql); } catch { }
+            try
+            {
+                Session.Execute(ins.Sql);
+                if (insertPath is not null) ReopenFileAreas(insertPath);
+            }
             finally { VfpInsertProfile.Stop(VfpInsertProfileBucket.SqlDmlFallback, sqlStart); }
             return;
         }
@@ -193,7 +240,7 @@ public sealed partial class VfpInterpreter
 
         long riSqlStart = VfpInsertProfile.Start();
         try { Session.Execute(ins.Sql); }
-        catch { if (openedHere) { Session.CloseArea(area); _meta.Remove(area); } return; }
+        catch { if (openedHere) { Session.CloseArea(area); _meta.Remove(area); } throw; }
         finally { VfpInsertProfile.Stop(VfpInsertProfileBucket.SqlDmlFallback, riSqlStart); }
 
         if (path is not null) ReopenFileAreas(path);   // every open handle must see the appended row.
@@ -232,7 +279,7 @@ public sealed partial class VfpInterpreter
     private string? ResolveInsertWritePath(string? table)
     {
         if (table is null) return null;
-        string? path = Session.FindAreaByAlias(table)?.Table.SourcePath;
+        string? path = Session.FindInsertArea(table)?.Table.SourcePath;
         if (path is null)
         {
             DbfTable? opened = null;
@@ -271,9 +318,9 @@ public sealed partial class VfpInterpreter
         // OpenWritableTarget (it throws). The fast path bypasses that seam entirely, so a table opened WRITABLE
         // before ReadOnly was toggled on (wa.NoUpdate is still false) would otherwise be appended straight
         // through the cached writer — a real write into a read-only session. Refuse here so every read-only
-        // INSERT takes the old Session.Execute route, whose throw is swallowed (no row lands), byte-identically.
+        // INSERT takes the Session.Execute route, which rejects it before any row lands.
         if (Session.ReadOnly) return false;
-        var wa = Session.FindAreaByAlias(st.Table);
+        var wa = Session.FindInsertArea(st.Table);
         if (wa is null || wa.NoUpdate) return false;                 // not open / read-only area → slow path.
         if (wa.Table.SourcePath is not { } sourcePath) return false;
         if (_meta.TryGetValue(wa.Area, out var m) && m.Buffering > 1) return false;  // buffered → BufferAppend.
@@ -311,11 +358,10 @@ public sealed partial class VfpInterpreter
         }
         catch
         {
-            // The plain no-RI INSERT route is best-effort (it SWALLOWS — INSERT is not a target path there).
-            // Match that: drop the possibly-half-touched cached writer so no inconsistent handle survives, mark
-            // the view stale so the next read reopens to whatever actually landed, and swallow.
+            // Drop a possibly touched writer and refresh the view, but preserve the INSERT error.
             InvalidateCachedWriter(sourcePath);
             MarkAppendPending(fullPath);
+            throw;
         }
         finally { VfpInsertProfile.Stop(VfpInsertProfileBucket.DirectAppend, start); }
         return true;
