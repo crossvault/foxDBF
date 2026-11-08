@@ -245,6 +245,15 @@ public sealed class FieldDecoderTests
         Assert.Equal(new DateTime(2012, 6, 14, 0, 0, 0), DecodeDateTime(2_456_093, millis));
     }
 
+    [Theory]
+    [InlineData(86_399_499, 30, 23, 59, 59)]
+    [InlineData(86_399_500, 31, 0, 0, 0)]
+    [InlineData(86_399_999, 31, 0, 0, 0)]
+    public void T_LateDateHalfSecond_MatchesVfp9(int millis, int day, int hour, int minute, int second)
+    {
+        Assert.Equal(new DateTime(9998, 12, day, hour, minute, second), DecodeDateTime(5_373_118, millis));
+    }
+
     private static DateTime DecodeDateTime(int julianDay, int millis)
     {
         Span<byte> raw = stackalloc byte[8];

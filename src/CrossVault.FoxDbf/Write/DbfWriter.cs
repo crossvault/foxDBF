@@ -554,6 +554,7 @@ public sealed partial class DbfWriter : IDisposable
 
     private int AppendCore(object?[] positional, bool[]? blankWhenNull = null)
     {
+        ValidateCompactIndexes();
         // §D3: hold the APPEND lock across the FRESH count re-read + row write + header bump so a
         // concurrent VFP appender cannot interleave on the same slot. Released in WithLock's
         // finally. The append byte-range lock provides mutual exclusion but NOT freshness, so the
@@ -622,6 +623,7 @@ public sealed partial class DbfWriter : IDisposable
             // §5.1 incremental maintenance: keep the append byte-range lock through the structural-CDX
             // read/modify/write so a second Shared writer cannot interleave page edits.
             MaintainIndexesAfterAppend(newCount, new DbfRecord(_schema, record));
+            MaintainCompactIndexes(newCount, null, new DbfRecord(_schema, record));
         });
 
         return resultIndex;
@@ -642,10 +644,11 @@ public sealed partial class DbfWriter : IDisposable
 
     private void UpdateCore(int index, object?[] positional)
     {
+        ValidateCompactIndexes();
         long offset = _headerLength + (long)index * _recordLength;
         // §5.1: the pre-image (old row) is needed to compute each tag's OLD key and the post-image for the
         // NEW key. Read it when index maintenance is active, regardless of any KeepValue slot.
-        bool maintain = ShouldMaintainIndexes();
+        bool maintain = ShouldMaintainIndexes() || _openCompactIndexes.Count > 0;
         byte[]? oldRecordBytes = null;
         byte[]? writtenRecord = null;
 
@@ -735,6 +738,8 @@ public sealed partial class DbfWriter : IDisposable
             if (maintain && oldRecordBytes is not null && writtenRecord is not null)
                 MaintainIndexesAfterUpdate(index + 1,
                     new DbfRecord(_schema, oldRecordBytes), new DbfRecord(_schema, writtenRecord));
+            if (oldRecordBytes is not null && writtenRecord is not null)
+                MaintainCompactIndexes(index + 1, new DbfRecord(_schema, oldRecordBytes), new DbfRecord(_schema, writtenRecord));
         });
     }
 
@@ -761,15 +766,23 @@ public sealed partial class DbfWriter : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         if ((uint)index >= (uint)_recordCount)
             throw new ArgumentOutOfRangeException(nameof(index));
+        ValidateCompactIndexes();
 
         // §D3: hold the RECORD lock for this row (1-based recNo) across the flag flip.
         long recPos = VfpLock.RecordLockPosition(index + 1, _usesStructuralScheme, _headerLength, _recordLength);
         WithLock(recPos, 1, () =>
         {
             long offset = _headerLength + (long)index * _recordLength;
+            byte[]? before = _openCompactIndexes.Count > 0 ? ReadRaw(_handle, offset, _recordLength) : null;
             _stream.Seek(offset, SeekOrigin.Begin);
             _stream.WriteByte(flag);
             _stream.Flush();
+            if (before is not null)
+            {
+                var after = (byte[])before.Clone();
+                after[0] = flag;
+                MaintainCompactIndexes(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));
+            }
         });
     }
 

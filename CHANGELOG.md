@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- `DbfWriter.OpenCompactIdx` registers an existing compact standalone index for write maintenance;
+  `CloseCompactIdx` stops maintaining it. Reader-only `IdxFile.Open` does not register a writer.
+
 - Compact standalone `.idx` files: `DbfWriter.CreateCompactIdx` writes what VFP9's `INDEX ON … TO x.idx COMPACT`
   writes. The file is one compact tree in the CDX tag format, with the collation (MACHINE, GENERAL or SPANISH) and
   VFP's key statistics in the header, and the nodes on the pages VFP9 puts them on. microVFP keeps the `COMPACT`
@@ -18,6 +21,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `IdxFile.Open(path, table)` resolves the key type from the table.
 
 ### Fixed
+
+- Open compact `.idx` files now stay current through microVFP INSERT/APPEND FROM, key and FOR-field
+  REPLACE, DELETE/RECALL and PACK (MACHINE and GENERAL). `SET INDEX TO` and `USE ... INDEX` register
+  the indexes; navigation and SEEK refresh after writes. The writer API maintains registered indexes
+  through single/batch appends, updates, delete/recall and compaction.
+- BREAKING: Unsupported compact IDX definitions or collations now raise before changing table data.
+  microVFP rejects standalone-index writes through transaction/candidate/RI rollback paths and SQL
+  INSERT fallback paths that cannot maintain them, instead of silently leaving stale indexes.
+- Raw DateTime fields now round stored milliseconds through VFP9's Julian-day conversion.
+  For example, `9998-12-30 23:59:59.500` reads as midnight on December 31, while the corresponding
+  2012 boundary still rounds down. DateTime index keys inherit the corrected field value.
 
 - DateTime CDX/IDX keys now match VFP9's last-bit rounding of the fractional day, including times such as
   `12:30:00`. Bulk builds, row-by-row maintenance and SEEK use the same encoding, so exact seeks find

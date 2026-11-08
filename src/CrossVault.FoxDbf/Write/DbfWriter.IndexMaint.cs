@@ -14,13 +14,10 @@ namespace CrossVault.FoxDbf.Write;
 /// microVFP REPLACE/APPEND all route through the same two cores, so they inherit maintenance for free.
 /// </summary>
 /// <remarks>
-/// SCOPE / DEFERRED (flagged): this maintains the STRUCTURAL <c>.cdx</c> (header byte 28 bit 0). microVFP's
-/// non-structural open indexes (standalone <c>.idx</c>, <c>OF &lt;cdx&gt;</c>) are NOT edited here — they are
-/// rebuilt by microVFP's own INDEX/REINDEX path and re-opened after each write, never left silently stale.
-/// CANDIDATE-uniqueness ENFORCEMENT (raise on a duplicate) lives in microVFP (which alone knows a tag is a
-/// candidate — a free-table candidate tag is byte-identical to a plain tag on disk); the writer only honours
-/// the on-disk UNIQUE bit (keep first key). Delete()/Recall() do NO index work (VFP keeps a deleted record's
-/// entries until PACK).
+/// This file maintains the STRUCTURAL <c>.cdx</c> (header byte 28 bit 0). Standalone compact IDX files
+/// explicitly registered with OpenCompactIdx are maintained by DbfWriter.CompactIdx.cs, including
+/// DELETE/RECALL when the KEY/FOR depends on DELETED(). Non-structural compound indexes are not registered here.
+/// CANDIDATE-uniqueness enforcement lives in microVFP; the writer honours the on-disk UNIQUE bit.
 /// <para>
 /// DURABILITY — a tag we cannot faithfully maintain never leaves a valid-looking-but-stale <c>.cdx</c> on
 /// disk (which would silently mis-answer SEEK and re-introduce finding 5.1). A tag is "un-derivable" when its

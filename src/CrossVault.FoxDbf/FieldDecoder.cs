@@ -217,25 +217,15 @@ public static class FieldDecoder
 
         var date = DateOnly.FromDayNumber(dayNumber);
         var result = new DateTime(date.Year, date.Month, date.Day, 0, 0, 0, DateTimeKind.Unspecified);
-        // FoxPro stores ms-since-midnight, but the time component is whole-second
-        // precise. The stored ms frequently carries a sub-second artefact (e.g. an
-        // intended 10:00:00 is stored as 35_999_999 ms), so ROUND to the nearest
-        // second to recover the intended value — this matches how the CDX index
-        // double decodes the same datetime (see IndexKey.DecodeDateTime).
-        long seconds = (long)Math.Round((uint)millis / 1000.0, MidpointRounding.AwayFromZero);
-        // VFP9 has a one-millisecond asymmetry at day rollover: exactly 23:59:59.500
-        // stays at 23:59:59, while .501 through the valid 24:00:00.000 sentinel roll
-        // to next-day midnight. Guard DateTime's max date; corrupt millis retain the
-        // established never-throw same-date-midnight degradation.
+        // VFP first converts the stored Julian day + milliseconds to a double day,
+        // then rounds total Julian seconds. Rounding milliseconds alone loses the
+        // date-dependent half-second boundary (2012 rounds down, 9998 rounds up).
+        if ((uint)millis > 86_400_000)
+            return result;
+        double julian = days + millis / 86_400_000.0;
+        long seconds = (long)Math.Floor(julian * 86_400.0 + 0.5) - (long)days * 86_400;
         if (seconds >= 86_400)
-        {
-            if (millis == 86_399_500)
-                seconds = 86_399;
-            else if (millis is >= 86_399_501 and <= 86_400_000)
-                return date.DayNumber < DateOnly.MaxValue.DayNumber ? result.AddDays(1) : result;
-            else
-                return result;
-        }
+            return date.DayNumber < DateOnly.MaxValue.DayNumber ? result.AddDays(1) : result;
         return result.AddSeconds(seconds);
     }
 

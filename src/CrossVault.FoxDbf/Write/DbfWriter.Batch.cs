@@ -82,6 +82,7 @@ public sealed partial class DbfWriter
         if (rows.Count == 0)
             return Array.Empty<int>();
 
+        ValidateCompactIndexes();
         var indices = new int[rows.Count];
         int existingRecordCount = 0;
         // §5.1: the exact written bytes + 1-based recno of every row, captured for a single batched
@@ -188,6 +189,8 @@ public sealed partial class DbfWriter
             // §5.1 structural-CDX maintenance: the whole batch is durably written above; keep the append
             // lock through either incremental page edits or the large-batch rebuild.
             MaintainIndexesAfterAppendBatch(appended, existingRecordCount);
+            foreach (var (recNo, record) in appended)
+                MaintainCompactIndexes(recNo, null, new DbfRecord(_schema, record));
         });
 
         return indices;
