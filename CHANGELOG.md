@@ -16,6 +16,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   explicit zero values and `.NULL.` fields remain distinct, under `SET NULL OFF` and `ON`.
 - Expressions reject chained or mixed arrow qualifiers such as `person->name->x` and `m.person->name`,
   including forms with spaces, as VFP9 does. Valid `alias->field` references still work.
+- BREAKING: SQL aggregate queries take non-aggregated values from the last row of each group, as
+  VFP9 does, including expressions, HAVING aliases and joins. Under GENERAL, grouping `B` followed
+  by `b` now returns `b` rather than `B`; aggregate calculations still include every group member.
 - Single-table SQL `SELECT`, `UPDATE` and `DELETE` now use the structural CDX for Rushmore candidate
   selection, including open aliases and transaction working copies. UPDATE/DELETE collect their rows
   before writing, so changing an indexed key cannot process a row twice. Results retain VFP9's

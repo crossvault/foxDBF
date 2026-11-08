@@ -1551,8 +1551,10 @@ internal sealed class SelectExecutor
         foreach (var members in groups)
         {
             // A whole-table aggregate over an EMPTY set still emits one row (COUNT→0, SUM→0,
-            // AVG/MIN/MAX→null). NEVER index members[0] unconditionally — use a synthetic context.
-            IRowContext rep = members.Count > 0 ? members[0] : EmptyRowContext.Instance;
+            // AVG/MIN/MAX→null). Use a synthetic context when there is no member.
+            // VFP9 takes non-aggregated values from the LAST member in source order, including
+            // differently cased GROUP BY keys that collate equal under GENERAL.
+            IRowContext rep = members.Count > 0 ? members[^1] : EmptyRowContext.Instance;
             var row = sel.Items.Select(it => ProjectAggregateItem(it, members, rep, ctx)).ToArray();
             if (sel.Having is not null
                 && !EvalHaving(sel.Having, members, AliasRow(rep, row, aliases, scope.IsSourceField), ctx))
@@ -1626,7 +1628,7 @@ internal sealed class SelectExecutor
         if (it.Expression is not null && ContainsAggregate(it.Expression))
             return EvaluateAggregateExpression(it.Expression, members, rep, ctx);
 
-        // non-aggregate item in an aggregate query (a GROUP BY column) → value of the first member;
+        // non-aggregate item in an aggregate query (a GROUP BY column) → value of the last member;
         // an empty group has no member to read → null.
         return members.Count == 0 ? null : ToClr(it.Expression!.Evaluate(rep, ctx));
     }
