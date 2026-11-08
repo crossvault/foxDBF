@@ -8,6 +8,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: SQL sizes previously unsized character expression columns from the first source record, before
+  filtering or sorting, as VFP9 does. In microVFP, `SELECT VARTYPE(...)` now creates C(1) instead of C(10);
+  `TRANSFORM()` and string UDF results likewise use their evaluated width, with longer later values truncated
+  when written to the result cursor.
 - microVFP `APPEND FROM` preserves blank numeric source fields as blank bytes instead of writing zero;
   explicit zero values and `.NULL.` fields remain distinct, under `SET NULL OFF` and `ON`.
 - Expressions reject chained or mixed arrow qualifiers such as `person->name->x` and `m.person->name`,

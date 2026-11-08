@@ -111,8 +111,42 @@ public sealed class MicroVfpHostedExpressionTests : IDisposable
         _i.Execute("GO BOTTOM IN q");
         Assert.Equal(30m, Num("q.v"));
         Assert.Equal("3", _i.EvalExpression("ALLTRIM(q.t)").AsString);
-        // Reading the SELECT result's C field includes its padding; this test checks the function result.
-        Assert.Equal("C", _i.EvalExpression("q.k").AsString.TrimEnd());
+        Assert.Equal("C", _i.EvalExpression("q.k").AsString);
+    }
+
+    [Theory]
+    [InlineData("VARTYPE(nm)", "", "C")]
+    [InlineData("TRANSFORM(id)", "ORDER BY id DESC", "1")]
+    [InlineData("WidthText(id)", "", "l")]
+    [InlineData("WidthText(id)", "ORDER BY id DESC", "a")]
+    [InlineData("WidthText(id)", "WHERE id > 1", "l")]
+    [InlineData("WidthEmpty(id)", "", "l")]
+    [InlineData("WidthText(a.id)", "a JOIN ct b ON a.id = b.id WHERE a.id > 1", "l")]
+    public void Sql_StringFunctionColumn_UsesFirstSourceWidth(string expression, string tail, string last)
+    {
+        // VFP9 pins these widths before WHERE/ORDER BY; longer later values are cut by the cursor.
+        _i.Execute("""
+            FUNCTION WidthText(n)
+            RETURN IIF(n = 1, 'a', 'long')
+            ENDFUNC
+            FUNCTION WidthEmpty(n)
+            RETURN IIF(n = 1, '', 'long')
+            ENDFUNC
+            """);
+        _i.Execute($"SELECT {expression} AS x FROM ct {tail} INTO CURSOR q");
+        var result = _session.Execute("SELECT x FROM q")!;
+        Assert.Equal(1, result.Columns[0].Length);
+        _i.Execute("GO BOTTOM IN q");
+        Assert.Equal(last, _i.EvalExpression("q.x").AsString);
+    }
+
+    [Fact]
+    public void Sql_UnsizedEngineStringColumn_UsesFirstSourceWidth()
+    {
+        _session.Execute("SELECT LEFTC(nm, 1) AS x FROM ct ORDER BY id DESC INTO CURSOR q");
+        var result = _session.Execute("SELECT x FROM q")!;
+        Assert.Equal(1, result.Columns[0].Length);
+        Assert.Equal(new[] { "c", "b", "a" }, result.Rows.Select(r => (string)r[0]!));
     }
 
     [Fact]

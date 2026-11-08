@@ -304,6 +304,31 @@ internal sealed class SelectExecutor
         return typed ?? columns;
     }
 
+    private static IReadOnlyList<SqlColumn> SizeUntypedCharacterColumns(
+        IReadOnlyList<SqlColumn> columns, IReadOnlyList<SelectItem> items,
+        Func<SelectItem, int> starWidth, Func<IRowContext?> firstSourceRow, EvaluationContext ctx)
+    {
+        SqlColumn[]? sized = null;
+        IRowContext? sample = null;
+        int position = 0;
+        foreach (var item in items)
+        {
+            if (item.IsStar) { position += starWidth(item); continue; }
+            int i = position++;
+            var col = columns[i];
+            if (col.VfpType != 'C' || col.Length > 0 || ContainsAggregate(item)) continue;
+            sample ??= firstSourceRow();
+            if (sample is null) break;
+            var value = item.Expression!.Evaluate(sample, ctx);
+            if (value.Type != VfpType.Character) continue;
+            // VFP9 sizes an otherwise unknown string from the first source record, before WHERE
+            // or ORDER BY. Later strings do not widen the cursor (TRANSFORM and string UDFs).
+            sized ??= columns.ToArray();
+            sized[i] = new SqlColumn(col.Name, 'C', Math.Max(1, value.AsString.Length), 0, typeof(string));
+        }
+        return sized ?? columns;
+    }
+
     /// <summary>Derives the output <see cref="DbfColumnDef"/> set from the result schema: each column's
     /// VFP type drives a sensible on-disk field (fixed-width types take their canonical length; N/F clamp
     /// to a valid 1–20 width; character types keep their inferred width and reject values above 254),
@@ -422,11 +447,17 @@ internal sealed class SelectExecutor
     {
         var schema = new TableSchema(table, alias);
 
-        // (1) WHERE → the surviving rows (recno order).
-        var rows = CollectSingleRows(table, ctx, sel, alias);
-
-        // (2) column schema (independent of the rows).
+        // Size unknown character expressions before filtering or sorting the source rows.
         var columns = BuildColumns(table, alias, schema, sel.Items);
+        columns = SizeUntypedCharacterColumns(columns, sel.Items, _ => table.Columns.Count, () =>
+        {
+            var first = table.EnumerateAll(includeDeleted: true).Select(r => (DbfRecord?)r).FirstOrDefault();
+            return first is null ? null : Bind(new RowContext(first.Value, 1, table.RecordCount, alias,
+                _outer, new HashSet<string>(table.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase),
+                VfpBlankFields));
+        }, ctx);
+
+        var rows = CollectSingleRows(table, ctx, sel, alias);
 
         // (3) aggregate vs row projection. Each output row is carried together with a representative
         // row context so ORDER BY / TOP can re-evaluate row-level keys after grouping.
@@ -909,6 +940,16 @@ internal sealed class SelectExecutor
             Binder(src.Select((s, i) => new QualifierBinder.Source(s.Alias, fromTables[i], s.ColNames)).ToArray())
                 .CheckSelect(sel);
 
+            var schema = new CompositeSchema(src);
+            var columns = BuildJoinColumns(src, schema, sel.Items);
+            columns = SizeUntypedCharacterColumns(columns, sel.Items, it => StarWidthJoin(it, src), () =>
+            {
+                var first = src.Select(s => s.Table.EnumerateAll(includeDeleted: true)
+                    .Select(r => (DbfRecord?)r).FirstOrDefault()).ToArray();
+                return first.Any(r => r is null) ? null
+                    : Bind(new CompositeRowContext(src, first, _outer, VfpBlankFields));
+            }, ctx);
+
             // Per-step descriptor for sources[1..]: comma-FROM entries are an inner cross join
             // (ON is implicitly .T.); each explicit JOIN carries its own type + ON predicate.
             var steps = new JoinStep[src.Length];
@@ -971,9 +1012,6 @@ internal sealed class SelectExecutor
                 }
                 composites = kept;
             }
-
-            var schema = new CompositeSchema(src);
-            var columns = BuildJoinColumns(src, schema, sel.Items);
 
             bool aggregate = sel.GroupBy.Count > 0 || sel.Items.Any(ContainsAggregate);
 
