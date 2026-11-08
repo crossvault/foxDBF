@@ -87,6 +87,7 @@ public sealed partial class DbfWriter
             throw new InvalidOperationException(
                 "This writer presents a column-name view (DBC long names); open the table with DbfWriter.Open(path) to alter it.");
 
+        ValidateIndexes();
         var defs = newColumns.ToList();
 
         // The reopen options must be captured BEFORE we tear our handles down (they read the live

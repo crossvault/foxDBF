@@ -474,11 +474,6 @@ internal static class CdxIndexBuilder
         }
     }
 
-    /// <summary>True when keys under <paramref name="collation"/> can be written for a table in
-    /// <paramref name="schema"/>'s code page (MACHINE, GENERAL, SPANISH); false for an unknown sequence.</summary>
-    internal static bool CanReproduceCollation(DbfTable schema, string? collation)
-        => VfpCollations.Resolve(collation, schema.Encoding.CodePage, out _) != CollationSupport.Unsupported;
-
     /// <summary>
     /// Build the <see cref="TagKeyComputer"/> for <paramref name="def"/> against <paramref name="schema"/>.
     /// The per-tag collation ALWAYS wins (it is baked into the tag header), but the KEY/FOR expressions
@@ -488,11 +483,10 @@ internal static class CdxIndexBuilder
     internal static TagKeyComputer CreateKeyComputer(DbfTable schema, CdxTagDefinition def, EvaluationContext? evalContext)
     {
         // The stored keys are weighted in the TABLE code page (VFP9: CP850 GENERAL expands Ä to AE, CP1252 does
-        // not). An unknown sequence cannot be reproduced at all: refuse rather than write MACHINE bytes under a
-        // foreign sort-sequence name (incremental maintenance then invalidates the CDX instead of corrupting it).
-        if (VfpCollations.Resolve(def.Collation, schema.Encoding.CodePage, out var collation) == CollationSupport.Unsupported)
+        // not). Approximate weights are not VFP keys either: refuse before writing any index bytes.
+        if (VfpCollations.Resolve(def.Collation, schema.Encoding.CodePage, out var collation) != CollationSupport.Exact)
             throw new DbfWriteException(
-                $"Collating sequence '{def.Collation}' is not supported for CDX keys (MACHINE, GENERAL and SPANISH are).");
+                $"Cannot derive index tag '{def.Name}' exactly (collation '{def.Collation}', code page {schema.Encoding.CodePage}).");
         var ctx = new EvaluationContext
         {
             // KEY/FOR comparisons run on the decoded text (VFP: in the current code page), so they use the

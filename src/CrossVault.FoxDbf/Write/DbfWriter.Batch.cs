@@ -82,7 +82,6 @@ public sealed partial class DbfWriter
         if (rows.Count == 0)
             return Array.Empty<int>();
 
-        ValidateCompactIndexes();
         var indices = new int[rows.Count];
         int existingRecordCount = 0;
         // §5.1: the exact written bytes + 1-based recno of every row, captured for a single batched
@@ -97,6 +96,7 @@ public sealed partial class DbfWriter
         long appendPos = VfpLock.AppendLockPosition(_usesStructuralScheme);
         WithLock(appendPos, 1, () =>
         {
+            ValidateIndexes(CdxMaintMode.Append);
             int diskCount = (int)ReadOnDiskRecordCount();
             _recordCount = diskCount;
             existingRecordCount = diskCount;

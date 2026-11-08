@@ -22,6 +22,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: Writes to tables with structural CDX tags whose collation/code page or KEY/FOR expression
+  cannot be maintained exactly now fail before changing DBF, memo or index bytes, instead of deleting the
+  CDX or writing approximate weights. Errors identify the tag, collation and code page; open compact IDX
+  refusals now include the code page too. GENERAL/SPANISH without exact code-page weights can no longer
+  build an index or encode a SEEK key. microVFP `USE` reports VFP error 1 for unavailable index UDFs
+  (114 for a compact IDX KEY);
+  the read-only table API can still inspect these tables. Exact collation support and hosted UDF index
+  maintenance remain separate work; no destructive compatibility option is provided.
+
 - Open compact `.idx` files now stay current through microVFP INSERT/APPEND FROM, key and FOR-field
   REPLACE, DELETE/RECALL and PACK (MACHINE and GENERAL). `SET INDEX TO` and `USE ... INDEX` register
   the indexes; navigation and SEEK refresh after writes. The writer API maintains registered indexes

@@ -48,12 +48,12 @@ public sealed partial class DbfWriter
                 !VfpRuntime.EngineFunctionNames.Contains(name)));
         if ((header.Options & 0xE0) != 0x20 || !Supported(header.KeyExpression) || !Supported(header.ForExpression)
             || VfpCollations.Resolve(header.SortOrder, _schema.Encoding.CodePage, out _) != CollationSupport.Exact)
-            throw new DbfWriteException($"Cannot maintain compact index '{path}' (KEY '{header.KeyExpression}', FOR '{header.ForExpression}', collation '{header.SortOrder}').");
+            throw new DbfWriteException($"Cannot maintain compact index '{path}' (KEY '{header.KeyExpression}', FOR '{header.ForExpression}', collation '{header.SortOrder}', code page {_schema.Encoding.CodePage}).");
         var def = new CdxTagDefinition(Path.GetFileNameWithoutExtension(path), header.KeyExpression,
             header.HasFor ? header.ForExpression : null, header.Descending, header.SortOrder, header.IsUnique);
         var computer = CdxIndexBuilder.CreateKeyComputer(_schema, def, context);
         if (computer.KeyLen != header.KeyLength || computer.KeyType == IndexKeyType.Unknown)
-            throw new DbfWriteException($"Cannot derive the stored key of compact index '{path}'.");
+            throw new DbfWriteException($"Cannot derive the stored key of compact index '{path}' (collation '{header.SortOrder}', code page {_schema.Encoding.CodePage}).");
         return (def, computer);
     }
 

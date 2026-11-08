@@ -345,6 +345,7 @@ public sealed partial class DbfWriter
         // (deletes + ReindexNeeded) the now-owned sidecar instead of early-returning and leaving it stale.
         EnsureStructuralCdxAdvertised();
         _tagComputers = null;
+        ReindexNeeded = false;
     }
 
     // ---- incremental tag-DDL fast paths (project-review 5.6) --------------------

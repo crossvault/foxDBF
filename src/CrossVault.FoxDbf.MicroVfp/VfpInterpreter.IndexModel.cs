@@ -494,6 +494,49 @@ public sealed partial class VfpInterpreter
     // True while ProbeEvaluate runs: a field read at EOF/BOF yields the blank record VFP reads there, not .NULL..
     private bool _probing;
 
+    private void ValidateIndexFunctionsOnUse(int area)
+    {
+        int selected = Session.CurrentArea;
+        bool probing = _probing;
+        Session.SelectArea(area);
+        _probing = true;
+        try
+        {
+            foreach (var index in IndexInventory(area).OrderByDescending(i => i.Structural))
+                foreach (string text in new[] { index.KeyExpr, index.ForExpr })
+                {
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    var expression = VfpExpression.Parse(text);
+                    // VFP resolves a UDF while opening the index, even without a write or controlling order.
+                    // Use the host so a loaded procedure is distinguished from a missing program (error 1).
+                    if (!expression.ContainsFunction((name, _) => !VfpRuntime.EngineFunctionNames.Contains(name)))
+                        continue;
+                    try { expression.Evaluate(_row, _ctx); }
+                    catch (MicroVfpRuntimeException ex)
+                    {
+                        if (index.Structural)
+                        {
+                            Session.CloseArea(area);
+                            _meta.Remove(area);
+                        }
+                        else
+                        {
+                            // VFP has already opened the table when an explicitly listed index fails.
+                            Meta(area).ExtraIndexes?.Remove(index.FilePath);
+                        }
+                        if (index.IsIdx && text == index.KeyExpr && ex.VfpErrorNumber == 1)
+                            throw new MicroVfpRuntimeException("Index does not match the table. Delete the index file and re-create the index.", 114);
+                        throw;
+                    }
+                }
+        }
+        finally
+        {
+            _probing = probing;
+            Session.SelectArea(selected);
+        }
+    }
+
     /// <summary>The one evaluation VFP9 makes when <c>INDEX ON</c> or <c>SET FILTER TO</c> runs (verified: an
     /// unknown function raises error 1 even on an empty table or at EOF, a UDF in <c>SET FILTER</c> is called once
     /// at SET time). It runs through the interpreter against the current record, so UDFs and microVFP functions
