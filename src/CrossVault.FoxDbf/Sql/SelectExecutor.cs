@@ -77,7 +77,9 @@ internal sealed class SelectExecutor
     private SelectExecutor(VfpSession session, IRowContext? outer, IVfpFunctionHost? host)
     {
         _session = session;
-        _outer = outer;
+        // SQL's missing source columns fall back to memvars, never to the current work area's fields.
+        _outer = outer is not null && ReferenceEquals(outer, host)
+            ? new SqlHostRow(outer, session.MemoryBridge) : outer;
         _host = host;
     }
 
@@ -90,15 +92,7 @@ internal sealed class SelectExecutor
     private QualifierBinder Binder(IReadOnlyList<QualifierBinder.Source> sources)
     {
         if (_outer is null && _host is null) return new QualifierBinder(_session, sources, null, hostBound: false);
-        // Host-bound when microVFP runs the query: a hosted executor, or an outer chain ending in the interpreter.
-        bool host = _host is not null;
-        for (IRowContext? o = _outer; o is not null && !host; )
-        {
-            if (o is RowContext rc) o = rc.Outer;
-            else if (o is CompositeRowContext cc) o = cc.Outer;
-            else host = true;
-        }
-        return new QualifierBinder(_session, sources, OuterKnows, host);
+        return new QualifierBinder(_session, sources, OuterKnows, hostBound: _host is not null);
     }
 
     private bool OuterKnows(string q)
@@ -121,12 +115,42 @@ internal sealed class SelectExecutor
                 default:
                     // The interpreter: an open work area (read at its current record), or a defined
                     // variable such as an object reference. m. is handled by the binder itself.
-                    return _session.FindAreaByAlias(q) is not null || o.GetField(q) is not null;
+                    return _host is not null && HostKnows(q);
             }
         }
         // An uncorrelated hosted subquery has no outer row: the interpreter itself still resolves names.
-        return _outer is null && _host is IRowContext interp
-            && (_session.FindAreaByAlias(q) is not null || interp.GetField(q) is not null);
+        return _outer is null && _host is not null && HostKnows(q);
+    }
+
+    private bool HostKnows(string qualifier)
+        // m. remains the memory prefix even when a scalar variable happens to be named m.
+        => !qualifier.Equals("m", StringComparison.OrdinalIgnoreCase)
+            && (_session.FindAreaByAlias(qualifier) is not null
+                || _session.MemoryBridge?.IsObjectQualifier(qualifier) == true);
+
+    /// <summary>SQL can explicitly name another work area, but a bare name only falls back to memory.
+    /// Undefined bare variables raise 12 when evaluated (not behind a short-circuited AND), as VFP9 does.</summary>
+    private sealed class SqlHostRow : IRowContext
+    {
+        private readonly IRowContext _host;
+        private readonly IVfpMemoryBridge? _memory;
+
+        public SqlHostRow(IRowContext host, IVfpMemoryBridge? memory)
+        {
+            _host = host; _memory = memory;
+        }
+
+        public int RecNo => _host.RecNo;
+        public int RecCount => _host.RecCount;
+        public bool Deleted => _host.Deleted;
+
+        public object? GetField(string name)
+        {
+            if (name.Contains('.')) return _host.GetField(name);
+            if (name.Equals("NULL", StringComparison.OrdinalIgnoreCase)) return null;
+            if (_memory is not null && _memory.TryReadMemvar(name, out var value)) return value;
+            throw new FoxDbfSqlException($"Variable '{name.ToUpperInvariant()}' is not found.") { VfpErrorNumber = 12 };
+        }
     }
 
     /// <summary>

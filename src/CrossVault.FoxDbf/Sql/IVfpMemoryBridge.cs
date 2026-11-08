@@ -38,4 +38,8 @@ internal interface IVfpMemoryBridge
     /// blank).
     /// </summary>
     bool TryReadMemvar(string name, out object? value);
+
+    /// <summary>Whether a SQL qualifier names an object variable. A defined scalar (including NULL)
+    /// raises VFP9 error 1924 at bind time; a field in the current area is never a qualifier.</summary>
+    bool IsObjectQualifier(string name);
 }

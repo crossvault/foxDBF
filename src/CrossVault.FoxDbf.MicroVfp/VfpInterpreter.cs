@@ -1298,29 +1298,7 @@ public sealed partial class VfpInterpreter
             rec = dr; m.Cached = dr; m.CachedRec = m.RecNo;
         }
 
-        var col = wa.Table.Columns[idx];
-        if (col.Type is 'C' or 'V')
-        {
-            // Honour the _NullFlags bitmap FIRST: a NULL-able character field with its null bit set is a
-            // genuine .NULL. (ISNULL() true), not the blank string the raw bytes would decode to.
-            if (rec[idx] is null) return null;
-            var raw = rec.GetRawField(col);
-            string s = wa.Table.Encoding.GetString(raw);
-            if (col.Type == 'V') return s.TrimEnd(' ', '\0');
-            // A C field at its full declared width (see header); trailing NUL padding of non-VFP tools reads as blanks.
-            int end = s.Length;
-            while (end > 0 && s[end - 1] == '\0') end--;
-            return end == s.Length ? s : string.Concat(s.AsSpan(0, end), new string(' ', s.Length - end));
-        }
-        if (col.Type == 'M')
-        {
-            // A 0 memo pointer is an EMPTY memo, not .NULL. — VFP9 stores '' that way, allocating no block —
-            // unless the null bit says .NULL. (A binary M reads as Latin1 text, so '' too.)
-            var memo = rec[idx];
-            return memo is null && !rec.IsNullFlagSet(col) ? string.Empty : memo;
-        }
-        // Every other type: .NULL. ONLY for a set null bit — a blank N/F/D/T/M field (null bit clear, or a
-        // non-NULL-able column) reads as its typed empty (0 / {} / ""), ISNULL() .F., exactly as VFP9.
+        // Share SQL's full-width C, NOCPTRANS, varlen and null-bit rules (VFP9 oracle pinned).
         return rec.GetVfpValue(idx);
     }
 

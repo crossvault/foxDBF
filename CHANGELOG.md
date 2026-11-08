@@ -8,6 +8,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP SQL resolves missing source fields through memory variables instead of the current work area's
+  fields, including in uncorrelated subqueries. Undefined variables raise VFP9 error 12 when evaluated.
+  Qualified references are checked before filtering: a field name is not an alias (error 13), and a scalar
+  memory variable, including `.NULL.`, is not an object (error 1924).
+- BREAKING: microVFP character reads now share SQL's NOCPTRANS, VARCHAR length and null-bit handling. SQL character
+  expressions use the table code page even for bytes that happen to form valid UTF-8, preserving the
+  declared field width. The public DBF indexer's UTF-8 detection remains unchanged.
 - BREAKING: SQL sizes previously unsized character expression columns from the first source record, before
   filtering or sorting, as VFP9 does. In microVFP, `SELECT VARTYPE(...)` now creates C(1) instead of C(10);
   `TRANSFORM()` and string UDF results likewise use their evaluated width, with longer later values truncated

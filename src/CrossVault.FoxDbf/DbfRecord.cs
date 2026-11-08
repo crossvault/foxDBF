@@ -121,7 +121,9 @@ public readonly struct DbfRecord
             if (!raw.IsEmpty)
             {
                 var encoding = column.IsBinary ? System.Text.Encoding.Latin1 : _table.Encoding;
-                value = FieldDecoder.DecodeCharacterPadded(column, raw, encoding, _table.EncodingIsExplicit);
+                // VFP reads the declared code page, even when the bytes happen to be valid UTF-8.
+                // Keep the public indexer's UTF-8 detection separate from expression field semantics.
+                value = FieldDecoder.DecodeCharacterPadded(column, raw, encoding, suppressUtf8Detection: true);
             }
         }
         _cache[index] = value;

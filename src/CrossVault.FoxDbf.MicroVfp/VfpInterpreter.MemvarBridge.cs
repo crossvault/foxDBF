@@ -75,5 +75,12 @@ public sealed partial class VfpInterpreter
             value = null;
             return false;
         }
+
+        public bool IsObjectQualifier(string name)
+        {
+            if (!_it.Memory.IsDefined(name) && _it.Memory.FindArray(name) is null) return false;
+            if (_it.TryGetObject(_it.Memory.Get(name), out _)) return true;
+            throw new MicroVfpRuntimeException($"{name.ToUpperInvariant()} is not an object.", 1924);
+        }
     }
 }
