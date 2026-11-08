@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: microVFP `KEY()` preserves the case of string literals in its expression text, matching VFP9.
+  VFP9 operator probes also confirm that `FILTER()`, `SET('FILTER')`, `NORMALIZE()`, `KEY()` and `FOR()`
+  canonicalize both `>=` and `=>` to `=>`, and both `<=` and `=<` to `<=`.
 - Recognize VFP9 codepage identifiers for Macintosh (10000/10006/10007/10029), Hebrew
   (1255) and Arabic (1256).
 - BREAKING: Mazovia (620) and Kamenicky (895) DBFs now decode and write using their own

@@ -22,7 +22,7 @@ public sealed class MicroVfpUseAgainTests
         Assert.Equal("F28", f.Str("ALIAS()"));
         Assert.Equal(2m, f.Num("RECNO()"));
         Assert.Equal("IDTAG", f.Str("ORDER()").ToUpperInvariant());
-        Assert.Equal("ID>=2", f.Str("FILTER()"));
+        Assert.Equal("ID=>2", f.Str("FILTER()")); // VFP9 decompiles >= as => (M5 operator oracle).
         f.Run("GO BOTTOM");
         Assert.Equal(3m, f.Num("id"));
 
@@ -52,7 +52,7 @@ public sealed class MicroVfpUseAgainTests
         Assert.Equal("F28", f.Str("ALIAS()"));
         Assert.Equal(2m, f.Num("RECNO()"));
         Assert.Equal("IDTAG", f.Str("ORDER()").ToUpperInvariant());
-        Assert.Equal("ID>=2", f.Str("FILTER()"));
+        Assert.Equal("ID=>2", f.Str("FILTER()"));
         Assert.Equal("", f.Str("CDX(2)"));
 
         f.Run("SELECT B");

@@ -7,6 +7,57 @@ namespace CrossVault.FoxDbf.Tests;
 
 public sealed class MicroVfpSmallBacklogTests
 {
+    // Pinned by MicroVfpSmallBacklogVfp9OracleTests: VFP9 accepts => and =<, and prints => and <=.
+    [Theory]
+    [InlineData("id >= 2", "ID=>2")]
+    [InlineData("id => 2", "ID=>2")]
+    [InlineData("id <= 2", "ID<=2")]
+    [InlineData("id =< 2", "ID<=2")]
+    [InlineData("id <> 2", "ID#2")]
+    [InlineData("id # 2", "ID#2")]
+    [InlineData("id != 2", "ID#2")]
+    [InlineData("id == 2", "ID==2")]
+    [InlineData("!x", ".NOT.X")]
+    [InlineData("NOT x", ".NOT.X")]
+    [InlineData("'a' $ name", "\"a\"$NAME")]
+    [InlineData("id > 5 AND id < 10", "ID>5.AND.ID<10")]
+    [InlineData("id > 5 .AND. id < 10", "ID>5.AND.ID<10")]
+    [InlineData("id > 5 OR id < 2", "ID>5.OR.ID<2")]
+    [InlineData("id > 5 .OR. id < 2", "ID>5.OR.ID<2")]
+    [InlineData("NOT id > 5", ".NOT.ID>5")]
+    [InlineData(".NOT. id > 5", ".NOT.ID>5")]
+    [InlineData("id > 5 AND NOSUCHFN(id)", "ID>5.AND.NOSUCHFN(ID)")]
+    [InlineData("name = 'a >= => <= =< b'", "NAME=\"a >= => <= =< b\"")]
+    [InlineData("id >= 1 + 1", "ID=>2")]
+    [InlineData("id => -2 AND id =< 3", "ID=>-2.AND.ID<=3")]
+    public void ExpressionText_FilterNormalizeKeyAndFor_MatchVfp9(string expression, string expected)
+    {
+        using var dir = new MicroVfpTestSupport.TempDir("m5operators");
+        using (var writer = DbfWriter.Create(dir.File("t.dbf"), new[]
+               {
+                   new DbfColumnDef("id", 'I'), new DbfColumnDef("x", 'L', 1),
+                   new DbfColumnDef("name", 'C', 20),
+               }))
+        {
+            writer.AppendRecord(1, false, "a >= => <= =< b");
+            writer.CreateTag(new CdxTagDefinition("k", expression, expression));
+        }
+        using var session = new VfpSession();
+        session.OpenDirectory(dir.Path);
+        var interpreter = new VfpInterpreter(session);
+        interpreter.Execute($"USE t ORDER k\nSET FILTER TO {expression}");
+        string literal = string.Join("+", expression.Select(c => $"CHR({(int)c})"));
+        Assert.Equal(expected, interpreter.EvalExpression("FILTER()").AsString);
+        Assert.Equal(expected, interpreter.EvalExpression("SET('FILTER')").AsString);
+        Assert.Equal(expected, interpreter.EvalExpression($"NORMALIZE({literal})").AsString);
+        Assert.Equal(expected, interpreter.EvalExpression("KEY()").AsString);
+        // FOR(), unlike KEY(), uppercases even string literal contents.
+        Assert.Equal(expected.ToUpperInvariant(), interpreter.EvalExpression("FOR()").AsString);
+        interpreter.Execute("SET FILTER TO");
+        Assert.Equal("", interpreter.EvalExpression("FILTER()").AsString);
+        Assert.Equal("", interpreter.EvalExpression("SET('FILTER')").AsString);
+    }
+
     [Theory]
     [InlineData("MACHINE", "OFF")]
     [InlineData("MACHINE", "ON")]
