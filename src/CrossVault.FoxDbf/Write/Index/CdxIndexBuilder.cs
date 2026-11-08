@@ -891,16 +891,15 @@ internal static class CdxIndexBuilder
     /// diacritic-tail run; truncating to the field width would discard tail/diacritic weight and
     /// mis-order accented or wide data (and be byte-incompatible with VFP9). Verified against the
     /// VFP9-built fixture <c>vfp_test/ligtest.CDX</c> (C(10) GENERAL ⇒ KeyLength 20) and
-    /// <c>data/USR.CDX</c> (UPPER over C(80) ⇒ 160). Capped at 254 so <c>Bits(keyLen) ≤ 8</c> — the
-    /// compact-leaf dup/trail masks are single bytes (2·N stays ≤ 254 for N ≤ 127).
+    /// character expressions of width 120 (GENERAL ⇒ 240). VFP9 rejects wider keys with error 112;
+    /// it does not cap them, which would lose the expression width needed by SEEK under EXACT OFF.
     /// </summary>
     private static int CollatedKeyLength(int baseLen, bool isChar, IVfpCollation collation)
     {
-        if (!isChar || IsIdentityCollation(collation))
-            return Math.Max(1, baseLen);
-        int expanded = baseLen * 2;
-        if (expanded > 254) expanded = 254; // keep Bits(keyLen) ≤ 8 (single-byte dup/trail masks)
-        return Math.Max(1, expanded);
+        int factor = isChar && !IsIdentityCollation(collation) ? 2 : 1;
+        if (baseLen > 240 / factor)
+            throw new DbfWriteException("Index key is too long.", 112);
+        return Math.Max(1, baseLen * factor);
     }
 
     /// <summary>An identity collation (MACHINE) maps a character value to its raw code-page bytes,

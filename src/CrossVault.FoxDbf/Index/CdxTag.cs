@@ -148,7 +148,8 @@ public sealed class CdxTag
 
     /// <summary>
     /// The width in characters of a weighted (GENERAL / SPANISH) key: VFP9 stores two weight bytes per character,
-    /// so it is half the key length. Assumes the key was not capped at 240 bytes (an expression over 120 characters).
+    /// so it is half the key length. VFP9 rejects expressions over 120 characters with error 112 rather than
+    /// capping their keys; the CDX builder enforces that same limit.
     /// </summary>
     private int WeightedKeyWidth => KeyLength / 2;
 

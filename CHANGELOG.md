@@ -8,6 +8,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP `SEEK` and `SEEK()` under a single-value `SET KEY` stop after one step past an out-of-scope
+  match, as VFP9 does; two such entries now give `FOUND() = .F.` and EOF instead of a later in-scope hit.
+- BREAKING: CDX creation rejects character keys wider than 240 characters under MACHINE or 120 under
+  GENERAL/SPANISH with VFP9 error 112, instead of writing oversized or truncated keys. Shorten the index
+  expression explicitly, for example with `LEFT()`, before creating the tag.
 - BREAKING: microVFP `INSERT` now propagates failures instead of silently dropping the row. A failing DBC
   field `DEFAULT` raises a catchable VFP error and leaves no partial row. DEFAULTs also apply through custom
   aliases and see the supplied field values, earlier DEFAULTs, and the new record in `RECCOUNT()`, as in VFP9.

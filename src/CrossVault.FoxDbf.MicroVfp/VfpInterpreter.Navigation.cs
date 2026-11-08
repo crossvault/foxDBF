@@ -1147,12 +1147,9 @@ public sealed partial class VfpInterpreter
                     return false;
                 }
             }
-            // A direct index hit is NOT exempt from the central Visible() gate (SET DELETED / SET KEY /
-            // SET FILTER): when the hit record is hidden VFP does not stop on it — the SEEK command / SEEK()
-            // advance through the remaining index entries that STILL match the seek key to the first visible
-            // one, exactly like the deleted-record skip. When every matching entry is hidden the pointer parks
-            // at EOF with FOUND()=.F. and RECNO()=RECCOUNT()+1 (VFP9-verified). Relation repositioning
-            // (relationSeek) keeps its own established semantics and is deliberately left untouched.
+            // Deleted/filtered hits advance to the first visible matching entry. A single-value SET KEY only
+            // steps past ONE out-of-scope hit (FirstVisibleSeekMatch); a second makes SEEK miss even when a later
+            // match is in scope. VFP9 checks this before DELETED/FILTER. Relation repositioning bypasses visibility.
             if (!relationSeek && !Visible(wa, hit))
             {
                 int vis = FirstVisibleSeekMatch(src, key, wa, characterNeedle);
@@ -1192,8 +1189,9 @@ public sealed partial class VfpInterpreter
 
     /// <summary>After a SEEK index hit lands on a record HIDDEN by the central <see cref="Visible"/> gate
     /// (SET DELETED / SET KEY / SET FILTER), find the first VISIBLE record among the index entries that still
-    /// MATCH the seek key — walking the controlling order. This extends VFP's deleted-record skip to every
-    /// visibility gate. Returns the recno, or −1 when every matching entry is hidden (⇒ the caller parks the
+    /// MATCH the seek key — walking the controlling order. VFP9 permits only one step past an entry outside a
+    /// single-value SET KEY scope, even if those entries are also deleted/filtered out. Returns the recno, or −1
+    /// when the scope cannot be reached or every matching entry is hidden (⇒ the caller parks the
     /// pointer at EOF with FOUND()=.F.). Works over a CDX tag OR a standalone <c>.idx</c> source. Without
     /// <paramref name="requireVisible"/> it is the first matching entry in the controlling order.</summary>
     private int FirstVisibleSeekMatch(OrderSource src, VfpValue key, VfpSession.WorkArea wa, CharacterSeekNeedle? characterNeedle,
@@ -1203,10 +1201,16 @@ public sealed partial class VfpInterpreter
         if (_meta.TryGetValue(wa.Area, out var m) && m.OrderReversed)
             entries = entries.Reverse();
 
+        HashSet<int>? scope = null;
+        if (requireVisible && m is { KeySet: true, KeyRange: false })
+            scope = m.KeyVisible ??= BuildKeyVisible(wa, m);
+        int outsideScope = 0;
         foreach (var (keyBytes, recno) in entries)
         {
             if (recno < 1 || recno > wa.Table.RecordCount) continue;
             if (!SeekEntryMatches(keyBytes, key, src, characterNeedle)) continue;
+            if (scope is not null && !scope.Contains(recno) && ++outsideScope == 2)
+                return -1;
             if (!requireVisible || Visible(wa, recno)) return recno;
         }
         return -1;
