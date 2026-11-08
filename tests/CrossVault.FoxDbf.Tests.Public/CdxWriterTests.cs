@@ -772,10 +772,9 @@ public sealed class CdxWriterTests
     }
 
     // ====================================================================
-    //  Structural-CDX header flag (byte 28 bit 0) + Pack invalidation:
+    //  Structural-CDX header flag (byte 28 bit 0) + Pack rebuilding:
     //  CreateTag on a fresh table must advertise the new structural .cdx
-    //  so VFP auto-opens it, and a later Pack must invalidate it (delete +
-    //  ReindexNeeded) instead of leaving a stale sidecar behind.
+    //  so VFP auto-opens it, and a later Pack must rebuild its surviving keys.
     // ====================================================================
 
     [Fact]
@@ -804,7 +803,7 @@ public sealed class CdxWriterTests
     }
 
     [Fact]
-    public void CreateTag_ThenPack_RaisesReindexNeeded_AndRemovesStaleCdx()
+    public void CreateTag_ThenPack_RebuildsCdx_WithoutReindexNeeded()
     {
         string dir = FreshTempDir();
         try
@@ -825,13 +824,13 @@ public sealed class CdxWriterTests
 
                 w.Delete(1); // mark BETA deleted so Pack physically compacts
 
-                // Pack must now recognise the table OWNS a structural .cdx (CreateTag flipped the
-                // tracking flag): delete the now-stale sidecar and raise ReindexNeeded — rather than
-                // early-returning on a stale _hasStructuralCdx and leaving a broken index on disk.
+                // VFP9 retains the tag and renumbers the surviving entries (M6 compaction oracle).
                 w.Pack();
 
-                Assert.True(w.ReindexNeeded);
-                Assert.False(File.Exists(cdx));
+                Assert.False(w.ReindexNeeded);
+                Assert.True(File.Exists(cdx));
+                using var index = CdxFile.Open(cdx);
+                Assert.Equal(new uint[] { 1, 2 }, index.Tag("NAMETAG")!.EnumerateEntries().Select(e => e.RecordNumber));
             }
         }
         finally { Cleanup(dir); }

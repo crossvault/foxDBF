@@ -60,7 +60,7 @@ public sealed partial class DbfWriter : IDisposable
     private readonly LockMode _lockMode;
     private bool _usesStructuralScheme;
     // §D2/§D7: the TRUE structural-.cdx signal (header byte 28 bit 0, NOT the lock discriminator).
-    // ONLY this gates Pack/Zap cdx invalidation + the byte-28 flag clear — a plain v0x30 table with
+    // ONLY this gates Pack/Zap cdx rebuilding — a plain v0x30 table with
     // no structural .cdx must NOT touch any .cdx or set ReindexNeeded. _usesStructuralScheme stays
     // dedicated to lock-offset selection (which additionally treats every v0x30 as structural).
     private bool _hasStructuralCdx;
@@ -212,11 +212,9 @@ public sealed partial class DbfWriter : IDisposable
     }
 
     /// <summary>
-    /// §D2/§D7 — raised once a destructive compaction (<see cref="Pack"/> / <see cref="Zap"/>) has
-    /// invalidated a structural <c>.cdx</c> that cannot yet be rebuilt (CDX writing is §D7). A
-    /// <c>true</c> value means the caller (or the next VFP <c>USE</c>) must reindex the table.
-    /// Pack/Zap delete the now-stale <c>.cdx</c> sidecar (so VFP rebuilds it on next <c>USE</c>) and
-    /// set this flag whenever the table uses the structural scheme. Covered by <c>DbfPackZapCdxTests</c>.
+    /// Raised when index maintenance fails or a schema rewrite invalidates the structural index.
+    /// The caller must explicitly rebuild the affected index before continuing indexed writes.
+    /// <see cref="Pack"/> / <see cref="Zap"/> with an existing sidecar rebuild the tags and leave this flag false.
     /// </summary>
     public bool ReindexNeeded { get; private set; }
 

@@ -22,6 +22,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- `PACK` and `ZAP` now preserve every structural CDX tag, including DBC long-field-name expressions.
+  PACK rebuilds the surviving records' keys; ZAP empties the tags. Both retain KEY/FOR definitions,
+  tag order, collation, descending and UNIQUE settings and recompute tag statistics as VFP9 does,
+  so indexed navigation, SEEK and subsequent writes continue to work without recreating the tags.
+
 - BREAKING: microVFP `INDEX ON … TO … DESCENDING` now raises VFP9 error 1706 without creating an IDX,
   for both compact and uncompressed indexes. `SET INDEX TO` without `ORDER` now selects the first listed
   IDX (or natural order when a CDX is listed first), also with `ADDITIVE`, and moves to the top when files

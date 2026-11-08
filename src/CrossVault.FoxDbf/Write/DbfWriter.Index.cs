@@ -343,8 +343,8 @@ public sealed partial class DbfWriter
 
         // The sidecar VFP just wrote is a STRUCTURAL compound .cdx (options 0xE0). Advertise it in the
         // DBF header (byte 28 bit 0) so a real VFP runtime auto-opens it on USE, and flip the writer's
-        // own _hasStructuralCdx/_usesStructuralScheme so a subsequent Pack/Zap correctly invalidates
-        // (deletes + ReindexNeeded) the now-owned sidecar instead of early-returning and leaving it stale.
+        // own _hasStructuralCdx/_usesStructuralScheme so a subsequent Pack/Zap rebuilds the now-owned
+        // sidecar instead of early-returning and leaving it stale.
         EnsureStructuralCdxAdvertised();
         _tagComputers = null;
         ReindexNeeded = false;
@@ -367,7 +367,7 @@ public sealed partial class DbfWriter
     internal bool FailFastTagDirectoryInsertForTests { get; set; }
 
     /// <summary>Advertise the structural <c>.cdx</c> in the DBF header (byte 28 bit 0) and flip the writer's own
-    /// tracking so a later Pack/Zap correctly invalidates it — the shared tail of every structural tag-build
+    /// tracking so a later Pack/Zap correctly rebuilds it — the shared tail of every structural tag-build
     /// path. No-op when the sidecar is already advertised.</summary>
     private void EnsureStructuralCdxAdvertised()
     {
