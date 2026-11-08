@@ -16,7 +16,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   explicit zero values and `.NULL.` fields remain distinct, under `SET NULL OFF` and `ON`.
 - Expressions reject chained or mixed arrow qualifiers such as `person->name->x` and `m.person->name`,
   including forms with spaces, as VFP9 does. Valid `alias->field` references still work.
-
+- Single-table SQL `SELECT`, `UPDATE` and `DELETE` now use the structural CDX for Rushmore candidate
+  selection, including open aliases and transaction working copies. UPDATE/DELETE collect their rows
+  before writing, so changing an indexed key cannot process a row twice. Results retain VFP9's
+  DELETED/EXACT/ANSI, ORDER BY, TOP and DISTINCT behavior. Under ANSI OFF, character predicates whose
+  operand may be shorter than the literal stay residual filters, preventing index bounds from losing
+  prefix matches (including `ALLTRIM(name)` and literals longer than a C field).
 - ADO.NET: a Memo column loaded with `DataTable.Load` (or `DbDataAdapter.Fill` with key info) got
   `MaxLength = 4`, the width of the memo-block pointer in the record, so any memo longer than four characters
   failed with a `ConstraintException` (#3, thanks @asmith-zinck for the report). `GetSchemaTable` now reports

@@ -431,7 +431,7 @@ internal sealed class SelectExecutor
             Binder(new[] { new QualifierBinder.Source(rowAlias, from.Table,
                 new HashSet<string>(table.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase)) })
                 .CheckSelect(sel);
-            return Execute(table, ctx, sel, rowAlias);
+            return Execute(table, existing?.Cdx ?? scratchCdx, ctx, sel, rowAlias);
         }
         finally
         {
@@ -443,7 +443,7 @@ internal sealed class SelectExecutor
         }
     }
 
-    private SqlResult Execute(DbfTable table, EvaluationContext ctx, SelectStatement sel, string alias)
+    private SqlResult Execute(DbfTable table, CdxFile? cdx, EvaluationContext ctx, SelectStatement sel, string alias)
     {
         var schema = new TableSchema(table, alias);
 
@@ -457,7 +457,7 @@ internal sealed class SelectExecutor
                 VfpBlankFields));
         }, ctx);
 
-        var rows = CollectSingleRows(table, ctx, sel, alias);
+        var rows = CollectSingleRows(table, cdx, ctx, sel, alias);
 
         // (3) aggregate vs row projection. Each output row is carried together with a representative
         // row context so ORDER BY / TOP can re-evaluate row-level keys after grouping.
@@ -487,8 +487,8 @@ internal sealed class SelectExecutor
     /// <summary>
     /// Resolves the WHERE for a single base table into surviving rows (recno order).
     /// <para>
-    /// FAST PATH (no subquery predicate AND no outer/correlation binding) — UNCHANGED from before:
-    /// <see cref="QueryOptimizer.FindRecords"/> drives the WHERE text (full scan + residual; SET DELETED
+    /// FAST PATH (no subquery predicate, outer/correlation binding or interpreter host):
+    /// <see cref="QueryOptimizer.FindRecords"/> drives the WHERE text (structural CDX + residual; SET DELETED
     /// honoured by ctx), and the matched recnos are materialized through
     /// <see cref="DbfTable.EnumerateAll(bool)"/> so SET DELETED OFF keeps matched deleted rows.
     /// </para>
@@ -498,7 +498,7 @@ internal sealed class SelectExecutor
     /// and the predicate (or plain expression, with the outer row in scope) is evaluated per row.
     /// </para>
     /// </summary>
-    private List<Row> CollectSingleRows(DbfTable table, EvaluationContext ctx, SelectStatement sel, string alias)
+    private List<Row> CollectSingleRows(DbfTable table, CdxFile? cdx, EvaluationContext ctx, SelectStatement sel, string alias)
     {
         if (sel.WherePredicate is null && _outer is null && _host is null)
         {
@@ -508,7 +508,7 @@ internal sealed class SelectExecutor
             // correlated reference and is left untouched.
             string? filter = sel.Where?.Text;
             filter = string.IsNullOrWhiteSpace(filter) ? ".T." : StripDrivingQualifier(filter, alias);
-            var qr = _session.FindRecords(table, null, filter, ctx);
+            var qr = _session.FindRecords(table, cdx, filter, ctx);
             var hits = new HashSet<int>(qr.RecordNumbers);
             var rows = new List<Row>(hits.Count);
             int recno = 0;

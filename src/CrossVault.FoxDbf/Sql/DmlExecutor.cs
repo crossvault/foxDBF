@@ -385,7 +385,7 @@ internal sealed class DmlExecutor
         // the held lock (WithLock's covered-range guard) rather than re-locking.
         using var lockScope = writer.LockFileScope();
 
-        var matched = MatchedRecords(table, st.Table, st.Where?.Text, ctx);
+        var matched = MatchedRecords(target, st.Table, st.Where?.Text, ctx);
         foreach (var (recNo, rec) in matched)
         {
             // Rewrite the FULL row: seed every field from the record's CURRENT value, then apply each
@@ -424,7 +424,7 @@ internal sealed class DmlExecutor
         using var lockScope = writer.LockFileScope();
 
         // VFP soft delete: set the deletion flag only — never a pack.
-        var matched = MatchedRecords(target.Table, st.Table, st.Where?.Text, ctx);
+        var matched = MatchedRecords(target, st.Table, st.Where?.Text, ctx);
         foreach (var (recNo, _) in matched)
             writer.Delete(recNo - 1);
         return SqlResult.Dml(matched.Count);
@@ -449,14 +449,18 @@ internal sealed class DmlExecutor
     /// evaluation context, mirroring the SELECT path. Records are returned in ascending recno order,
     /// read from the writable target's live view so just-written state is seen.</summary>
     private List<(int RecNo, DbfRecord Rec)> MatchedRecords(
-        DbfTable table, string targetAlias, string? whereText, EvaluationContext ctx)
+        VfpSession.WritableTarget target, string targetAlias, string? whereText, EvaluationContext ctx)
     {
+        var table = target.Table;
+        // Select and materialize under the caller's file lock, then close the index BEFORE any
+        // writes. Moving a key must not revisit a row or invalidate a live index traversal (VFP9).
+        using var cdx = target.OpenCdx();
         // Drop the target's own qualifier (table.field / openAlias.field) — the optimizer's residual
         // resolves bare field names only and would otherwise read null and match nothing.
         string filter = string.IsNullOrWhiteSpace(whereText)
             ? ".T."
             : SelectExecutor.StripDrivingQualifier(whereText!, targetAlias);
-        var qr = _session.FindRecords(table, null, filter, ctx);
+        var qr = _session.FindRecords(table, cdx, filter, ctx);
         var hits = new HashSet<int>(qr.RecordNumbers);
 
         var list = new List<(int, DbfRecord)>(hits.Count);
