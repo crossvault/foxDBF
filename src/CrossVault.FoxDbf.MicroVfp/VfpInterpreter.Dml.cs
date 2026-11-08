@@ -638,7 +638,9 @@ public sealed partial class VfpInterpreter
                 {
                     if (col.IsSystem) continue;
                     if (fieldFilter is not null && !fieldFilter.Contains(col.Name)) continue;
-                    object? value = ReadField(srcWa, col.Name);
+                    // Copy the stored value, not the runtime's blank-to-empty conversion: a blank N/F
+                    // reads as 0 in expressions but APPEND FROM must preserve its blank bytes.
+                    object? value = raw?.GetExpressionValue(col.Name);
                     bool isNull = raw is { } r && r.IsNullFlagSet(col);
                     if (!isNull && (value is null || (col.Type == 'L' && raw is { } l && l.GetRawField(col)[0] == (byte)' ')))
                     {

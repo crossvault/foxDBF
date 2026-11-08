@@ -8,6 +8,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP `APPEND FROM` preserves blank numeric source fields as blank bytes instead of writing zero;
+  explicit zero values and `.NULL.` fields remain distinct, under `SET NULL OFF` and `ON`.
+- Expressions reject chained or mixed arrow qualifiers such as `person->name->x` and `m.person->name`,
+  including forms with spaces, as VFP9 does. Valid `alias->field` references still work.
+
 - ADO.NET: a Memo column loaded with `DataTable.Load` (or `DbDataAdapter.Fill` with key info) got
   `MaxLength = 4`, the width of the memo-block pointer in the record, so any memo longer than four characters
   failed with a `ConstraintException` (#3, thanks @asmith-zinck for the report). `GetSchemaTable` now reports

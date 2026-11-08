@@ -205,7 +205,7 @@ public sealed class SqlQualifierBindingTests : IDisposable
             it.Execute("SELECT person\nGO BOTTOM\nSKIP");
             Assert.True(it.EvalExpression("EOF()").AsLogical);
             Assert.Equal(0m, it.EvalExpression("person.id").AsNumber);
-            Assert.Equal("", it.EvalExpression("person.name").AsString);
+            Assert.Equal(new string(' ', 20), it.EvalExpression("person.name").AsString);
             Assert.Equal(9, Count(it, "SELECT id FROM person p WHERE person.id = 0"));
         }
     }
@@ -240,7 +240,7 @@ public sealed class SqlQualifierBindingTests : IDisposable
             Assert.Equal(9m, it.EvalExpression("t").AsNumber);
             it.Execute("USE other AGAIN IN 0 ALIAS oo\nSELECT oo\nLOCATE FOR oo->id = 3\nREPLACE oo->name WITH 'Omega'");
             Assert.Equal(3m, it.EvalExpression("RECNO()").AsNumber);
-            Assert.Equal("Omega", it.EvalExpression("oo.name").AsString);
+            Assert.Equal("Omega".PadRight(20), it.EvalExpression("oo.name").AsString);
         }
     }
 

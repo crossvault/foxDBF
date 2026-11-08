@@ -367,6 +367,10 @@ public sealed class ExpressionCollationAndEdgeTests
     [InlineData("person->amount->1")]   // VFP9: error 10
     [InlineData("person->name->x")]     // VFP9: error 1923
     [InlineData("m.person->name")]      // VFP9: error 13
+    [InlineData("m.person -> name")]
+    [InlineData("person -> name -> x")]
+    [InlineData("person->name -> x")]
+    [InlineData("person ->name->x")]
     public void ArrowQualifier_MalformedShapes_Throw(string expr)
         => Assert.Throws<ExpressionException>(() => Eval(expr, new TestRow()));
 

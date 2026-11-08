@@ -112,8 +112,9 @@ public sealed class SqlInsertDbcDefaultsTests
         int orders = Counter(copy, "ORDERS"), numbers = Counter(copy, "ORDER_NUMBER");
 
         var vfp = Interpreter(copy, out var session);
+        // VFP9 requires the DBC name; the physical ORDER_NUMB spelling raises error 12.
         using (session)
-            vfp.Execute("INSERT INTO orders (shipper_id, order_numb) VALUES ('ZZ', 'N1')\nCLOSE TABLES ALL");
+            vfp.Execute("INSERT INTO orders (shipper_id, order_number) VALUES ('ZZ', 'N1')\nCLOSE TABLES ALL");
 
         Assert.Equal("N1", Text(LastOrder(copy).Last, "ORDER_NUMB"));
         Assert.Equal(numbers, Counter(copy, "ORDER_NUMBER"));    // its DEFAULT never ran

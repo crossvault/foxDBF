@@ -123,6 +123,42 @@ public sealed class MicroVfpAppendBlankFieldsTests : IDisposable
 
     // ---- APPEND FROM ----------------------------------------------------------------------
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AppendFrom_NumericBlankZeroAndNullRemainDistinct(bool nullOn)
+    {
+        foreach (string name in new[] { "src", "dst" })
+        {
+            using var writer = DbfWriter.Create(_dir.File(name + ".dbf"), new[]
+            {
+                new DbfColumnDef("K", 'I'),
+                new DbfColumnDef("N", 'N', 6, 2, nullable: true),
+                new DbfColumnDef("F", 'F', 6, 2, nullable: true),
+            });
+        }
+        using var session = new VfpSession();
+        session.OpenDirectory(_dir.Path);
+        session.Execute("INSERT INTO src (K) VALUES (1)");
+        session.Execute("INSERT INTO src (K, N, F) VALUES (2, 0, 0)");
+        session.Execute("INSERT INTO src (K, N, F) VALUES (3, .NULL., .NULL.)");
+        var interpreter = new VfpInterpreter(session);
+        interpreter.Execute("USE src\nGO TOP");
+        Assert.Equal(0m, interpreter.EvalExpression("N").AsNumber);
+        Assert.False(interpreter.EvalExpression("ISNULL(N)").AsLogical);
+        interpreter.Execute($"USE dst\nSET NULL {(nullOn ? "ON" : "OFF")}\nAPPEND FROM src\nCLOSE TABLES ALL");
+
+        Assert.Equal(3, RecordCount(_dir.File("dst.dbf")));
+        foreach (string column in new[] { "N", "F" })
+        {
+            Assert.Equal("      "u8.ToArray(), Field(_dir.File("dst.dbf"), 0, column).Bytes);
+            Assert.False(Field(_dir.File("dst.dbf"), 0, column).Null);
+            Assert.Equal("  0.00"u8.ToArray(), Field(_dir.File("dst.dbf"), 1, column).Bytes);
+            Assert.False(Field(_dir.File("dst.dbf"), 1, column).Null);
+            Assert.True(Field(_dir.File("dst.dbf"), 2, column).Null);
+        }
+    }
+
     [Fact]
     public void AppendFrom_SetNullOff_UnsuppliedFieldsBlank_SourceBlankAndNullKept()
     {

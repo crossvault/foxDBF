@@ -111,7 +111,8 @@ public sealed class MicroVfpHostedExpressionTests : IDisposable
         _i.Execute("GO BOTTOM IN q");
         Assert.Equal(30m, Num("q.v"));
         Assert.Equal("3", _i.EvalExpression("ALLTRIM(q.t)").AsString);
-        Assert.Equal("C", _i.EvalExpression("q.k").AsString);
+        // Reading the SELECT result's C field includes its padding; this test checks the function result.
+        Assert.Equal("C", _i.EvalExpression("q.k").AsString.TrimEnd());
     }
 
     [Fact]

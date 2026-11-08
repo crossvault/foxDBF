@@ -226,19 +226,9 @@ internal sealed class ExpressionLexer
         // A '.' followed by a letter/underscore that is NOT a dotted operator/literal
         // (.AND. .OR. .NOT. .T. .F. .Y. .N. .NULL., each closed by a trailing '.')
         // is treated as a name qualifier and folded into a single identifier token.
-        // The xBase `alias->field` arrow is the same qualifier; it is folded to '.' (as VFP stores it).
-        bool arrow = false;
-        while (i + 1 < s.Length)
+        while (i + 1 < s.Length && s[i] == '.' && VfpIdentifier.IsStart(s[i + 1]) && !IsDottedOperatorAhead(s, i))
         {
-            if (s[i] == '.' && VfpIdentifier.IsStart(s[i + 1]) && !IsDottedOperatorAhead(s, i))
-                i++; // the '.'
-            else if (s[i] == '-' && s[i + 1] == '>' && i + 2 < s.Length && VfpIdentifier.IsStart(s[i + 2]))
-            {
-                arrow = true;
-                i += 2; // the '->'
-            }
-            else
-                break;
+            i++; // the '.'
             while (i < s.Length && (VfpIdentifier.IsPart(s[i]))) i++;
         }
 
@@ -259,7 +249,6 @@ internal sealed class ExpressionLexer
         }
 
         string text = s.Slice(start, i - start).ToString();
-        if (arrow) text = text.Replace("->", ".", StringComparison.Ordinal);
         return text.ToUpperInvariant() switch
         {
             "AND" => new(TokenType.And, start),
