@@ -19,6 +19,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- DateTime CDX/IDX keys now match VFP9's last-bit rounding of the fractional day, including times such as
+  `12:30:00`. Bulk builds, row-by-row maintenance and SEEK use the same encoding, so exact seeks find
+  VFP9-created keys. Reindex existing indexes containing DateTime keys to replace the old key bytes.
 - Empty Date and DateTime index keys now use VFP9's `80 00 00 00 00 00 00 00` encoding in bulk builds
   and row-by-row maintenance. Blank D/T fields retain their empty date type in KEY/FOR expressions;
   `SEEK {}` / `SEEK CTOT('')` find them, including the first duplicate in descending order.

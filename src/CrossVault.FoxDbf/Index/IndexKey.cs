@@ -417,8 +417,10 @@ public readonly struct IndexKey
         if (dt == default)
             return EncodeTransformedDouble(0);
         long jdn = YmdToJulianDay(dt.Year, dt.Month, dt.Day);
-        double frac = dt.TimeOfDay.TotalDays;
-        return EncodeTransformedDouble(jdn + frac);
+        // VFP9 converts total Julian seconds with a rounded reciprocal. Adding a fractional day
+        // (or dividing the total by 86400) differs by one bit for e.g. 2024-01-02 12:30:00.
+        double seconds = jdn * 86_400.0 + dt.TimeOfDay.TotalSeconds;
+        return EncodeTransformedDouble(seconds * (1.0 / 86_400.0));
     }
 
     /// <summary>
