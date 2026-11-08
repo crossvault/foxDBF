@@ -10,11 +10,16 @@ public readonly struct VfpTypeInfo : IEquatable<VfpTypeInfo>
     public VfpType Type { get; }
     public int Length { get; }
     public int Decimals { get; }
+    // F and B share Numeric in the expression runtime but remain distinct SQL cursor types.
+    internal char SqlStorageType { get; }
 
     public VfpTypeInfo(VfpType type, int length = 0, int decimals = 0)
     {
         Type = type; Length = length; Decimals = decimals;
     }
+
+    internal VfpTypeInfo(VfpType type, int length, int decimals, char sqlStorageType)
+        : this(type, length, decimals) => SqlStorageType = sqlStorageType;
 
     public bool Equals(VfpTypeInfo other)
         => Type == other.Type && Length == other.Length && Decimals == other.Decimals;
@@ -99,6 +104,14 @@ public sealed class VfpExpression
     /// <summary>Static type inference against a schema.</summary>
     public VfpTypeInfo InferType(ISchema schema)
         => _root.Infer(schema);
+
+    internal VfpTypeInfo InferSqlType(ISchema schema) => _root.InferSql(schema);
+
+    internal static VfpExpression ParseSql(string text)
+    {
+        var (root, normalized) = ExpressionParser.ParseSql(text);
+        return new VfpExpression(normalized, root);
+    }
 
     /// <summary>
     /// Every distinct FIELD name this expression reads (case-insensitive; function names and literals

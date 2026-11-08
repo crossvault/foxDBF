@@ -175,7 +175,7 @@ public static class SqlParser
             text = CountStarRx.Replace(text, "COUNT(1)");
             try
             {
-                return VfpExpression.Parse(text);
+                return VfpExpression.ParseSql(text);
             }
             catch (ExpressionException ex)
             {

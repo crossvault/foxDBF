@@ -134,11 +134,19 @@ public sealed class SqlSelectExecutorTests : IDisposable
     [InlineData("SELECT COUNT(*) FROM person")]
     [InlineData("SELECT COUNT(name) FROM person")]
     [InlineData("SELECT SUM(amount) FROM person")]
-    [InlineData("SELECT AVG(amount) FROM person")]
     [InlineData("SELECT MIN(amount) FROM person")]
     [InlineData("SELECT MAX(amount) FROM person")]
     [InlineData("SELECT COUNT(*), SUM(amount), MIN(amount), MAX(amount) FROM person")]
     public void Aggregate_WholeTable_Matches_Oracle(string sql) => CheckUnordered(sql);
+
+    [Fact]
+    public void Average_UsesVfp9CursorScale()
+    {
+        // The VFP9 computed-column oracle runs this same fixture: AVG over N(10,2)
+        // is stored as N(16,2), not the unrounded decimal returned by the LINQ oracle.
+        var result = _session.Execute("SELECT AVG(amount) FROM person")!;
+        Assert.Equal(222.22m, Assert.Single(Assert.Single(result.Rows)));
+    }
 
     [Fact]
     public void CompoundAggregate_SumPlusOne_EmitsOneAliasedRow()

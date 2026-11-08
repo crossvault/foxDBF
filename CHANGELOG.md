@@ -8,6 +8,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: SQL computed columns now expose VFP9 cursor widths and decimal scales (for example,
+  `LEN()` is N(10,0)). Character results are padded or truncated to their column width, including
+  IIF, DISTINCT and UNION results; numeric results use VFP9's rounding, types and decimal scales.
+  SUM over an all-NULL group returns `.NULL.`, and `INTO CURSOR/TABLE` preserves NULL character results.
+- SQL accepts `IS NULL` and `IS NOT NULL`, including compound WHERE predicates, joins and subqueries.
 - BREAKING: SQL sizes previously unsized character expression columns from the first source record, before
   filtering or sorting, as VFP9 does. In microVFP, `SELECT VARTYPE(...)` now creates C(1) instead of C(10);
   `TRANSFORM()` and string UDF results likewise use their evaluated width, with longer later values truncated

@@ -29,6 +29,10 @@ internal abstract class AstNode
     /// <summary>Static type inference against a schema.</summary>
     public abstract VfpTypeInfo Infer(ISchema schema);
 
+    // SQL cursor storage has different sizing rules from index expressions.
+    internal virtual VfpTypeInfo InferSql(ISchema schema) => Infer(schema);
+    internal virtual bool IsSqlConstant => false;
+
     /// <summary>Add every FIELD name this node (transitively) reads to <paramref name="into"/>. Only bare
     /// field references count — function names, literals and operators contribute nothing. Used by the
     /// write-path index maintenance to decide whether a tag's KEY/FOR expression resolves against a table's
@@ -42,7 +46,7 @@ internal abstract class AstNode
     public virtual bool TryConstString(out string value) { value = string.Empty; return false; }
 }
 
-internal sealed class LiteralNode : AstNode
+internal sealed partial class LiteralNode : AstNode
 {
     private readonly VfpValue _value;
     public LiteralNode(VfpValue value) => _value = value;
@@ -77,7 +81,7 @@ internal sealed class LiteralNode : AstNode
     }
 }
 
-internal sealed class FieldNode : AstNode
+internal sealed partial class FieldNode : AstNode
 {
     private readonly string _name;
     public FieldNode(string name) => _name = name;
@@ -120,7 +124,7 @@ internal sealed class FieldNode : AstNode
     };
 }
 
-internal sealed class UnaryNode : AstNode
+internal sealed partial class UnaryNode : AstNode
 {
     private readonly UnOp _op;
     private readonly AstNode _operand;
@@ -158,7 +162,7 @@ internal sealed class UnaryNode : AstNode
     public override void CollectFields(ICollection<string> into) => _operand.CollectFields(into);
 }
 
-internal sealed class BinaryNode : AstNode
+internal sealed partial class BinaryNode : AstNode
 {
     private readonly BinOp _op;
     private readonly AstNode _left, _right;
@@ -252,7 +256,7 @@ internal sealed class BinaryNode : AstNode
     }
 }
 
-internal sealed class FunctionNode : AstNode
+internal sealed partial class FunctionNode : AstNode
 {
     private readonly string _name;
     // Uppercased ONCE at parse/build time so the per-record hot path never calls
