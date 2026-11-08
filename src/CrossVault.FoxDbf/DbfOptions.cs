@@ -71,6 +71,11 @@ public sealed record DbfOptions
     /// </summary>
     public Encoding? DefaultEncoding { get; init; }
 
+    /// <summary>Opt in to UTF-8 detection in character fields for non-VFP data. Default false:
+    /// VFP9 always interprets bytes in the selected code page. An explicit <see cref="Encoding"/>
+    /// override takes precedence even when this option is enabled.</summary>
+    public bool DetectUtf8 { get; init; }
+
     /// <summary>
     /// Concurrency / locking strategy for the WRITE layer (plan §D3). Ignored by the
     /// read-only <see cref="DbfTable"/> path. <see cref="Write.LockMode.Shared"/> (the

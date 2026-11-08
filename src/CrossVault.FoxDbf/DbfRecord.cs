@@ -121,7 +121,7 @@ public readonly struct DbfRecord
             if (!raw.IsEmpty)
             {
                 var encoding = column.IsBinary ? System.Text.Encoding.Latin1 : _table.Encoding;
-                value = FieldDecoder.DecodeCharacterPadded(column, raw, encoding, _table.EncodingIsExplicit);
+                value = FieldDecoder.DecodeCharacterPadded(column, raw, encoding, _table.SuppressUtf8Detection);
             }
         }
         _cache[index] = value;
@@ -231,7 +231,7 @@ public readonly struct DbfRecord
         // explicit override (§A7 highest precedence) so the forced encoding wins even
         // when raw bytes are coincidentally valid UTF-8. A binary C/M column already
         // bypasses transcoding via Latin1, so the flag is moot there.
-        return FieldDecoder.Decode(column, raw, encoding, _table.EncodingIsExplicit);
+        return FieldDecoder.Decode(column, raw, encoding, _table.SuppressUtf8Detection);
     }
 
     /// <summary>

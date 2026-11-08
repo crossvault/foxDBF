@@ -8,6 +8,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- Recognize VFP9 codepage identifiers for Macintosh (10000/10006/10007/10029), Hebrew
+  (1255) and Arabic (1256).
+- BREAKING: Mazovia (620) and Kamenicky (895) DBFs now decode and write using their own
+  lossless encodings instead of the fallback codepage. Unicode follows the published
+  tables with VFP9's agreeing, reversible CPCONVERT mappings taking precedence;
+  VFP9 itself has no Unicode conversion table for these two pages.
+- Unknown or unavailable codepages retain their header identifier and use `DefaultEncoding`
+  for text. `DbfTable.CodePage` and microVFP `CPDBF()` report zero for these tables.
+- BREAKING: Character fields no longer auto-detect UTF-8 by default, matching VFP9.
+  Set `DbfOptions.DetectUtf8 = true` to opt in for non-VFP data; explicit `Encoding` still wins.
+
 - microVFP implements `INDEXSEEK(key [, move [, area [, index]]])` with VFP9's collation, EXACT,
   deleted/filter/scope rules and `FOUND()` updates. The record pointer moves only on a requested hit.
 - BREAKING: `NORMALIZE()` now returns VFP9's decompiled expression text, expanding function abbreviations,

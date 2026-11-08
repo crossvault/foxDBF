@@ -161,6 +161,13 @@ public sealed partial class DbfTable : IDisposable
     /// </summary>
     public System.Text.Encoding Encoding { get; }
 
+    /// <summary>The available header code page, or zero for an unknown/unavailable driver.
+    /// The original identifier remains in <see cref="DbfHeader.CodePage"/>; text then uses
+    /// <see cref="DbfOptions.DefaultEncoding"/>. An explicit encoding override does not change this value.</summary>
+    public int CodePage { get; }
+
+    internal bool SuppressUtf8Detection { get; }
+
     /// <summary>
     /// True when <see cref="Encoding"/> came from an explicit <see cref="DbfOptions.Encoding"/>
     /// override (§A7 highest precedence). Suppresses the lowest-precedence UTF-8
@@ -215,6 +222,8 @@ public sealed partial class DbfTable : IDisposable
         Encoding = options.Encoding
             ?? Encodings.ResolveEncoding(header.CodePage, options.DefaultEncoding);
         EncodingIsExplicit = options.Encoding is not null;
+        SuppressUtf8Detection = EncodingIsExplicit || !options.DetectUtf8;
+        CodePage = Encodings.ResolveAvailableCodePage(header.CodePage);
         ApplyNullFlags = options.ApplyNullFlags;
 
         // Identify the _NullFlags system column: type char '0', IsSystem set, normally

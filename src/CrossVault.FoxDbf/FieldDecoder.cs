@@ -37,7 +37,7 @@ public static class FieldDecoder
     /// stripped) for <paramref name="column"/> using <paramref name="encoding"/>
     /// for character data (§A5).
     /// </summary>
-    public static object? Decode(DbfColumn column, ReadOnlySpan<byte> raw, Encoding encoding, bool suppressUtf8Detection = false)
+    public static object? Decode(DbfColumn column, ReadOnlySpan<byte> raw, Encoding encoding, bool suppressUtf8Detection = true)
     {
         // §A5 dispatch rule: a zero-length field is always null.
         if (raw.IsEmpty)
@@ -111,21 +111,10 @@ public static class FieldDecoder
     }
 
     /// <summary>
-    /// Decode a character ('C') field's bytes to a string (§A7). Active detection:
-    /// when the raw bytes are already valid UTF-8 (and the column is NOT a NOCPTRANS/
-    /// binary column), pass them through 1:1 instead of transcoding through the table
-    /// code page — this avoids double-decoding data already stored as UTF-8 (e.g.
-    /// <c>dbase_03_cyrillic.dbf</c>). Genuine single-byte text (e.g. CP1252 "Öffentliche…",
-    /// bytes <c>D6 66 …</c>) is invalid UTF-8, so the short-circuit does not fire and the
-    /// value still decodes through <paramref name="encoding"/>.
+    /// Decode a character field in its selected code page, as VFP9 does. UTF-8 detection
+    /// is available only when explicitly enabled for non-VFP data; a forced encoding
+    /// and NOCPTRANS fields always bypass detection.
     /// </summary>
-    /// <remarks>
-    /// The UTF-8 short-circuit is the LOWEST-precedence auto-detect heuristic (§A7).
-    /// When the caller supplied an explicit <see cref="DbfOptions.Encoding"/> override
-    /// (highest precedence), <paramref name="suppressUtf8Detection"/> is set so the
-    /// override is honoured verbatim — otherwise a forced cp1251 field whose bytes are
-    /// coincidentally valid UTF-8 would silently decode as UTF-8 instead of cp1251.
-    /// </remarks>
     private static string DecodeCharacter(DbfColumn column, ReadOnlySpan<byte> raw, Encoding encoding, bool suppressUtf8Detection)
     {
         if (!suppressUtf8Detection && !column.IsBinary && System.Text.Unicode.Utf8.IsValid(raw))
