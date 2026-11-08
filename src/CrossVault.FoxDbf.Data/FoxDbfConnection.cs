@@ -677,8 +677,11 @@ public sealed class FoxDbfConnection : DbConnection
                     row["COLUMN_DEFAULT"] = DBNull.Value;
                     row["IS_NULLABLE"] = "YES"; // DBF fields are always nullable
                     row["DATA_TYPE"] = col.Type.ToString();
-                    row["CHARACTER_MAXIMUM_LENGTH"] = col.Length;
-                    row["CHARACTER_OCTET_LENGTH"] = col.Length; // Approximation
+                    object charLength = FoxDbfColumnMetadata.HasCharacterLength(col.Type)
+                        ? FoxDbfColumnMetadata.ColumnSize(col.Type, col.Length)
+                        : DBNull.Value;
+                    row["CHARACTER_MAXIMUM_LENGTH"] = charLength;
+                    row["CHARACTER_OCTET_LENGTH"] = charLength;
                     row["NUMERIC_PRECISION"] = col.Type is 'N' or 'F' or 'Y' ? col.Length : (object)DBNull.Value;
                     row["NUMERIC_SCALE"] = col.Decimal;
                     row["DATETIME_PRECISION"] = DBNull.Value;

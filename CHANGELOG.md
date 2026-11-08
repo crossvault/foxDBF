@@ -4,6 +4,18 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- ADO.NET: a Memo column loaded with `DataTable.Load` (or `DbDataAdapter.Fill` with key info) got
+  `MaxLength = 4`, the width of the memo-block pointer in the record, so any memo longer than four characters
+  failed with a `ConstraintException` (#3, thanks @asmith-zinck for the report). `GetSchemaTable` now reports
+  what the Visual FoxPro OLE DB provider reports: `ColumnSize = 2147483647` and `IsLong = true` for M, G, P and
+  W columns, the declared width and `IsLong = false` for V and Q (Varbinary was wrongly flagged as long).
+  `GetSchema("Columns")` gives the same `CHARACTER_MAXIMUM_LENGTH` / `CHARACTER_OCTET_LENGTH`, and, as VFPOLEDB,
+  none for numeric, date and logical columns (previously their field width).
+
 ## [0.10.0] - 2026-10-22
 
 ### Fixed

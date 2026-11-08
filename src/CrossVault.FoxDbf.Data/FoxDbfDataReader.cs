@@ -414,13 +414,13 @@ public sealed class FoxDbfDataReader : DbDataReader
             var row = schema.NewRow();
             row["ColumnName"] = col.Name;
             row["ColumnOrdinal"] = i;
-            row["ColumnSize"] = col.Length;
+            row["ColumnSize"] = FoxDbfColumnMetadata.ColumnSize(col.VfpType, col.Length);
             row["NumericPrecision"] = col.Decimals > 0 ? col.Length - col.Decimals : col.Length;
             row["NumericScale"] = col.Decimals;
             // Match GetFieldType: D columns surface as DateTime (not the executor's DateOnly).
             row["DataType"] = col.ClrType == typeof(DateOnly) ? typeof(DateTime) : col.ClrType;
             row["DataTypeName"] = col.VfpType.ToString();
-            row["IsLong"] = col.VfpType is 'M' or 'G' or 'P' or 'Q' or 'W';
+            row["IsLong"] = FoxDbfColumnMetadata.IsLong(col.VfpType);
             row["AllowDBNull"] = true;
             schema.Rows.Add(row);
         }

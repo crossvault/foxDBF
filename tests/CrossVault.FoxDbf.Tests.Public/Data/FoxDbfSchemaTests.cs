@@ -151,7 +151,13 @@ public sealed class FoxDbfSchemaTests
 
             Assert.Equal(i + 1, Convert.ToInt32(row["ORDINAL_POSITION"]));            // 1-based.
             Assert.Equal(expected.Type.ToString(), (string)row["DATA_TYPE"], ignoreCase: true);
-            Assert.Equal(expected.Length, Convert.ToInt32(row["CHARACTER_MAXIMUM_LENGTH"]));
+            // As VFPOLEDB: a character length only for C/V/Q (field width) and M/G/P/W (int.MaxValue).
+            if (expected.Type is 'C' or 'V' or 'Q')
+                Assert.Equal(expected.Length, Convert.ToInt32(row["CHARACTER_MAXIMUM_LENGTH"]));
+            else if (expected.Type is 'M' or 'G' or 'P' or 'W')
+                Assert.Equal(int.MaxValue, Convert.ToInt32(row["CHARACTER_MAXIMUM_LENGTH"]));
+            else
+                Assert.Equal(DBNull.Value, row["CHARACTER_MAXIMUM_LENGTH"]);
             Assert.Equal(expected.Decimal, Convert.ToInt32(row["NUMERIC_SCALE"]));
         }
 
