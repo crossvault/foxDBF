@@ -6,19 +6,19 @@ namespace CrossVault.FoxDbf.Tests;
 public sealed class MicroVfpNonStructuralTxnTests
 {
     public static IEnumerable<object[]> Cases =>
-        from format in new[] { "legacy", "compact", "cdx" }
+        from format in new[] { "legacy", "compact", "cdx", "structural" }
         from timing in new[] { "before", "set", "use" }
         from free in new[] { false, true }
         select new object[] { format, timing, free };
 
-    internal static string VfpExpected(string timing, bool free) => timing == "before" && !free
+    internal static string VfpExpected(string format, string timing, bool free) => timing == "before" && !free && format != "structural"
         ? "ERR:1548|0|.T.|WRITE|2" : "BEGIN|" + (timing == "before" ? "" : "OPEN|") + "1|.T.|WRITE|2";
 
     // VFP allows opening indexes after BEGIN and ignores free tables at BEGIN. Keep the
     // existing compact-index write protection in those cases, as required by the write contract.
     internal static string EngineExpected(string format, string timing, bool free)
         => format == "compact" && (timing != "before" || free)
-            ? VfpExpected(timing, free).Replace("WRITE|2", "ERR:1|1") : VfpExpected(timing, free);
+            ? VfpExpected(format, timing, free).Replace("WRITE|2", "ERR:1|1") : VfpExpected(format, timing, free);
 
     [Theory]
     [MemberData(nameof(Cases))]
@@ -29,13 +29,13 @@ public sealed class MicroVfpNonStructuralTxnTests
         SET TABLEPROMPT OFF
         CREATE TABLE t {(free ? "FREE" : "")} (id I)
         INSERT INTO t VALUES (1)
-        INDEX ON id {(format == "cdx" ? "TAG extra OF extra.cdx" : "TO extra.idx" + (format == "compact" ? " COMPACT" : ""))}
+        INDEX ON id {(format == "structural" ? "TAG id" : format == "cdx" ? "TAG extra OF extra.cdx" : "TO extra.idx" + (format == "compact" ? " COMPACT" : ""))}
         USE
         """;
 
     internal static string Scenario(string format, string timing)
     {
-        string file = "extra." + (format == "cdx" ? "cdx" : "idx");
+        string file = format == "structural" ? "t.cdx" : "extra." + (format == "cdx" ? "cdx" : "idx");
         string open = timing == "use" ? "USE t INDEX " + file : "SET INDEX TO " + file;
         return "SET TABLEPROMPT OFF\nUSE t\n" + (timing == "before" ? open + "\n" : "") +
             MicroVfpSqlDmlTests.Catch("BEGIN TRANSACTION\nresult=result+'BEGIN|'") + "\n" +
