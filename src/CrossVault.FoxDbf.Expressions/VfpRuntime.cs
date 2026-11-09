@@ -29,8 +29,8 @@ internal enum UnOp { Neg, Not }
 /// <summary>
 /// Single source of truth for VFP operator and function semantics. Both the
 /// tree-walking interpreter and the compiled (System.Linq.Expressions) delegate
-/// call into these methods, guaranteeing identical results. Nothing here throws
-/// on bad/null data — it coerces or yields <c>.NULL.</c> per VFP rules.
+/// call into these methods, guaranteeing identical results. Incompatible comparison operands
+/// raise VFP error 107; NULL propagation and valid conversions follow VFP rules.
 /// </summary>
 internal static partial class VfpRuntime
 {

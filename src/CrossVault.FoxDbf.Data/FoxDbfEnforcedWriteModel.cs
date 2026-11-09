@@ -295,11 +295,6 @@ internal sealed class FoxDbfEnforcedWriteModel
         return _connection.Session.FindInsertArea(table)!.Area;
     }
 
-    private void TryExecute(string prg)
-    {
-        try { _interp.Execute(prg); } catch { /* best-effort setup (USE/SELECT) — failures surface downstream */ }
-    }
-
     // Render a microVFP value as a VFP literal for the augmented INSERT statement. Reuses the provider's
     // round-trip-safe quoting (delimiter the value does not contain / CHR()-concat fallback / typed forms).
     private static string ToVfpLiteral(VfpValue v) => FoxDbfCommand.ToVfpLiteral(v.ToClr());

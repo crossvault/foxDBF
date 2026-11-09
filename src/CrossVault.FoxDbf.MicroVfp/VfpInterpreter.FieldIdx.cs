@@ -185,10 +185,17 @@ public sealed partial class VfpInterpreter
     // but VFP9 preserves the pointer on a miss, even when movement was requested.
     private SeekStmt CheckSeekStatement(SeekStmt statement)
     {
-        var value = Eval(statement.Key);
         int area = statement.In is null ? Session.CurrentArea : ResolveAreaRef(statement.In);
-        CheckSeekValue(value, area, statement.Order is null ? null : NameOf(statement.Order));
-        return statement with { Key = PrgExpr.Constant(value) };
+        string? tag = statement.Order is null ? null : NameOf(statement.Order);
+        var value = Eval(statement.Key);
+        CheckSeekValue(value, area, tag);
+        // A key UDF can SELECT another area. VFP binds the target before invoking it.
+        return statement with
+        {
+            Key = PrgExpr.Constant(value),
+            In = NameRef.OfName(area.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            Order = tag is null ? null : NameRef.OfName(tag)
+        };
     }
 
     private void CheckSeekValue(VfpValue value, int area, string? tag)

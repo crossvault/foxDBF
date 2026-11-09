@@ -25,6 +25,24 @@ public sealed class MicroVfpSqlDmlH45ReviewTests
     [InlineData(true)]
     public async Task H5_ReentrantRuleTerminates(bool slow) => Assert.Equal("ERR:1887|1|1,|0",
         await Task.Run(() => MicroVfpSqlDmlFinalReviewTests.Run(ReentrantSetup, ReentrantScenario(slow), ReentrantProcedure)));
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void H5_RejectedRuleConsumesAutoincrement(bool slow) => Assert.Equal("ERR:1887|1|1,|0|next:2",
+        MicroVfpSqlDmlFinalReviewTests.Run(ReentrantSetup, ReentrantScenario(slow) +
+            "\nINSERT INTO t (n) VALUES (3)\nresult=result+'|next:'+TRANSFORM(id)", ReentrantProcedure));
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void H5_ValidationFailureConsumesAutoincrement(bool field, bool slow) => Assert.Equal(field ? "ERR:1582|2" : "ERR:1583|2",
+        MicroVfpSqlDmlFinalReviewTests.Run("CREATE TABLE t (id I AUTOINC, n I" + (field ? " CHECK n>0" : ", CHECK n>0") + ")",
+            "USE t EXCLUSIVE\n" + (slow ? "INDEX ON n TAG n CANDIDATE\n" : "") + MicroVfpSqlDmlTests.Catch("INSERT INTO t (n) VALUES (-1)") +
+            "\nINSERT INTO t (n) VALUES (1)\nresult=result+TRANSFORM(id)"));
+
     [Theory(Timeout = 30000)]
     [InlineData(false)]
     [InlineData(true)]

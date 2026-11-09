@@ -674,7 +674,12 @@ public sealed partial class VfpInterpreter
         try
         {
             try { Session.Execute(ins.Sql); }
-            catch { RestoreSnapshot(pre); throw; }
+            catch
+            {
+                PreserveRejectedInsertCounters(pre);
+                RestoreSnapshot(pre);
+                throw;
+            }
             ReopenFileAreas(path);
 
             string? bad = FirstViolatedCandidate(path, candidateRegistrationPath);
@@ -686,6 +691,28 @@ public sealed partial class VfpInterpreter
             }
         }
         finally { pre.Cleanup(); }   // 6.3: on the clean path the pre-image temps are unused — delete them (idempotent after a RestoreSnapshot).
+    }
+
+    private static void PreserveRejectedInsertCounters(FileSnapshot snapshot)
+    {
+        if (snapshot.DbfTemp is null) return;
+        using var schema = DbfTable.Open(snapshot.DbfTemp);
+        var offsets = schema.Columns.Select((column, index) => (column, index))
+            .Where(item => item.column.IsAutoIncrement)
+            .Select(item => schema.Version.HeaderSize + (long)item.index * schema.Version.DescriptorWidth + 19).ToArray();
+        if (offsets.Length == 0) return;
+        // The candidate rollback restores rows/indexes, but VFP keeps values consumed by failed rules.
+        // Update only our private pre-image; the live table remains under the existing restore protocol.
+        using var current = new FileStream(snapshot.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var saved = new FileStream(snapshot.DbfTemp, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+        Span<byte> counter = stackalloc byte[4];
+        foreach (long offset in offsets)
+        {
+            current.Position = offset;
+            current.ReadExactly(counter);
+            saved.Position = offset;
+            saved.Write(counter);
+        }
     }
 
     /// <summary>The first registered CANDIDATE tag on <paramref name="path"/> that now holds a duplicate key,

@@ -190,7 +190,12 @@ internal sealed partial class DmlExecutor
                 recno = writer.RecordCount + 1;
             }
             // User code may open/write tables. Never invoke it while holding the append lock.
-            validate(table, schema, StoredImportValues(schema, new DbfRecord(schema, preview), map), blank, recno);
+            try { validate(table, schema, StoredImportValues(schema, new DbfRecord(schema, preview), map), blank, recno); }
+            catch
+            {
+                if (autoIncrement) writer.ConsumeRejectedRuleAutoincrement(preview);
+                throw;
+            }
             using (writer.LockAppendScope())
             {
                 if (writer.RecordCount + 1 != recno
@@ -291,7 +296,16 @@ internal sealed partial class DmlExecutor
             }
             var stored = StoredImportValues(schema, new DbfRecord(schema, preview), map);
             target.Dispose();
-            validate(table, schema, stored, blank, recno);
+            try { validate(table, schema, stored, blank, recno); }
+            catch
+            {
+                if (schema.Columns.Any(c => c.IsAutoIncrement))
+                {
+                    target = _session.OpenWritableTarget(table);
+                    target.Writer.ConsumeRejectedRuleAutoincrement(preview);
+                }
+                throw;
+            }
             target = _session.OpenWritableTarget(table);
             using (target.Writer.LockAppendScope())
             {

@@ -1,11 +1,24 @@
+using CrossVault.FoxDbf.Index;
+using CrossVault.FoxDbf.Query;
+using CrossVault.FoxDbf.Sql;
+using CrossVault.FoxDbf.MicroVfp;
 using CrossVault.FoxDbf.Expressions;
 namespace CrossVault.FoxDbf.Tests;
 
 public sealed class MicroVfpSqlDmlHReviewTests
 {
+    internal const string SeekContextSetup = "CREATE TABLE t (flag L)\nINSERT INTO t VALUES (.T.)\nINDEX ON flag TAG live\nCREATE TABLE other (n I)\nINSERT INTO other VALUES (1)";
+    internal const string SeekContextProcedures = "FUNCTION switcharea\nSELECT other\nRETURN .T.\nENDFUNC";
+    internal static string SeekContextScenario => "USE other IN 0\nUSE t IN 0\nSELECT t\nSET ORDER TO live\n" +
+        MicroVfpSqlDmlTests.Catch("SEEK switcharea()") + "\nresult=result+ALIAS()+'|'+TRANSFORM(FOUND('t'))";
+
+    [Fact]
+    public void H1_SeekPreservesTargetBeforeEvaluatingKey() => Assert.Equal("OTHER|.T.",
+        MicroVfpSqlDmlFinalReviewTests.Run(SeekContextSetup, SeekContextScenario, SeekContextProcedures));
+
     internal static IEnumerable<string> Operators(string left, string right)
     {
-        foreach (string op in new[] { "=", "==", "<>", "#", "<", "<=", ">", ">=" }) yield return $"{left} {op} {right}";
+        foreach (string op in new[] { "=", "==", "<>", "#", "!=", "<", "<=", ">", ">=" }) yield return $"{left} {op} {right}";
         yield return $"INLIST({left},{right})";
         yield return $"INLIST({right},{left})";
         yield return $"BETWEEN({left},{right},{right})";
@@ -16,7 +29,7 @@ public sealed class MicroVfpSqlDmlHReviewTests
     {
         foreach (string left in new[] { ".T.", "flag", ".NULL.", "'x'", "{^2026-01-01}" })
         foreach (string right in new[] { "1", "{^2026-01-01}", "{^2026-01-01 12:00:00}" })
-        foreach (string expression in Operators(left, right))
+        foreach (string expression in Operators(left, right).Distinct())
             yield return new object[] { expression, left is "flag" or ".NULL." ? 0 : left.StartsWith('{') && right.StartsWith('{') ? -1 : 107 };
     }
     [Theory]
@@ -61,4 +74,28 @@ public sealed class MicroVfpSqlDmlHReviewTests
     [InlineData(true, 5)]
     public void H2_NestedDefaultStopsSource(bool array, int buffering) => Assert.Equal(array ? "2|1|0|0" : buffering == 1 ? "ERR:1582|1|1|0|0" : "ERR:1582|0|0|0|0",
         MicroVfpSqlDmlFinalReviewTests.Run(H2Setup(array), H2Scenario(array, buffering), NestedProcedure));
+
+    [Theory]
+    [InlineData("flag = 1")]
+    [InlineData("d = 1")]
+    [InlineData("n = {^2026-01-01}")]
+    [InlineData("BETWEEN(d,0,1)")]
+    [InlineData("INLIST(d,1)")]
+    public void H1_RushmorePreservesTypeErrors(string predicate)
+    {
+        using var dir = new MicroVfpTestSupport.TempDir("h1_rushmore");
+        using (var session = new VfpSession())
+        {
+            session.OpenDirectory(dir.Path);
+            using var vfp = new VfpInterpreter(session);
+            vfp.Execute("CREATE TABLE t (flag L, n I, d D)\nINSERT INTO t VALUES (.T.,1,{^2026-01-01})\nINDEX ON flag TAG flag\nINDEX ON n TAG n\nINDEX ON d TAG d");
+        }
+        using var table = DbfTable.Open(dir.File("t.dbf"));
+        using var cdx = CdxFile.Open(dir.File("t.cdx"), table);
+        foreach (var index in new[] { null, cdx })
+        {
+            Assert.Equal(107, Assert.Throws<ExpressionException>(() => QueryOptimizer.FindRecords(table, index, predicate, new EvaluationContext { Deleted = true })).VfpErrorNumber);
+            Assert.Equal(107, Assert.Throws<ExpressionException>(() => QueryOptimizer.Count(table, index, predicate, new EvaluationContext { Deleted = true })).VfpErrorNumber);
+        }
+    }
 }

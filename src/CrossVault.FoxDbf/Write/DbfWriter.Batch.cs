@@ -109,6 +109,25 @@ public sealed partial class DbfWriter
         return RecordEncoder.Encode(_schema, preview, false, blanks);
     }
 
+    internal void ConsumeRejectedRuleAutoincrement(byte[] preview)
+    {
+        // VFP consumes the value seen by a rejected INSERT rule, without publishing a row.
+        // A concurrent append may already have consumed it; never advance that value twice.
+        using var appendLock = LockAppendScope();
+        bool changed = false;
+        for (int i = 0; i < _schema.Columns.Count; i++)
+        {
+            var column = _schema.Columns[i];
+            if (!column.IsAutoIncrement) continue;
+            long offset = _version.HeaderSize + (long)i * _version.DescriptorWidth;
+            uint seen = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(preview.AsSpan(column.Offset + 1, 4));
+            if (ReadU32LittleEndian(offset + 19) != seen) continue;
+            WriteU32LittleEndian(offset + 19, unchecked(seen + ReadByteAt(offset + 23)));
+            changed = true;
+        }
+        if (changed) _stream.Flush();
+    }
+
     private byte[] EncodeImportValues(object?[] values, bool[] blanks)
     {
         var safe = (object?[])values.Clone();

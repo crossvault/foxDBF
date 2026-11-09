@@ -28,7 +28,7 @@ namespace CrossVault.FoxDbf.Query;
 /// </list>
 /// CORRECTNESS is paramount: the candidate set is always a conservative SUPERSET of the
 /// true matches, so the residual confirmation returns EXACTLY the full-scan result.
-/// The optimizer NEVER throws: any analysis failure falls back to a correct full scan.
+/// Analysis failures fall back to a full scan; runtime operand errors propagate.
 /// </remarks>
 public static class QueryOptimizer
 {
@@ -154,7 +154,7 @@ public static class QueryOptimizer
     /// returns the candidate COUNT WITHOUT building a recno list and WITHOUT reading full records (only
     /// a 1-byte deletion-flag check per candidate under SET DELETED ON); when a residual remains it
     /// iterates the candidates evaluating the residual and counts matches WITHOUT allocating a recno
-    /// list. NEVER throws: any uncertainty falls back to <c>FindRecords(...).RecordNumbers.Count</c>.
+    /// list. Operand type errors propagate; planner uncertainty falls back to <c>FindRecords(...).RecordNumbers.Count</c>.
     /// <para>
     /// HARD INVARIANT: <c>Count(filter) == FindRecords(filter).RecordNumbers.Count</c>, ALWAYS — for
     /// every shape, with or without an accelerator, under any SET EXACT / SET DELETED combination.
@@ -263,10 +263,12 @@ public static class QueryOptimizer
             }
             return count;
         }
+        catch (ExpressionException error) when (error.VfpErrorNumber == 107) { throw; }
         catch
         {
-            // SAFETY: any uncertainty → the proven-correct full path (never throw).
+            // Planner uncertainty may fall back; a VFP operand error must still reach the caller.
             try { return FindRecords(table, cdx, filter, context, policy, entrySource, onIndexEntryExamined).RecordNumbers.Count; }
+            catch (ExpressionException error) when (error.VfpErrorNumber == 107) { throw; }
             catch { return 0; }
         }
     }
@@ -829,8 +831,8 @@ public static class QueryOptimizer
             string? rs = AsStringConst(right), ls = AsStringConst(left);
 
             // ordered key (Integer / Numeric / Date / DateTime) vs numeric/date const
-            if (rc is not null && lc is null) return Ordered(text, left, op, rc.Value);
-            if (lc is not null) return Ordered(text, right, Flip(op), lc.Value);
+            if (rc is not null && lc is null) return Ordered(text, left, op, rc.Value, right);
+            if (lc is not null) return Ordered(text, right, Flip(op), lc.Value, left);
 
             // character key vs string const (collation-transformed SUPERSET)
             if (rs is not null) return Character(text, left, op, rs);
@@ -840,7 +842,7 @@ public static class QueryOptimizer
             return RecordResidual(text, PlanReason.NotSimpleComparison);
         }
 
-        private Conjunct Ordered(string text, List<Token> keySpan, CmpOp op, double v)
+        private Conjunct Ordered(string text, List<Token> keySpan, CmpOp op, double v, List<Token> literal)
         {
             // Classify for CORRECTNESS only (applyCost:false): the per-leaf cost verdict is CARRIED on
             // the deferred bound and applied later (in ParseAnd / Force), AFTER a same-tag low+high pair
@@ -849,6 +851,7 @@ public static class QueryOptimizer
             var (reason, tag) = ClassifyTag(KeyMatchText(keySpan), ordered: true, conditionText: text, applyCost: false);
             if (reason == PlanReason.Optimized && tag is not null)
             {
+                if (!OrderedDomainMatches(tag, literal)) return RecordResidual(text, PlanReason.UnsupportedKeyType);
                 bool prefersScan = _policy?.PreferFullScan(tag, text) == true;
                 // <> (not-equal) is a set-all-minus-range complement, not a contiguous run — it cannot
                 // fuse into a window, so apply the cost verdict per-leaf (as before) and otherwise keep
@@ -928,6 +931,8 @@ public static class QueryOptimizer
                         var (reason, tag) = ClassifyTag(KeyMatchText(args[0]), ordered: true, conditionText: text);
                         if (reason == PlanReason.Optimized && tag is not null)
                         {
+                            if (!OrderedDomainMatches(tag, args[1]) || !OrderedDomainMatches(tag, args[2]))
+                                return RecordResidual(text, PlanReason.UnsupportedKeyType);
                             double l = lo.Value, h = hi.Value;
                             RecordOptimized(text, tag);
                             int leafIdx = Leaves.Count - 1;
@@ -957,6 +962,8 @@ public static class QueryOptimizer
                         var (reason, tag) = ClassifyTag(KeyMatchText(args[0]), ordered: true, conditionText: text);
                         if (reason == PlanReason.Optimized && tag is not null)
                         {
+                            if (args.Skip(1).Any(literal => !OrderedDomainMatches(tag, literal)))
+                                return RecordResidual(text, PlanReason.UnsupportedKeyType);
                             // A set of discrete values is NOT one contiguous run — keep the full index
                             // scan (out of the contiguous-seek scope, still correct).
                             var a = BuildPredicate(tag, d =>
@@ -1118,6 +1125,15 @@ public static class QueryOptimizer
             }
             if (cur.Count > 0 || res.Count > 0) res.Add(cur);
             return res;
+        }
+
+        private static bool OrderedDomainMatches(CdxTag tag, List<Token> literal)
+        {
+            // Dates share numeric index bytes, but VFP never compares a date to a number.
+            // Do not narrow away every row before the residual can report error 107.
+            bool dateKey = tag.KeyType is IndexKeyType.Date or IndexKeyType.DateTime;
+            bool dateLiteral = literal.Count == 1 && literal[0].Text.StartsWith('{');
+            return dateKey == dateLiteral;
         }
 
         private static double? AsConst(List<Token> span)

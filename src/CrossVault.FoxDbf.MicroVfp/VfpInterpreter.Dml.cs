@@ -143,7 +143,7 @@ public sealed partial class VfpInterpreter
         var row = DefaultRowFor(Session.CurrentArea);
         var area = Session.AreaAt(Session.CurrentArea);
         if (row is null || area is null) return EvalTextLoud(expression);
-        // VFP rolls the rejected field back before evaluating its ERROR expression. A record
+        // Unbuffered VFP rolls the rejected field back before its ERROR expression. A record
         // rule's ERROR expression, in contrast, still sees the complete rejected candidate.
         bool supplied = row.Values.TryGetValue(field, out var candidate);
         var buffer = Meta(area.Area).Buf;
