@@ -39,7 +39,7 @@ public sealed class IndexSafetyTests
 
     [Theory]
     [InlineData("approximate")]
-    [InlineData("german")]
+    [InlineData("dutch")]
     [InlineData("udf")]
     public void UnmaintainableTag_AlterPreservesFiles(string kind)
     {
@@ -68,7 +68,7 @@ public sealed class IndexSafetyTests
 
     [Theory]
     [InlineData("approximate")]
-    [InlineData("german")]
+    [InlineData("dutch")]
     [InlineData("udf")]
     public void UnmaintainableTag_AppendPreservesDbfMemoAndAllTags(string kind)
     {
@@ -81,7 +81,7 @@ public sealed class IndexSafetyTests
             var error = Assert.Throws<DbfWriteException>(() => writer.AppendRecord("DELTA", "new memo"));
             Assert.Contains("BAD", error.Message, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(kind == "approximate" ? "852" : "1252", error.Message);
-            Assert.Contains(kind == "approximate" ? "GENERAL" : kind == "german" ? "GERMAN" : "MACHINE", error.Message);
+            Assert.Contains(kind == "approximate" ? "GENERAL" : kind == "dutch" ? "DUTCH" : "MACHINE", error.Message);
             Assert.Equal(1, writer.RecordCount);
         }
         foreach (var (path, bytes) in before) Assert.Equal(bytes, File.ReadAllBytes(path));
@@ -133,7 +133,7 @@ public sealed class IndexSafetyTests
         byte[] bytes = File.ReadAllBytes(cdx);
         if (kind == "udf") Replace(bytes, "UPPER(k)", "e1udf(k)");
         if (kind == "builtin") Replace(bytes, "UPPER(k)", "CEIL(1) ");
-        if (kind == "german") Replace(bytes, "GENERAL", "GERMAN\0");
+        if (kind == "dutch") Replace(bytes, "GENERAL", "DUTCH\0\0");
         File.WriteAllBytes(cdx, bytes);
         if (kind == "approximate")
         {

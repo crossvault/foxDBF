@@ -7,10 +7,11 @@ namespace CrossVault.FoxDbf.Expressions;
 /// tag-header string at offset 494) plus the TABLE code page to an <see cref="IVfpCollation"/>.
 /// </summary>
 /// <remarks>
-/// VFP9 weights a key by its byte in the table code page, so GENERAL and SPANISH are per-code-page tables.
+/// VFP9 weights a key by its byte in the table code page, so weighted collations are per-code-page tables.
 /// Byte-exact with VFP9: MACHINE (any code page), GENERAL on code pages <b>1252</b>, <b>850</b>, <b>437</b> and
-/// <b>1250</b>, SPANISH on <b>1252</b> and <b>850</b>. GENERAL / SPANISH on any other code page fall back to the
-/// CP1252 table (right for ASCII, approximate beyond); any other sequence (GERMAN, DUTCH, ...) is unsupported and
+/// <b>1250</b>, SPANISH on <b>1252</b> and <b>850</b>, GERMAN on <b>1252</b>, <b>437</b> and <b>10000</b>.
+/// GENERAL / SPANISH on any other code page fall back to the
+/// CP1252 table (right for ASCII, approximate beyond); any other sequence (DUTCH, ...) or unlisted GERMAN code page is unsupported and
 /// falls back to MACHINE.
 /// </remarks>
 public static class VfpCollations
@@ -28,7 +29,7 @@ public static class VfpCollations
 
     /// <summary>
     /// Resolves a collation by its VFP name (case-insensitive) for a table in <paramref name="codePage"/>
-    /// (e.g. <c>Encoding.CodePage</c> of the table: 1252, 850, 437, 1250): MACHINE, GENERAL or SPANISH. GENERAL /
+    /// (e.g. <c>Encoding.CodePage</c> of the table: 1252, 850, 437, 1250, 10000): MACHINE, GENERAL, SPANISH or GERMAN. GENERAL /
     /// SPANISH on a code page without its own table use the CP1252 table; unknown or empty names fall back to MACHINE.
     /// </summary>
     public static IVfpCollation ByName(string? name, int codePage)
@@ -40,7 +41,7 @@ public static class VfpCollations
     /// <summary>
     /// Selects the collation for a CDX tag from its stored sort-sequence name (tag header
     /// @494, as surfaced by the index reader), for a CP1252 table: empty / "MACHINE" →
-    /// <see cref="Machine"/>; "GENERAL" → <see cref="General"/>; "SPANISH" → SPANISH; any other
+    /// <see cref="Machine"/>; "GENERAL" → <see cref="General"/>; "SPANISH" → SPANISH; "GERMAN" → GERMAN; any other
     /// (unsupported) sequence → <see cref="Machine"/> as a documented, never-throwing fallback.
     /// </summary>
     public static IVfpCollation FromSortSequence(string? sortSequence) => ByName(sortSequence, 1252);
@@ -66,6 +67,18 @@ public static class VfpCollations
         {
             collation = Machine;
             return CollationSupport.Exact;
+        }
+
+        if (n.Equals("GERMAN", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = codePage switch
+            {
+                1252 => GeneralCollation.German1252,
+                437 => GeneralCollation.German437,
+                10000 => GeneralCollation.German10000,
+                _ => Machine,
+            };
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
         }
 
         bool general = n.Equals("GENERAL", StringComparison.OrdinalIgnoreCase);

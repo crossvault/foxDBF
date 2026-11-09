@@ -1840,9 +1840,9 @@ public static class QueryOptimizer
         private static byte[]? HeadRunUpperBound(CdxTag tag, string literal, byte[] lit)
         {
             byte[]? upper = CharEqUpperBound(tag, literal, lit);
-            if (upper is null || tag.KeyCollation is not GeneralCollation { ContractionTrailers: { Length: > 0 } trailers })
+            if (upper is null || tag.KeyCollation is not GeneralCollation { ContractionSuffixes: { Length: > 0 } trailers })
                 return upper;
-            foreach (char z in trailers)
+            foreach (string z in trailers)
             {
                 string extended = literal + z;
                 byte[] key;

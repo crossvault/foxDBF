@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Added
+
+- GERMAN collation with VFP9-exact index keys on code pages 1252, 437 and 10000, including umlaut
+  and sharp-s expansions. Index creation, maintenance of existing GERMAN tags, SEEK and microVFP
+  `SET COLLATE TO "GERMAN"` use the table's code page. GERMAN on code page 850 remains unsupported.
+
 ## [0.11.0] - 2026-11-09
 
 ### Added
