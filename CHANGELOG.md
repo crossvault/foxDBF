@@ -22,6 +22,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP `USE` recognizes VFP9 built-ins in index KEY/FOR expressions even when they are not yet
+  implemented; genuine missing UDFs retain their VFP error. Unsupported index functions are named when
+  SEEK or write maintenance refuses the operation, before table or memo data is changed.
+- `DTOT()` converts dates to midnight DateTime values, including empty dates and NULL, in expressions
+  and index keys. microVFP rejects other argument types with VFP9 error 11.
+- BREAKING: built-in function abbreviations resolve before user procedures, as in VFP9; a procedure
+  named `SUBST` no longer overrides `SUBSTR()` calls written as `SUBST()`.
+
 - microVFP `INSERT` error handling is verified against VFP9: unknown column names (including truncated
   DBC field names) raise error 12; a buffered INSERT omitting a NOT NULL field under `SET NULL ON` raises
   1581. `TRY/CATCH` and `AERROR()` retain those numbers, `ERROR()` is 0 inside CATCH, and these failures

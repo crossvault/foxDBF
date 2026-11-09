@@ -414,7 +414,7 @@ internal sealed partial class FunctionNode : AstNode
             case "CTOD": return new VfpTypeInfo(VfpType.Date, 8);
             case "DATE": return new VfpTypeInfo(VfpType.Date, 8);
             case "GOMONTH": return ArgInfer(schema, 0);
-            case "CTOT": case "DATETIME": return new VfpTypeInfo(VfpType.DateTime, 8);
+            case "CTOT": case "DTOT": case "DATETIME": return new VfpTypeInfo(VfpType.DateTime, 8);
 
             case "EMPTY": case "ISNULL": case "DELETED":
             case "BETWEEN": case "INLIST":

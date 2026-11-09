@@ -31,7 +31,7 @@ public sealed partial class VfpInterpreter
             return true;
         }
 
-        if (_procs.TryGetValue(name, out var proc))
+        if (!VfpFunctionNames.IsBuiltin(name) && _procs.TryGetValue(name, out var proc))
         {
             r = CallProc(proc, a, a.Length, null);          // user function ⇒ BY VALUE.
             return true;
@@ -39,6 +39,11 @@ public sealed partial class VfpInterpreter
 
         switch (name)
         {
+            case "DTOT":
+                if (a.Length != 1 || (!a[0].IsNull && a[0].Type != VfpType.Date))
+                    throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
+                r = default;
+                return false; // Scalar conversion belongs to the shared expression/index engine.
             case "SELECT": r = FnSelect(a); return true;
             case "USED": r = VfpValue.Logical(a.Length > 0 && Session.FindAreaByAlias(a[0].AsString) is not null); return true;
             case "ALIAS": r = FnAlias(a); return true;

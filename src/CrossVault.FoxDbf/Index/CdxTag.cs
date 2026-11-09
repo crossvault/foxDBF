@@ -81,6 +81,7 @@ public sealed class CdxTag
 
     private readonly IVfpCollation _collation;
     private readonly CollationSupport _collationSupport;
+    private readonly string? _unsupportedKeyFunction;
 
     /// <summary>
     /// The collation that produced this tag's CHARACTER keys: <see cref="Collation"/> resolved for the TABLE code
@@ -128,6 +129,7 @@ public sealed class CdxTag
         KeyType = keyType;
         CharacterEncoding = characterEncoding ?? IndexKey.ResolveCharacterEncoding(null, null);
         _collationSupport = VfpCollations.Resolve(collation, tableCodePage, out _collation);
+        _unsupportedKeyFunction = VfpRuntime.UnsupportedIndexFunction(keyExpression);
     }
 
     /// <summary>
@@ -171,6 +173,7 @@ public sealed class CdxTag
     /// <exception cref="NotSupportedException">The tag's sort sequence is unknown (see <see cref="EncodeCharacterKey"/>).</exception>
     internal CharacterSeekNeedle CreateCharacterSeekNeedle(string s, bool exact)
     {
+        RequireSupportedKeyFunctions();
         if (_collationSupport != CollationSupport.Exact || _collation is not GeneralCollation general)
             return new CharacterSeekNeedle(EncodeCharacterKey(s), exact, KeyPad);
         if (exact || s.Length == WeightedKeyWidth)
@@ -339,6 +342,7 @@ public sealed class CdxTag
     /// </summary>
     public uint? Seek(object value)
     {
+        RequireSupportedKeyFunctions();
         // A character tag whose expression could not be typed (e.g. a UDF) still holds character keys.
         if ((KeyType == IndexKeyType.Character || (KeyType == IndexKeyType.Unknown && IsCharacterKey)) && value is string s)
         {
@@ -350,6 +354,13 @@ public sealed class CdxTag
 
         var keyBytes = IndexKey.Encode(value, KeyType);
         return keyBytes is null ? NotFound : Seek(keyBytes.AsSpan());
+    }
+
+    private void RequireSupportedKeyFunctions()
+    {
+        if (_unsupportedKeyFunction is { } function
+            && VfpFunctionNames.IsBuiltin(function))
+            throw new NotSupportedException($"Index tag '{Name}': function {function}() is not supported by the index engine for SEEK.");
     }
 
     /// <summary>

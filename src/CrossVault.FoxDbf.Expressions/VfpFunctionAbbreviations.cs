@@ -62,7 +62,7 @@ internal static class VfpFunctionAbbreviations
         WVISIBLE XMLTOCURSOR:10 XMLUPDATEGRAM:10
         """;
 
-    // Built on first use: only a call no host and no engine switch knows reaches TryExpand.
+    // Built on first use; dispatch resolves abbreviations before consulting the host.
     private static readonly FrozenDictionary<string, string> Map = Build();
 
     /// <summary>The function that the abbreviated or alternative <paramref name="upperName"/> (upper-cased)

@@ -517,9 +517,10 @@ public sealed partial class VfpInterpreter
                     var expression = VfpExpression.Parse(text);
                     // VFP resolves a UDF while opening the index, even without a write or controlling order.
                     // Use the host so a loaded procedure is distinguished from a missing program (error 1).
-                    if (!expression.ContainsFunction((name, _) => !VfpRuntime.EngineFunctionNames.Contains(name)))
+                    if (!expression.ContainsFunction((name, _) => !VfpFunctionNames.IsBuiltin(name)
+                            && !VfpRuntime.EngineFunctionNames.Contains(name)))
                         continue;
-                    try { expression.Evaluate(_row, _ctx); }
+                    try { expression.Evaluate(new IndexUseRow(_row), _ctx); }
                     catch (MicroVfpRuntimeException ex)
                     {
                         if (index.Structural)
@@ -543,6 +544,20 @@ public sealed partial class VfpInterpreter
             _probing = probing;
             Session.SelectArea(selected);
         }
+    }
+
+    // Opening an index resolves UDFs, but must not require our implementation of every VFP built-in.
+    // In a mixed expression, unavailable built-ins must not masquerade as missing program files.
+    private sealed class IndexUseRow(Row row) : IRowContext, IVfpFunctionHost
+    {
+        public object? GetField(string name) => row.GetField(name);
+        public int RecNo => row.RecNo;
+        public bool Deleted => row.Deleted;
+        public int RecCount => row.RecCount;
+        public bool TryInvoke(string name, VfpValue[] args, EvaluationContext context, out VfpValue value)
+            => row.TryInvoke(name, args, context, out value);
+        public VfpValue UnknownFunction(string name, VfpValue[] args)
+            => VfpFunctionNames.IsBuiltin(name) ? VfpValue.Null : row.UnknownFunction(name, args);
     }
 
     /// <summary>The one evaluation VFP9 makes when <c>INDEX ON</c> or <c>SET FILTER TO</c> runs (verified: an

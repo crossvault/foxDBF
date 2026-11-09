@@ -1204,6 +1204,9 @@ public sealed partial class VfpInterpreter
     private static uint? SeekIdx(OrderSource src, VfpValue key, CharacterSeekNeedle? characterNeedle)
     {
         if (src.Idx is null) return null;
+        if (VfpRuntime.UnsupportedIndexFunction(src.Idx.Header.KeyExpression) is { } function
+            && VfpFunctionNames.IsBuiltin(function))
+            throw new NotSupportedException($"Index '{src.Name}': function {function}() is not supported by the index engine for SEEK.");
         foreach (var e in src.Idx.EnumerateEntries())
         {
             if (characterNeedle is not null)

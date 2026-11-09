@@ -45,10 +45,15 @@ public sealed partial class DbfWriter
         var header = file.ReadCdxHeader(0);
         bool Supported(string? text) => string.IsNullOrWhiteSpace(text) ||
             (FieldsResolve(text) && !VfpExpression.Parse(text).ContainsFunction((name, _) =>
-                !VfpRuntime.EngineFunctionNames.Contains(name)));
+                !VfpRuntime.EngineFunctionNames.Contains(VfpFunctionAbbreviations.Canonical(name))));
         if ((header.Options & 0xE0) != 0x20 || !Supported(header.KeyExpression) || !Supported(header.ForExpression)
             || VfpCollations.Resolve(header.SortOrder, _schema.Encoding.CodePage, out _) != CollationSupport.Exact)
-            throw new DbfWriteException($"Cannot maintain compact index '{path}' (KEY '{header.KeyExpression}', FOR '{header.ForExpression}', collation '{header.SortOrder}', code page {_schema.Encoding.CodePage}).");
+        {
+            string? function = VfpRuntime.UnsupportedIndexFunction(header.KeyExpression)
+                ?? VfpRuntime.UnsupportedIndexFunction(header.ForExpression);
+            throw new DbfWriteException($"Cannot maintain compact index '{path}' (KEY '{header.KeyExpression}', FOR '{header.ForExpression}', collation '{header.SortOrder}', code page {_schema.Encoding.CodePage})."
+                + (function is null ? "" : $" Function {function}() is not supported by the index engine."));
+        }
         var def = new CdxTagDefinition(Path.GetFileNameWithoutExtension(path), header.KeyExpression,
             header.HasFor ? header.ForExpression : null, header.Descending, header.SortOrder, header.IsUnique);
         var computer = CdxIndexBuilder.CreateKeyComputer(_schema, def, context);

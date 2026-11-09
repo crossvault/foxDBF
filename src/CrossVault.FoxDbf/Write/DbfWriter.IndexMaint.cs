@@ -343,9 +343,12 @@ public sealed partial class DbfWriter
             var computer = GetComputer(tag);
             if (computer is null)
             {
+                string? function = VfpRuntime.UnsupportedIndexFunction(tag.Header.KeyExpression)
+                    ?? VfpRuntime.UnsupportedIndexFunction(tag.Header.ForExpression);
                 throw new DbfWriteException(
                     $"Cannot maintain index tag '{tag.Name}' (KEY '{tag.Header.KeyExpression}', FOR '{tag.Header.ForExpression}', "
-                    + $"collation '{tag.Header.SortOrder}', code page {_schema.Encoding.CodePage}).");
+                    + $"collation '{tag.Header.SortOrder}', code page {_schema.Encoding.CodePage})."
+                    + (function is null ? "" : $" Function {function}() is not supported by the index engine."));
             }
             plans.Add((tag, computer));
         }
@@ -429,6 +432,6 @@ public sealed partial class DbfWriter
         if (string.IsNullOrWhiteSpace(expression))
             return true;
         return FieldsResolve(expression) && !VfpExpression.Parse(expression).ContainsFunction((name, _) =>
-            !VfpRuntime.EngineFunctionNames.Contains(name));
+            !VfpRuntime.EngineFunctionNames.Contains(VfpFunctionAbbreviations.Canonical(name)));
     }
 }

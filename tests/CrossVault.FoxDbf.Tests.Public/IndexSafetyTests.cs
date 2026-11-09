@@ -9,6 +9,34 @@ namespace CrossVault.FoxDbf.Tests;
 
 public sealed class IndexSafetyTests
 {
+    [Fact]
+    public void UnsupportedBuiltin_UseSucceeds_SeekAndWriteRefuseWithoutChangingFiles()
+    {
+        using var temp = new IndexMaintTestSupport.TempDir();
+        string dbf = CreateFixture(temp.Path, "builtin");
+        var before = new[] { dbf, Path.ChangeExtension(dbf, ".fpt"), Path.ChangeExtension(dbf, ".cdx") }
+            .ToDictionary(p => p, File.ReadAllBytes);
+        using (var session = new VfpSession())
+        {
+            session.OpenDirectory(temp.Path);
+            using var interpreter = new VfpInterpreter(session);
+            interpreter.Execute("USE t");
+            Assert.True(interpreter.EvalExpression("USED('t')").AsLogical);
+        }
+        using (var table = DbfTable.Open(dbf))
+        using (var index = CdxFile.Open(Path.ChangeExtension(dbf, ".cdx"), table))
+        {
+            var error = Assert.Throws<NotSupportedException>(() => index.Tag("BAD")!.Seek(1));
+            Assert.Contains("CEILING", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        using (var writer = DbfWriter.Open(dbf))
+        {
+            var error = Assert.Throws<DbfWriteException>(() => writer.AppendRecord("BRAVO", "memo"));
+            Assert.Contains("CEILING", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        foreach (var (file, bytes) in before) Assert.Equal(bytes, File.ReadAllBytes(file));
+    }
+
     [Theory]
     [InlineData("approximate")]
     [InlineData("german")]
@@ -100,10 +128,11 @@ public sealed class IndexSafetyTests
             [new DbfColumnDef("k", 'C', 10), new DbfColumnDef("note", 'M')],
             [new object?[] { "ALPHA", "original memo" }],
             new CdxTagDefinition("GOOD", "k"),
-            new CdxTagDefinition("BAD", "UPPER(k)", collation: kind == "udf" ? "MACHINE" : "GENERAL"));
+            new CdxTagDefinition("BAD", "UPPER(k)", collation: kind is "udf" or "builtin" ? "MACHINE" : "GENERAL"));
         string cdx = Path.ChangeExtension(dbf, ".cdx");
         byte[] bytes = File.ReadAllBytes(cdx);
         if (kind == "udf") Replace(bytes, "UPPER(k)", "e1udf(k)");
+        if (kind == "builtin") Replace(bytes, "UPPER(k)", "CEIL(1) ");
         if (kind == "german") Replace(bytes, "GENERAL", "GERMAN\0");
         File.WriteAllBytes(cdx, bytes);
         if (kind == "approximate")
