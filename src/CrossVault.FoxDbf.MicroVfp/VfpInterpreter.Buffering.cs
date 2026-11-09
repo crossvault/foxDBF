@@ -124,18 +124,27 @@ public sealed partial class VfpInterpreter
     /// <summary>Write ONE buffered existing-row edit (field changes + delete/recall mark) to disk, firing the
     /// bound RI trigger when enforced (deferred to commit per hackfox s4g346). Returns false when a RESTRICT
     /// trigger aborts the row (the write is rolled back). Mirrors <see cref="ExecReplace"/>'s disk tail.</summary>
-    private bool CommitExistingRow(int area, VfpSession.WorkArea wa, string path, int recno, RowEdit edit)
+    private bool CommitExistingRow(int area, VfpSession.WorkArea wa, string path, int recno, RowEdit edit,
+        bool throwOnDeleteFailure = false)
     {
         int recIndex = recno - 1;
         if (recIndex < 0 || recIndex >= wa.Table.RecordCount) return true;
         var m = Meta(area);
         bool hasFields = edit.Fields.Count > 0;
 
-        // A buffered DELETE fires the delete trigger BEFORE the mark (ExecDelete order); a RESTRICT aborts.
+        // The buffer exposes the candidate deletion to the trigger; a RESTRICT keeps it pending.
         if (EnforceReferentialIntegrity && edit.DeletedOverride == true)
         {
             GoRecordCore(area, recno);
-            if (!FireDmlTrigger(RiEvent.Delete, area)) return false;
+            if (!FireDmlTrigger(RiEvent.Delete, area))
+            {
+                var error = TriggerFailed(RiEvent.Delete, area, wa.Alias);
+                // TABLEUPDATE returns .F. but retains MESSAGE/AERROR; a pointer move raises 1539.
+                SetErrorState(error, 0);
+                _errNo = 0;
+                if (throwOnDeleteFailure) throw error;
+                return false;
+            }
         }
 
         // The buffered field NAMES this commit writes — for the record-level RI pre-image (whether a touched
@@ -228,7 +237,24 @@ public sealed partial class VfpInterpreter
         _inBufferCommit = true;
         try
         {
-            if (allRows)
+            if (allRows && (buf.Rows.Values.Any(e => e.DeletedOverride is not null) || buf.Appends.Any(e => e.Deleted)))
+            {
+                // VFP commits deletion buffers record by record, including mixed field edits/appends.
+                // A rejected delete retains that row and the remaining edits; earlier commits survive.
+                foreach (int rec in buf.Rows.Keys.OrderBy(r => r).ToArray())
+                {
+                    wa = Session.AreaAt(area)!;
+                    if (!CommitExistingRow(area, wa, path, rec, buf.Rows[rec])) { ok = false; break; }
+                    buf.Rows.Remove(rec);
+                }
+                if (ok)
+                    foreach (var append in buf.Appends.ToArray())
+                    {
+                        if (!CommitAppend(append)) { ok = false; break; }
+                        buf.Appends.Remove(append);
+                    }
+            }
+            else if (allRows)
             {
                 // ATOMIC (task requirement): wrap the whole multi-row commit in a transaction frame so the
                 // per-file pre-images are captured (SnapshotForTxn, incl. any child tables a deferred RI
@@ -465,7 +491,7 @@ public sealed partial class VfpInterpreter
             {
                 // Only DROP the buffered edit once it is actually on disk; a RESTRICT abort keeps it buffered
                 // AND surfaces the failure (VFP blocks the move rather than silently losing the edit).
-                if (CommitExistingRow(area, wa, path, rec, e)) m.Buf.Rows.Remove(rec);
+                if (CommitExistingRow(area, wa, path, rec, e, throwOnDeleteFailure: true)) m.Buf.Rows.Remove(rec);
                 else throw new MicroVfpRuntimeException("Update conflict: the pending row was blocked on commit.");
             }
             else if (rec > rcTable)                            // the current record is a buffered APPEND.
@@ -612,6 +638,7 @@ public sealed partial class VfpInterpreter
         var m = Meta(area);
         if (m.Buffering <= 1)
             throw new MicroVfpRuntimeException("Function requires row or table buffering mode.", 1586);
+        if (m.Eof) return VfpValue.Null;
         bool isField0 = IsNumeric(a[0]) && a[0].AsNumber == 0m;
         int colIdx = IsNumeric(a[0]) ? (int)a[0].AsNumber - 1 : ColumnIndex(wa.Table, StripQualifier(a[0].AsString));
         // -1 is reserved for numeric field 0 (the record delete-state). An unresolved character

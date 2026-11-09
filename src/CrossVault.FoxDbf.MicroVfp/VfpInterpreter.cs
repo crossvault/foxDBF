@@ -1239,6 +1239,8 @@ public sealed partial class VfpInterpreter
                 int memberDot = rest.IndexOf('.');
                 if (memberDot > 0 && TryResolveObjectMember(rest[..memberDot], rest[(memberDot + 1)..], out var property))
                     return property;
+                if (_requireDmlNames && !Memory.IsDefined(rest))
+                    throw new MicroVfpRuntimeException($"Variable '{rest.ToUpperInvariant()}' is not found.", 12);
                 return Memory.Get(rest).ToClr();
             }
             var wa = Session.FindAreaByAlias(head);
@@ -1271,6 +1273,8 @@ public sealed partial class VfpInterpreter
         if (Memory.FindArray(name) is { } arr) return arr.First.ToClr();
         if (Memory.IsDefined(name)) return Memory.Get(name).ToClr();
         if (_defines.TryGetValue(name, out var d)) return d.ToClr();
+        if (_requireDmlNames)
+            throw new MicroVfpRuntimeException($"Variable '{name.ToUpperInvariant()}' is not found.", 12);
         return null;
     }
 

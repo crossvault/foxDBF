@@ -1303,18 +1303,8 @@ public static class PrgParser
             string rest0 = PrgScan.AfterFirstWord(text);
             if (PrgScan.FirstWord(rest0).Equals("TAG", StringComparison.OrdinalIgnoreCase))
                 return BuildDeleteTag(PrgScan.AfterFirstWord(rest0));
-            string rest = rest0;
-            var (head, segs) = Carve(rest, "FOR", "WHILE", "IN");
-            string? scope = head.Trim().Length == 0 ? null : head.Trim();
-            PrgExpr? forE = null, whileE = null;
-            NameRef? inArea = null;
-            foreach (var (k, b) in segs)
-            {
-                if (k == "FOR") forE = PrgExpr.Parse(b);
-                else if (k == "WHILE") whileE = PrgExpr.Parse(b);
-                else if (k == "IN") inArea = ToNameRef(FirstToken(b));
-            }
-            return new DeleteStmt(scope, forE, whileE, inArea);
+            var (scope, forE, whileE, inArea, error) = DeleteRecallClauses(rest0);
+            return new DeleteStmt(scope, forE, whileE, inArea, error);
         }
 
         /// <summary><c>DELETE TAG &lt;name&gt;[, …] | ALL [OF &lt;cdx&gt;] [IN area]</c>. A single trailing
@@ -1377,12 +1367,40 @@ public static class PrgParser
 
         private static RecallStmt BuildRecall(string text)
         {
-            string rest = PrgScan.AfterFirstWord(text);
-            var (head, segs) = Carve(rest, "FOR", "WHILE");
+            var (scope, forE, whileE, inArea, error) = DeleteRecallClauses(PrgScan.AfterFirstWord(text));
+            return new RecallStmt(scope, forE, whileE, inArea, error);
+        }
+
+        private static (string? Scope, PrgExpr? For, PrgExpr? While, NameRef? In, int Error) DeleteRecallClauses(string rest)
+        {
+            var (head, segs) = Carve(rest, "FOR", "WHILE", "IN", "NOOPTIMIZE");
             string? scope = head.Trim().Length == 0 ? null : head.Trim();
-            PrgExpr? forE = segs.FirstOrDefault(s => s.Kw == "FOR").Body is { Length: > 0 } b ? PrgExpr.Parse(b) : null;
-            PrgExpr? whileE = segs.FirstOrDefault(s => s.Kw == "WHILE").Body is { Length: > 0 } w ? PrgExpr.Parse(w) : null;
-            return new RecallStmt(scope, forE, whileE);
+            PrgExpr? forE = null, whileE = null;
+            NameRef? inArea = null;
+            int error = 0;
+            var seen = new HashSet<string>();
+            foreach (var (keyword, body) in segs)
+            {
+                if (!seen.Add(keyword)) { error = 36; break; }
+                if (keyword == "NOOPTIMIZE")
+                {
+                    if (body.Trim().Length > 0) { error = 36; break; }
+                }
+                else if (keyword == "IN")
+                {
+                    if (body.Trim().Length == 0 || FirstToken(body) != body.Trim()) { error = 36; break; }
+                    inArea = ToNameRef(body.Trim());
+                }
+                else
+                {
+                    if (body.Trim().Length == 0) { error = 152; break; }
+                    var expr = PrgExpr.Parse(body);
+                    if (!expr.IsParsed) { error = 1231; break; }
+                    if (keyword == "FOR") forE = expr;
+                    else whileE = expr;
+                }
+            }
+            return (scope, forE, whileE, inArea, error);
         }
 
         private static SumStmt BuildSum(string text)

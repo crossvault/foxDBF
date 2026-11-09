@@ -19,6 +19,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- microVFP scoped `DELETE` and `RECALL`: `ALL`, `NEXT`, `RECORD`, `REST`, `FOR`, `WHILE`,
+  `IN` and `NOOPTIMIZE`, with VFP9 record order, visibility, final pointers and `_TALLY`.
+  Includes row/table buffering, partial progress on predicate or delete-trigger failure,
+  and one writer lease for ordinary multi-record operations. `RECALL` sees deleted rows even
+  with `SET DELETED ON`; rejected delete triggers restore their row while retaining earlier changes.
 - Per-interpreter `sessionCodePage` / `CPCURRENT()` and writer `SessionCodePage` options for VFP9
   session-dependent `UPPER()`/`LOWER()` in CDX and IDX expressions, including rebuilds and maintenance.
 - VFP9-exact CZECH, SLOVAK and POLISH index weights on Macintosh Central European code page 10029.
@@ -90,6 +95,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   on the left in inexact comparisons, including GENERAL `á > ab` and comparisons
   with a longer, blank-padded right operand. SPANISH's asymmetric SQL comparisons and CP1254's
   historical `UPPER()`/`LOWER()` byte mappings are protected by additional VFP9 regression tests.
+- microVFP `DELETE`/`RECALL` evaluate `NEXT`/`RECORD` expressions in the `IN` target and restore
+  the caller's work area on errors. `NEXT 1` retains row-buffered edits like the bare command;
+  rejected delete triggers raise 1539 on a pointer move, while `TABLEUPDATE()` returns `.F.`
+  and retains the VFP9 `MESSAGE()`/`AERROR()` details. Invalid scopes and predicates report
+  VFP9's error numbers and text, including 10 for a missing `NEXT`/`RECORD` expression.
 - microVFP `REPLACE` preserves fields named `all`, `rest`, `next` or `record` in values and
   predicates instead of misreading them as trailing record scopes.
 - **BREAKING:** with RI enforcement enabled, unbuffered `APPEND BLANK` fires the insert trigger
