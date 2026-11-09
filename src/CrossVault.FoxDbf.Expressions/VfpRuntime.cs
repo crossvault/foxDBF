@@ -364,6 +364,7 @@ internal static class VfpRuntime
         // Functions that must SEE a .NULL. argument rather than propagate it.
         switch (name)
         {
+            case "DATETIME": return MakeDateTime(args);
             case "ISNULL": return VfpValue.Logical(Arg(args, 0).IsNull);
             case "EMPTY": return Empty(Arg(args, 0), ctx);
             case "IIF":
@@ -444,7 +445,6 @@ internal static class VfpRuntime
 
             // ---- date ----
             case "DATE": return VfpValue.Date(DateOnly.FromDateTime(DateTime.Today));
-            case "DATETIME": return VfpValue.DateTime(DateTime.Now);
             case "DAY": return VfpValue.Integer(Arg(args, 0).AsDate.Day);
             case "MONTH": return VfpValue.Integer(Arg(args, 0).AsDate.Month);
             case "YEAR": return VfpValue.Integer(Arg(args, 0).AsDate.Year);
@@ -571,6 +571,32 @@ internal static class VfpRuntime
     }
 
     private static VfpValue Arg(VfpValue[] a, int i) => i < a.Length ? a[i] : VfpValue.Null;
+    private static VfpValue MakeDateTime(VfpValue[] args)
+    {
+        if (args.Length == 0) return VfpValue.DateTime(DateTime.Now);
+        if (args.Length < 3)
+            throw new ExpressionException("Too few arguments.") { VfpErrorNumber = 1229 };
+        if (args.Length > 6)
+            throw new ExpressionException("Too many arguments.") { VfpErrorNumber = 1230 };
+
+        // VFP substitutes today's date components for NULL, but zero for omitted/NULL time parts.
+        var today = DateTime.Today;
+        int[] parts = { today.Year, today.Month, today.Day, 0, 0, 0 };
+        int[] minimum = { 100, 1, 1, 0, 0, 0 };
+        int[] maximum = { 9999, 12, 31, 23, 59, 59 };
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i].IsNull) continue;
+            double value = Math.Truncate(args[i].AsDouble);
+            if (!IsNumeric(args[i]) || !double.IsFinite(value) || value < minimum[i] || value > maximum[i])
+                throw new ExpressionException("Function argument value, type, or count is invalid.") { VfpErrorNumber = 11 };
+            parts[i] = (int)value;
+        }
+        // An impossible day within the component ranges (e.g. February 29, 2023) is the empty T value.
+        if (parts[2] > DateTime.DaysInMonth(parts[0], parts[1])) return VfpValue.DateTime(default);
+        return VfpValue.DateTime(new DateTime(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]));
+    }
+
     private static int IntArg(VfpValue[] a, int i) => i < a.Length ? (int)a[i].AsDouble : 0;
 
     /// <summary>Truthiness of a condition value the SAME way IIF/ICASE treat it: a <c>.NULL.</c> is false,
@@ -622,6 +648,7 @@ internal static class VfpRuntime
     {
         if (len < 0) len = 0;
         if (dec < 0) dec = 0;
+        if (!double.IsFinite(n)) return new string('*', len);
 
         // Integer-digit count of the rounded-to-zero magnitude, including a sign slot.
         double absInt = Math.Floor(Math.Abs(n));

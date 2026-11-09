@@ -212,7 +212,7 @@ public sealed class SqlSelectExecutorTests : IDisposable
         var countRows = SqlTestSupport.Materialize(
             _session.Execute("SELECT COUNT(amount) + 1 FROM person WHERE id = 99999")!);
 
-        Assert.Equal(1m, Assert.Single(Assert.Single(sumRows)));
+        Assert.Null(Assert.Single(Assert.Single(sumRows))); // VFP9: empty SUM stays NULL through arithmetic.
         Assert.Null(Assert.Single(Assert.Single(avgRows)));
         Assert.Equal(1m, Assert.Single(Assert.Single(countRows)));
     }

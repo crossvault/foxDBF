@@ -56,6 +56,17 @@ public sealed class SqlSortedResultsHavingAliasTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch { }
     }
 
+    [Theory]
+    [InlineData("SELECT TOP 2 id % 3 AS k, COUNT(*) AS n FROM person GROUP BY 1 ORDER BY n")]
+    [InlineData("SELECT TOP 2 id % 3 AS k, 1 AS a, COUNT(*) AS n FROM person GROUP BY 1, 2 ORDER BY a, n")]
+    [InlineData("SELECT TOP 2 id, id % 2 AS k FROM person ORDER BY k")]
+    [InlineData("SELECT TOP 2 id, id % 2 AS k, id % 1 AS a FROM person ORDER BY k, a")]
+    public void TopTies_StopAtRequestedCount(string sql)
+    {
+        // Each ordering has at least three tied rows at the TOP 2 boundary.
+        Assert.Equal(2, _s.Execute(sql)!.Rows.Count());
+    }
+
     private const string Join = " FROM cust ca JOIN opened ao ON ca.acctno = ao.acctno";
 
     [Theory]

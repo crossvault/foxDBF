@@ -541,7 +541,7 @@ public static class SqlParser
                 // VFP rejects a sub-SELECT in HAVING ("SQL: Invalid use of subquery."); mirror that
                 // rather than silently mis-evaluate it.
                 if (FragmentHasSubquery(HavingClauseStops))
-                    throw Err("SQL: Invalid use of subquery in HAVING.");
+                    throw new FoxDbfSqlException("SQL: Invalid use of subquery in HAVING.", Current.Start) { VfpErrorNumber = 1810 };
                 having = ParseExprFragment(HavingClauseStops, stopAtComma: false);
             }
 
@@ -1017,6 +1017,13 @@ public static class SqlParser
                 if (TryComma()) dec = ExpectInt("a column decimal count");
                 if (Current.Kind != TokKind.RParen) throw Err("Expected ')' after the column length.");
                 Advance();
+            }
+
+            // B(n) specifies decimal places, not the fixed eight-byte storage width.
+            if (type == 'B' && len is not null && dec is null)
+            {
+                dec = len;
+                len = 8;
             }
 
             // Scan the rest of this column's clause for NULL / NOT NULL, skipping (but tolerating) any

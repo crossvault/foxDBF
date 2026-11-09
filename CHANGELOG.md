@@ -15,6 +15,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `ADDITIVE`, `BLANK`, `MEMO`, and `FIELDS` lists, `LIKE` and `EXCEPT` patterns.
 - microVFP `REPLACE` supports `ALL`, `FOR`, `WHILE`, `NEXT`, `REST` and `RECORD`, preserving VFP9's final
   record position, visibility under SET DELETED/FILTER/KEY, buffering and index maintenance.
+- **BREAKING:** `DATETIME(year, month, day [, hour [, minute [, second]]])` in expressions, SQL and microVFP,
+  including fractional-component truncation, NULL component defaults and empty results for impossible
+  calendar dates, as in VFP9. Invalid arguments now raise VFP errors 11, 1229 or 1230
+  instead of returning the current timestamp.
+- GERMAN collation with VFP9-exact index keys on code pages 1252, 437 and 10000, including umlaut
+  and sharp-s expansions. Index creation, maintenance of existing GERMAN tags, SEEK and microVFP
+  `SET COLLATE TO "GERMAN"` use the table's code page. GERMAN on code page 850 remains unsupported.
 
 ### Fixed
 
@@ -25,6 +32,24 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   evaluates expressions once and propagates evaluation errors instead of silently buffering NULL.
 - EnforceRules leaves fields beyond a short INSERT FROM ARRAY row blank, even with DBC DEFAULTs or SET NULL ON.
 - Assigning a CATCH object's property updates that object; it no longer creates a separate dotted memory variable.
+- **BREAKING:** SQL validates HAVING and DISTINCT/ORDER BY before evaluating result rows, including
+  empty inputs: non-grouped HAVING fields raise 1803, unknown/generated HAVING names raise 1806,
+  and DISTINCT ordered by an unselected field raises 1808. HAVING subqueries now report 1810
+  through SQL and microVFP instead of an unnumbered error or error 10.
+- Rushmore preserves the leading dot of `.AND.`, `.OR.` and `.NOT.` after numeric literals,
+  using the expression lexer's recognition rules so adjacent boolean operators remain indexable.
+- **BREAKING:** SQL `VAL(...)` with a NULL first source argument now has VFP9's N(1,0) cursor schema,
+  chosen before WHERE and ORDER BY. Numeric SQL cursor overflow now yields the VFP all-star value
+  (exposed as `double.PositiveInfinity`) instead of retaining an out-of-width number or reading it
+  as NULL after materialization. INTO writes the same star bytes; `STR` and microVFP `TRANSFORM` render stars.
+- **BREAKING:** SQL `SUM` over an empty input now returns NULL, like AVG/MIN/MAX, including in
+  compound expressions. Ungrouped aggregates still produce one row; grouped empty inputs produce none.
+- SQL `CREATE TABLE` and `ALTER TABLE ADD COLUMN` interpret `B(3)` as an eight-byte Double with
+  three decimal places, rather than rejecting it as a three-byte Double.
+- GENERAL is now exact on code pages 852, 857, 861, 863, 865, 1254, 10000, 10029, 620 and 895.
+  Index keys are byte-identical to VFP9, allowing index creation and maintenance, SEEK in both directions
+  and Rushmore narrowing on these tables. Previously these combinations were approximate and index writes
+  and SEEK were refused.
 
 ## [0.11.0] - 2026-11-09
 

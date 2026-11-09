@@ -126,7 +126,13 @@ internal sealed partial class FunctionNode
             case "ASC": return new(VfpType.Numeric, 4);
             case "DAY": case "MONTH": case "DOW": return new(VfpType.Numeric, 3);
             case "YEAR": return new(VfpType.Numeric, 5);
-            case "VAL": return new(VfpType.Numeric, 8, 2);
+            case "VAL":
+                // A NULL first source argument fixes VAL's cursor column at N(1,0), even if
+                // WHERE skips that row. Other numeric functions retain their static widths.
+                if (_args.Length > 0 && schema is SqlInferenceSchema valSample
+                    && _args[0].Eval(valSample.Row, valSample.Context).IsNull)
+                    return new(VfpType.Numeric, 1);
+                return new(VfpType.Numeric, 8, 2);
             case "ABS": case "MIN": case "MAX": case "SUM": case "AVG":
                 // Within a larger expression SUM/AVG have their argument's width. Only a root
                 // aggregate expands N/F storage to 16 columns (handled by the SQL executor).
