@@ -405,8 +405,8 @@ internal static class CdxIndexBuilder
         public required bool Descending;
         public Action? ValidateHost;
         /// <summary>The KEY or FOR expression can change when only the record's deletion flag flips: it calls
-        /// DELETED(), EVALUATE(), a volatile function or a host (non-engine) function that might call DELETED().
-        /// A DELETE/RECALL re-keys only such tags; every other key is provably unchanged.</summary>
+        /// DELETED(), EVALUATE() or a volatile function. A DELETE/RECALL re-keys only such tags. VFP9 does not re-key
+        /// a tag whose deletion dependence is hidden in a UDF (M15Vfp9OracleTests.HostedFor_TracksDeleteAndRecall).</summary>
         public bool DependsOnDeletionState;
         public bool DependsOnRecordCount;
 
@@ -520,7 +520,7 @@ internal static class CdxIndexBuilder
             dependsOnDeletion = VfpExpression.Parse(text).ContainsFunction((name, _) =>
             {
                 name = VfpFunctionAbbreviations.Canonical(name);
-                return DeletionSensitiveFunctions.Contains(name) || !VfpRuntime.EngineFunctionNames.Contains(name);
+                return DeletionSensitiveFunctions.Contains(name);
             });
         }
         return new TagKeyComputer

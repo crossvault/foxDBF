@@ -99,6 +99,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- `DELETE` / `RECALL` no longer re-key an index whose KEY/FOR reaches `DELETED()` only through a UDF
+  (`INDEX ON id FOR livefn()`); VFP9 keeps such entries, and the record stays findable by `SEEK`.
 - microVFP `SCAN` and `SKIP` retain their place after `DELETE`/`RECALL` changes membership in
   the controlling index. SQL `DELETE FROM` shares one statement writer and refreshes
   deletion-dependent indexes once per statement.
