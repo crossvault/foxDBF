@@ -8,6 +8,8 @@ namespace CrossVault.FoxDbf.Sql;
 // stricter assignment semantics; these conversions are pinned by DataImportVfp9OracleTests.
 internal static class VfpImport
 {
+    internal sealed record StoredText(byte[] Bytes);
+
     internal static object? ConvertValue(object? value, DbfColumn column, VfpSession session,
         bool array = false, bool sdf = false)
     {
@@ -16,6 +18,7 @@ internal static class VfpImport
         switch (column.Type)
         {
             case 'C': case 'V': case 'M':
+                if (value is StoredText) return value;
                 if (value is string) return text;
                 if (value is DateOnly date) return FormatDate(date, session);
                 if (value is DateTime time) return FormatDate(DateOnly.FromDateTime(time), session);
@@ -28,7 +31,8 @@ internal static class VfpImport
                 if (value is bool or DateOnly or DateTime) return 0m;
                 if (value is not string) return value;
                 var match = Regex.Match(text.TrimStart(), @"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?");
-                return decimal.TryParse(match.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var n) ? n : 0m;
+                if (decimal.TryParse(match.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var n)) return n;
+                return double.TryParse(match.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var large) ? large : 0m;
             case 'L':
                 return value is bool b ? b : value is string && text.TrimStart() is { Length: > 0 } s && s[0] is 'T' or 'Y';
             case 'D':
@@ -83,7 +87,7 @@ internal static class VfpImport
         int d = ymd ? parts[2] : dmy ? parts[0] : parts[1];
         // SDF consumes eight bytes for D even with CENTURY ON; MDY then treats its
         // two-digit year literally. DMY applies the normal century rollover.
-        if (y < 100 && !(sdf && !dmy && !ymd && session.ImportCentury)) y += y < 50 ? 2000 : 1900;
+        if (y < 100 && !(sdf && !dmy && !ymd && session.ImportCentury)) y += 100 * (session.ImportCenturyBase + (y < session.ImportRollover ? 1 : 0));
         try { return new DateOnly(y, m, d); }
         catch (ArgumentOutOfRangeException) { return default; }
     }

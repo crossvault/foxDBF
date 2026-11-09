@@ -53,15 +53,7 @@ internal sealed partial class DmlExecutor
         var (fields, rows) = SelectImportSource(_session, st, host);
         var target = _session.OpenWritableTarget(st.Table);
         int count = 0;
-        var pending = new List<object?[]>();
-        var blanks = new List<bool[]>();
-        void Flush()
-        {
-            count += target.Writer.AppendImportRows(pending, blanks).Count;
-            _session.MemoryBridge?.SetImportTally(count);
-            pending.Clear();
-            blanks.Clear();
-        }
+        _session.MemoryBridge?.SetImportTally(0);
         try
         {
             var columns = target.Writer.Schema.Columns;
@@ -69,32 +61,29 @@ internal sealed partial class DmlExecutor
             bool hasDefaults = DbcDefaultExpressions(_session, st.Table, columns, target.SourcePath) is not null;
             foreach (var row in rows)
             {
-                Dictionary<string, object?> map;
-                try
-                {
-                    map = ImportMap(_session, fields, row);
-                    if (hasDefaults && _session.DbcDefaultEvaluator is not null)
-                    {
-                        Flush();
-                        FillDbcDefaults(_session, st.Table, ref target, map);
-                    }
-                    else FillImportDefaults(_session, st.Table, columns, map);
-                    ValidateImportRules(_session, st.Table, columns, map);
-                    var mask = OmittedColumnsBlankMask(_session, st.Table, columns, map, honourSetNull: true);
-                    var values = ImportWriteValues(columns, map, mask);
-                    // Validate before queuing: on error VFP retains the preceding rows.
-                    byte[] encoded = target.Writer.EncodeImportRow(values, mask, pending.Count);
-                    CheckImportKeys(keys, new DbfRecord(target.Writer.Schema, encoded), target.Writer.RecordCount + pending.Count + 1);
-                    pending.Add(values);
-                    blanks.Add(mask);
-                }
-                catch { Flush(); throw; }
+                var map = ImportMap(_session, fields, row);
+                if (hasDefaults && _session.DbcDefaultEvaluator is not null)
+                    FillDbcDefaults(_session, st.Table, ref target, map);
+                else FillImportDefaults(_session, st.Table, columns, map);
+                var mask = OmittedColumnsBlankMask(_session, st.Table, columns, map, honourSetNull: true);
+                var values = ImportWriteValues(columns, map, mask);
+                var record = new DbfRecord(target.Writer.Schema, target.Writer.EncodeImportRow(values, mask));
+                int recno = target.Writer.RecordCount + 1;
+                ValidateImportRules(_session, st.Table, columns, StoredImportValues(target.Writer.Schema, record, map), recno: recno);
+                CheckImportKeys(keys, record, recno);
+                // Writer-side constraints can fail too: retain each accepted prefix row, as VFP9 does.
+                target.Writer.AppendImportRows(new List<object?[]> { values }, new List<bool[]> { mask });
+                count++;
+                _session.MemoryBridge?.SetImportTally(count);
             }
-            Flush();
         }
         finally { target.Dispose(); }
         return SqlResult.Dml(count);
     }
+
+    internal static Dictionary<string, object?> StoredImportValues(DbfTable schema, DbfRecord record, Dictionary<string, object?> map)
+        => schema.Columns.Where(c => !c.IsSystem).ToDictionary(c => c.Name,
+            c => c.Type is 'M' or 'W' or 'G' ? map.GetValueOrDefault(c.Name, "") : record.GetVfpValue(c.Name), StringComparer.OrdinalIgnoreCase);
 
     private sealed class ImportValues : Dictionary<string, object?>
     {
@@ -125,25 +114,26 @@ internal sealed partial class DmlExecutor
     }
 
     internal static void ValidateImportRules(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
-        Dictionary<string, object?> map, Func<string, VfpValue>? evaluate = null)
+        Dictionary<string, object?> map, Func<string, VfpValue>? evaluate = null, int recno = 0, bool? suppliedFields = null)
     {
         var rules = TableRules(session, table);
         if (rules is null) return;
         VfpValue Eval(string expression) => evaluate is not null ? evaluate(expression)
-            : VfpExpression.Parse(expression).Evaluate(new ImportRow(columns, map), session.Context);
+            : VfpExpression.Parse(expression).Evaluate(new ImportRow(columns, map, recno), session.Context);
         int field = 0;
         foreach (var col in columns)
         {
             if (col.IsSystem) continue;
             var rule = FieldRules(rules, columns, col, field++);
-            if (map.ContainsKey(col.Name) && !string.IsNullOrEmpty(rule?.RuleExpression))
+            if ((!suppliedFields.HasValue || map.ContainsKey(col.Name) == suppliedFields.Value)
+                && !string.IsNullOrEmpty(rule?.RuleExpression))
             {
                 var value = Eval(rule.RuleExpression);
                 if (value.Type != VfpType.Logical || !value.AsLogical)
                     throw new FoxDbfSqlException("Field validation rule is violated.") { VfpErrorNumber = 1582 };
             }
         }
-        if (!string.IsNullOrEmpty(rules.RuleExpression))
+        if (suppliedFields != true && !string.IsNullOrEmpty(rules.RuleExpression))
         {
             var value = Eval(rules.RuleExpression);
             if (value.Type != VfpType.Logical || !value.AsLogical)
@@ -158,7 +148,7 @@ internal sealed partial class DmlExecutor
         var names = new HashSet<string>(session.ImportCandidateTags?.Invoke(livePath) ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         if (TableRules(session, table, livePath)?.PrimaryKey is { Length: > 0 } primary) names.Add(primary);
         var result = new List<(CdxIndexBuilder.TagKeyComputer, HashSet<string>)>();
-        string file = SidecarFile.ChangeExtension(schema.SourcePath ?? path, ".cdx");
+        string file = SidecarFile.ChangeExtension(path, ".cdx");
         if (!File.Exists(file)) return result;
         using var index = CdxFile.Open(file, schema);
         var header = index.Index.ReadCdxHeader();
@@ -195,10 +185,10 @@ internal sealed partial class DmlExecutor
         foreach (var (set, key) in additions) set.Add(key);
     }
 
-    private sealed class ImportRow(IReadOnlyList<DbfColumn> columns, Dictionary<string, object?> values) : IRowContext
+    private sealed class ImportRow(IReadOnlyList<DbfColumn> columns, Dictionary<string, object?> values, int recno = 0) : IRowContext
     {
-        public int RecNo => 0;
-        public int RecCount => 0;
+        public int RecNo => recno;
+        public int RecCount => recno;
         public bool Deleted => false;
         public object? GetField(string name)
         {
