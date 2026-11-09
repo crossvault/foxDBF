@@ -97,6 +97,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   VFP error 1539 after restoring the original row, matching VFP9.
 - **BREAKING:** dotted assignments to a missing object now raise VFP error 1923 instead of 1924.
   An open table alias does not turn an object assignment into a field update, matching VFP9.
+- Incremental CDX and compact IDX maintenance now preserves VFP9's page-history attributes when
+  record-number packing widens, narrows or splits, and writes empty child lists on unlinked branch pages.
+- Deleting or recalling a record now maintains structural CDX keys and filters that depend on `DELETED()`.
 - BREAKING: CDX and compact IDX bulk builds reproduce DUTCH blank-head compression with secondary
   weights and preserve VFP9's UNIQWT/10000 entry order. Weighted incremental insertion and exact SEEK
   follow VFP9's directional blank comparison and branch search. Exact SEEK also retains compressed-prefix
