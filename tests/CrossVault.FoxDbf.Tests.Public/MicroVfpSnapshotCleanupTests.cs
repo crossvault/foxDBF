@@ -81,7 +81,8 @@ public sealed class MicroVfpSnapshotCleanupTests
         using var f = new Fixture(initialRows: 1);
         f.LoadTrigger("__RI_INSERT_items", allowed: false);
 
-        f.Run("INSERT INTO items (id, value) VALUES (2, 20)");
+        Assert.Equal(1539, Assert.Throws<MicroVfpRuntimeException>(() =>
+            f.Run("INSERT INTO items (id, value) VALUES (2, 20)")).VfpErrorNumber);
 
         Assert.Equal(0, f.Interp.SnapshotTempFileCount());
         Assert.Equal(1m, f.Num("RECCOUNT()"));

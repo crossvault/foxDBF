@@ -210,6 +210,30 @@ internal sealed class CollationTable
     /// </summary>
     public static CollationTable Spanish850 { get; } = BuildSpanish850();
 
+    public static CollationTable Turkish1254 { get; } = new(1254, TurkishWeights.Head1254, TurkishWeights.Tail1254,
+        TurkishWeights.Expansions1254, NoContractions, HighCharMap(TurkishWeights.HighChars1254));
+
+    public static CollationTable Turkish857 { get; } = new(857, TurkishWeights.Head857, TurkishWeights.Tail857,
+        TurkishWeights.Expansions857, NoContractions, HighCharMap(TurkishWeights.HighChars857));
+
+    public static CollationTable Russian1251 { get; } = new(1251, RussianWeights.Head1251, RussianWeights.Tail1251,
+        RussianWeights.Expansions1251, NoContractions, HighCharMap(RussianWeights.HighChars1251));
+
+    public static CollationTable Russian866 { get; } = new(866, RussianWeights.Head866, RussianWeights.Tail866,
+        RussianWeights.Expansions866, NoContractions, HighCharMap(RussianWeights.HighChars866));
+
+    public static CollationTable Russian10007 { get; } = new(10007, RussianWeights.Head10007, RussianWeights.Tail10007,
+        RussianWeights.Expansions10007, NoContractions, HighCharMap(RussianWeights.HighChars10007));
+
+    public static CollationTable Greek1253 { get; } = new(1253, GreekWeights.Head1253, GreekWeights.Tail1253,
+        GreekWeights.Expansions1253, NoContractions, HighCharMap(GreekWeights.HighChars1253));
+
+    public static CollationTable Greek737 { get; } = new(737, GreekWeights.Head737, GreekWeights.Tail737,
+        GreekWeights.Expansions737, NoContractions, HighCharMap(GreekWeights.HighChars737));
+
+    public static CollationTable Greek10006 { get; } = new(10006, GreekWeights.Head10006, GreekWeights.Tail10006,
+        GreekWeights.Expansions10006, NoContractions, HighCharMap(GreekWeights.HighChars10006));
+
     private static CollationTable BuildGeneral850()
     {
         var head = (byte[])GeneralWeights850.Head.Clone();

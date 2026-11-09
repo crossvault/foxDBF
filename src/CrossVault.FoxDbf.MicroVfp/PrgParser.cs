@@ -1203,6 +1203,7 @@ public static class PrgParser
             // A leading scope (ALL / REST / NEXT n / RECORD n) precedes the first field-WITH pair;
             // peel it off so ToNameRef never builds a malformed field like "ALL setup.value".
             var (scope, fieldList) = CarveLeadingScope(body);
+            scope ??= PeelTrailingScope(ref fieldList);
             var clauses = new List<ReplaceClause>();
             foreach (var piece in PrgScan.SplitTopCommas(fieldList))
             {
@@ -1224,8 +1225,13 @@ public static class PrgParser
             NameRef? inArea = null;
             foreach (var (k, b) in segs)
             {
-                if (k == "FOR") forE = PrgExpr.Parse(b);
-                else if (k == "WHILE") whileE = PrgExpr.Parse(b);
+                if (k is "FOR" or "WHILE")
+                {
+                    string expression = b;
+                    scope ??= PeelTrailingScope(ref expression);
+                    if (k == "FOR") forE = PrgExpr.Parse(expression);
+                    else whileE = PrgExpr.Parse(expression);
+                }
                 else if (k == "IN") inArea = ToNameRef(FirstToken(b));
             }
             return new ReplaceStmt(clauses, scope, forE, whileE, inArea);
@@ -1431,23 +1437,24 @@ public static class PrgParser
         // ---- P2 table/record movers + whole-table I/O ----
 
         /// <summary><c>GATHER FROM aArray | MEMVAR [FIELDS cList] [MEMO]</c>. MEMVAR may omit FROM
-        /// (<c>GATHER MEMVAR</c>); the array form always carries FROM. <c>GATHER NAME oObj</c> is not modelled
-        /// (error 36 when executed).</summary>
+        /// (<c>GATHER MEMVAR</c>); NAME supplies a record object.</summary>
         private static PrgStatement BuildGather(string text)
         {
             string rest = PrgScan.AfterFirstWord(text);   // after GATHER
+            string? objectName = ExtractRecordObjectName(ref rest);
             var (head, segs) = Carve(rest, "FROM", "FIELDS", "MEMO");
-            string srcSpec = SegBody(segs, "FROM") ?? head;
-            if (IsNameSpec(srcSpec)) return Unparsed("GATHER", rest);   // GATHER NAME oObj — not modelled.
+            string srcSpec = objectName is not null ? "NAME " + objectName : SegBody(segs, "FROM") ?? head;
             var (kind, name) = ParseScatterSpec(srcSpec);
-            return new GatherStmt(kind, name, FieldsOf(segs), HasKw(segs, "MEMO"));
+            var (fields, pattern, except) = RecordFieldsOf(segs);
+            return new GatherStmt(kind, name, fields, HasKw(segs, "MEMO"), pattern, except);
         }
 
         /// <summary><c>SCATTER TO aArray | MEMVAR [BLANK] [FIELDS cList] [MEMO]</c>. The array form carries TO;
-        /// MEMVAR may stand alone. <c>SCATTER NAME oObj</c> is not modelled (error 36 when executed).</summary>
+        /// MEMVAR may stand alone; NAME creates or updates a record object.</summary>
         private static PrgStatement BuildScatter(string text)
         {
             string rest = PrgScan.AfterFirstWord(text);   // after SCATTER
+            string? objectName = ExtractRecordObjectName(ref rest);
             var (head, segs) = Carve(rest, "TO", "FIELDS", "MEMO", "BLANK", "ADDITIVE");
             ScatterKind kind;
             string? name;
@@ -1458,15 +1465,38 @@ public static class PrgParser
             }
             else
             {
-                if (IsNameSpec(head)) return Unparsed("SCATTER", rest);   // SCATTER NAME oObj — not modelled.
-                (kind, name) = ParseScatterSpec(head);
+                (kind, name) = ParseScatterSpec(objectName is not null ? "NAME " + objectName : head);
             }
-            return new ScatterStmt(kind, name, FieldsOf(segs), HasKw(segs, "MEMO"), HasKw(segs, "BLANK"));
+            var (fields, pattern, except) = RecordFieldsOf(segs);
+            return new ScatterStmt(kind, name, fields, HasKw(segs, "MEMO"), HasKw(segs, "BLANK"), HasKw(segs, "ADDITIVE"), pattern, except);
         }
 
-        /// <summary>The <c>NAME oObj</c> (record object) form of a GATHER/SCATTER spec. microVFP has no record
-        /// objects, so it runs as an unparsed clause (error 36) instead of silently doing nothing.</summary>
-        private static bool IsNameSpec(string spec) => PrgScan.FirstWord(spec.Trim()) == "NAME";
+        private static string? ExtractRecordObjectName(ref string text)
+        {
+            // NAME is also a legal field name. Only NAME followed by an object variable is a clause;
+            // search from the right so FIELDS name NAME obj retains the field named "name".
+            foreach (var (start, len, word) in PrgScan.TopWords(text).AsEnumerable().Reverse())
+            {
+                if (word != "NAME") continue;
+                string tail = text[(start + len)..];
+                string name = FirstToken(tail);
+                if (name.Length == 0 || !VfpIdentifier.IsStart(name[0])) continue;
+                if (name.ToUpperInvariant() is "FIELDS" or "MEMO" or "BLANK" or "ADDITIVE" or "TO" or "FROM") continue;
+                int nameStart = start + len + tail.Length - tail.TrimStart().Length;
+                text = text.Remove(start, nameStart + name.Length - start);
+                return name;
+            }
+            return null;
+        }
+
+        private static (IReadOnlyList<string> Fields, string? Pattern, bool Except) RecordFieldsOf(List<(string Kw, string Body)> segs)
+        {
+            string body = SegBody(segs, "FIELDS") ?? string.Empty;
+            string first = PrgScan.FirstWord(body);
+            if (first is "LIKE" or "EXCEPT")
+                return (Array.Empty<string>(), PrgScan.AfterFirstWord(body).Trim(), first == "EXCEPT");
+            return (FieldsOf(segs), null, false);
+        }
 
         /// <summary>Resolve a GATHER/SCATTER source/target spec (<c>MEMVAR</c> / an array name) to its kind +
         /// name.</summary>
@@ -1474,16 +1504,23 @@ public static class PrgParser
         {
             spec = spec.Trim();
             string fw = PrgScan.FirstWord(spec);
+            if (fw == "NAME") return (ScatterKind.Object, FirstToken(PrgScan.AfterFirstWord(spec)));
             if (fw == "MEMVAR") return (ScatterKind.Memvar, null);
             if (spec.Length == 0) return (ScatterKind.Memvar, null);
             return (ScatterKind.Array, FirstToken(spec));
         }
 
         /// <summary><c>APPEND FROM cFile [FIELDS cList] [FOR lExpr] [TYPE cType]</c>. A bare
-        /// <c>APPEND</c>/<c>APPEND BLANK</c> (no FROM) is left un-modelled.</summary>
+        /// <c>APPEND</c> (interactive, no BLANK/FROM) is left un-modelled.</summary>
         private static PrgStatement BuildAppend(string text)
         {
             string rest = PrgScan.AfterFirstWord(text);   // after APPEND
+            if (PrgScan.FirstWord(rest) == "BLANK")
+            {
+                var (_, blankSegments) = Carve(PrgScan.AfterFirstWord(rest), "IN");
+                return new AppendBlankStmt(SegBody(blankSegments, "IN") is { Length: > 0 } area
+                    ? ToNameRef(FirstToken(area)) : null);
+            }
             // APPEND PROCEDURES FROM cFile — append text into the current DBC's stored-procedure source (§C.7).
             if (PrgScan.FirstWord(rest) == "PROCEDURES")
             {

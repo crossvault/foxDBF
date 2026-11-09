@@ -761,8 +761,8 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── SET COLLATE / SET KEY (microVFP P1 gap #1) ───────────────────────────
 
-    /// <summary>SET COLLATE TO cSeq — set the session collation baked into the next INDEX tag. Only
-    /// MACHINE, GENERAL, SPANISH, GERMAN, DUTCH and UNIQWT are supported; any other sequence is a catchable error (never a silent fallback).
+    /// <summary>SET COLLATE TO cSeq — set the session collation baked into the next INDEX tag.
+    /// Registered library sequences are supported; unavailable names are a catchable error (never a silent fallback).
     /// <c>SET COLLATE TO</c> (no arg) resets to MACHINE. Read back by <c>SET("COLLATE")</c>.</summary>
     private void SetCollate(string arg)
     {
@@ -779,8 +779,17 @@ public sealed partial class VfpInterpreter
             "GERMAN" => VfpCollations.ByName("GERMAN"),
             "DUTCH" => VfpCollations.ByName("DUTCH"),
             "UNIQWT" => VfpCollations.ByName("UNIQWT"),
+            "TURKISH" => VfpCollations.ByName("TURKISH", 1254),
+            "RUSSIAN" => VfpCollations.ByName("RUSSIAN", 1251),
+            "GREEK" => VfpCollations.ByName("GREEK", 1253),
+            "NORDAN" => VfpCollations.ByName("NORDAN"),
+            "SWEFIN" => VfpCollations.ByName("SWEFIN"),
+            "ICELAND" => VfpCollations.ByName("ICELAND"),
+            // Availability is library-wide; existing VFP tags remain maintainable across session code pages.
+            // These sequences compare expressions in their native 1250 table; INDEX uses the DBF code page.
+            "CZECH" or "SLOVAK" or "POLISH" or "HUNGARY" => VfpCollations.ByName(seq, 1250),
             _ => throw new MicroVfpRuntimeException(
-                $"SET COLLATE TO {seq}: collating sequence not supported (only MACHINE, GENERAL, SPANISH, GERMAN, DUTCH and UNIQWT)."),
+                $"SET COLLATE TO {seq}: collating sequence not supported."),
         };
     }
 

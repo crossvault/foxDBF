@@ -13,7 +13,30 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   SEEK, Rushmore and microVFP `SET COLLATE TO` / `INDEX ON`. UNIQWT preserves case and accent distinctions.
 - **BREAKING:** SPANISH expression and SQL comparisons now reproduce VFP9's ligature truncation rules,
   including `ß = s` with EXACT OFF, `ßx > ss`, and the asymmetric SQL ANSI OFF comparison `s < ß`.
-
+- VFP9-exact TURKISH collation on code pages 1254/857, RUSSIAN on 1251/866/10007 and GREEK
+  on 1253/737/10006, including index creation and maintenance, prefix SEEK, Rushmore and microVFP
+  `SET COLLATE TO` / `INDEX ON` / `SEEK`.
+- **BREAKING:** `UPPER()` and `LOWER()` with these eight code pages now use VFP9's language byte
+  mappings instead of Unicode casing, including in index expressions. Turkish dotted-I comparisons
+  also treat an absent secondary weight like a zero weight, as VFP9 does.
+  Case-expression parity is verified in the matching language sessions; selecting a different VFP
+  session code page for index-expression evaluation is not currently supported by the writer.
+- CZECH and SLOVAK collations on code pages 1250, 852 and 895; POLISH on 1250, 852 and 620;
+  HUNGARY on 1250 and 852. VFP9-exact keys support bulk and incremental index creation, existing-tag
+  maintenance, SEEK with EXACT OFF/ON, Rushmore ranges and microVFP `SET COLLATE TO` / `INDEX ON`.
+  Contractions follow measured VFP9 behavior, including HUNGARY's `ozs`/`dzs` equivalence and prefix
+  ranges whose contracted key sorts below the literal.
+- NORDAN and SWEFIN collations with VFP9-exact index keys on code pages 1252, 437, 850, 865
+  and 10000; ICELAND on 1252, 437, 850 and 861. Includes NORDAN's case-insensitive `aa`
+  contraction, index creation and maintenance of VFP-made tags, SEEK with EXACT OFF/ON,
+  Rushmore prefix filtering and microVFP `SET COLLATE TO` / `INDEX ON` / `SEEK`.
+- microVFP `APPEND BLANK`, including buffered appends, index maintenance and DBC DEFAULTs evaluated once.
+  DEFAULTs see the new record's fields and physical record number, while `RECCOUNT()` still excludes it,
+  matching VFP9's distinction between APPEND BLANK and INSERT.
+- microVFP `SCATTER NAME` / `GATHER NAME` record objects with field properties, shared object references,
+  `ADDITIVE`, `BLANK`, `MEMO`, and `FIELDS` lists, `LIKE` and `EXCEPT` patterns.
+- microVFP `REPLACE` supports `ALL`, `FOR`, `WHILE`, `NEXT`, `REST` and `RECORD`, preserving VFP9's final
+  record position, visibility under SET DELETED/FILTER/KEY, buffering and index maintenance.
 - **BREAKING:** `DATETIME(year, month, day [, hour [, minute [, second]]])` in expressions, SQL and microVFP,
   including fractional-component truncation, NULL component defaults and empty results for impossible
   calendar dates, as in VFP9. Invalid arguments now raise VFP errors 11, 1229 or 1230
@@ -24,6 +47,20 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- **BREAKING:** With `EnforceReferentialIntegrity = true`, microVFP now raises VFP error 1539
+  when a DELETE or unbuffered INSERT trigger rejects a row, instead of silently returning.
+  Rejected rows remain unchanged or rolled back. TRY/CATCH and ON ERROR retain the trigger type
+  in `AERROR()`; enforced ADO.NET writes continue to report `FoxDbfException` with error 1539.
+  RI triggers resolve by DBC table identity even under a renamed alias when the logical table name
+  differs from the DBF file name; rejected aliased INSERTs reach both error handlers and roll back.
+
+- BREAKING: microVFP INSERT positions the target on the appended record and keeps a previously closed target
+  open. Row buffering reports a positive record number; table buffering reports a provisional negative number.
+  An explicit navigation command after INSERT can therefore commit a row buffer, as it does in VFP9.
+- INSERT VALUES resolves user functions, memory variables and microVFP functions through the interpreter,
+  evaluates expressions once and propagates evaluation errors instead of silently buffering NULL.
+- EnforceRules leaves fields beyond a short INSERT FROM ARRAY row blank, even with DBC DEFAULTs or SET NULL ON.
+- Assigning a CATCH object's property updates that object; it no longer creates a separate dotted memory variable.
 - **BREAKING:** SQL validates HAVING and DISTINCT/ORDER BY before evaluating result rows, including
   empty inputs: non-grouped HAVING fields raise 1803, unknown/generated HAVING names raise 1806,
   and DISTINCT ordered by an unselected field raises 1808. HAVING subqueries now report 1810
