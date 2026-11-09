@@ -29,6 +29,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   when a DELETE or unbuffered INSERT trigger rejects a row, instead of silently returning.
   Rejected rows remain unchanged or rolled back. TRY/CATCH and ON ERROR retain the trigger type
   in `AERROR()`; enforced ADO.NET writes continue to report `FoxDbfException` with error 1539.
+  RI triggers resolve by DBC table identity even under a renamed alias when the logical table name
+  differs from the DBF file name; rejected aliased INSERTs reach both error handlers and roll back.
 
 - BREAKING: microVFP INSERT positions the target on the appended record and keeps a previously closed target
   open. Row buffering reports a positive record number; table buffering reports a provisional negative number.

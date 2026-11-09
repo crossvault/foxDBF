@@ -124,8 +124,8 @@ public sealed partial class VfpInterpreter
 
     /// <summary>Resolve the bound RI trigger proc for <paramref name="ev"/> on <paramref name="wa"/> via the
     /// RI Builder NAMING CONVENTION <c>__RI_&lt;event&gt;_&lt;table&gt;</c> (the binding expression is not
-    /// decodable from this codebase's DBC reader — see <see cref="EnforceReferentialIntegrity"/>). Tries the
-    /// work-area alias then the .dbf base name; null when no such proc is loaded.</summary>
+    /// decodable from this codebase's DBC reader — see <see cref="EnforceReferentialIntegrity"/>). Uses the
+    /// DBC member name when available, otherwise the alias then the .dbf base name; null when no such proc is loaded.</summary>
     private string? ResolveTriggerProc(RiEvent ev, VfpSession.WorkArea wa)
     {
         string evName = ev switch { RiEvent.Delete => "DELETE", RiEvent.Update => "UPDATE", _ => "INSERT" };
@@ -137,10 +137,22 @@ public sealed partial class VfpInterpreter
         return null;
     }
 
-    private static IEnumerable<string> TableNameCandidates(VfpSession.WorkArea wa)
+    private IEnumerable<string> TableNameCandidates(VfpSession.WorkArea wa)
     {
-        yield return wa.Alias;
         var path = wa.Table.SourcePath;
+        if (!string.IsNullOrEmpty(path) && Session.Database is { } db)
+        {
+            // VFP binds the trigger to the DBC member, not its USE alias or physical file name:
+            // order_line_items lives in orditems.dbf. Resolve COW copies back to their live identity.
+            string livePath = Session.TxLivePath is { } toLive ? toLive(path) : path;
+            foreach (var member in db.TableNames)
+            {
+                if (!SamePath(db.GetTablePath(member), livePath)) continue;
+                yield return member;
+                yield break;
+            }
+        }
+        yield return wa.Alias;
         if (!string.IsNullOrEmpty(path))
         {
             string fn = Path.GetFileNameWithoutExtension(path);
