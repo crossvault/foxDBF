@@ -37,7 +37,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   next expression; qualified fields, trailing RANDOM, key-width/type errors, FOUND() and reported
   buffering follow VFP9. Replacing another field preserves untouched Varchar/Varbinary lengths,
   including empty keys. Field and record rules run once, with table-buffered record rules deferred
-  until TABLEUPDATE. Keyword-shaped key fields and source aliases are accepted.
+  until leaving the record or TABLEUPDATE. Keyword-shaped key fields and source aliases are accepted.
+  A later replacement type error retains the assignments already accepted on that row.
 - microVFP runs UPDATE-SQL and DELETE-SQL (`UPDATE … SET … WHERE`, `DELETE [target] FROM … WHERE`) in
   programs with VFP9's row expressions (memvars, UDFs), left-to-right SET, `_TALLY`, final pointers and work
   areas, error numbers, field/record rules and triggers, buffering, index maintenance and transactions.
@@ -115,6 +116,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - ADO.NET rule errors evaluate DBC ERROR expressions instead of exposing their quoted source;
   microVFP MESSAGE()/AERROR() report the same VFP9 field/record validation text.
   Missing rule functions/variables preserve their VFP error number in a provider DbException.
+- REPLACE rejects incompatible field values and preserves earlier assignments when a later value has
+  the wrong type, including buffered writes.
 - Logical/numeric relational comparisons raise VFP error 107 instead of coercing logical operands.
 - ADO.NET `EnforceRules=on` validates generated AUTOINC and rounded numeric values as VFP9 stores them,
   and reuses the target work area across INSERT/UPDATE statements, including a table opened under

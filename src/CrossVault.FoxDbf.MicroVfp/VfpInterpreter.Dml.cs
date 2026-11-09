@@ -656,6 +656,7 @@ public sealed partial class VfpInterpreter
         }
 
         SnapshotForTxn(path);
+        MicroVfpRuntimeException? assignmentError = null;
 
         using (var lease = LeaseWriter(path))
         {
@@ -667,6 +668,9 @@ public sealed partial class VfpInterpreter
                 ? wa.Table.Columns.Where(c => !c.IsSystem).ToDictionary(c => c.Name, c => ReadField(wa, c.Name), StringComparer.OrdinalIgnoreCase)
                 : null;
 
+            int assigned = 0;
+            try
+            {
             foreach (var clause in rp.Clauses)
             {
                 string field = StripQualifier(NameOf(clause.Field));
@@ -680,6 +684,7 @@ public sealed partial class VfpInterpreter
                 RememberOldVal(m, field, ReadField(wa, field));
                 var v = Eval(clause.Value);
                 char type = wa.Table.Columns[idx].Type;
+                CheckUpdateValueType(wa.Table.Columns[idx], v);
                 values[idx] = v.IsNull ? null : (type == 'M' && v.IsBinary ? v.ToClr()
                     : type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
                 if (candidate is not null)
@@ -692,6 +697,13 @@ public sealed partial class VfpInterpreter
                         return true;
                     });
                 }
+                assigned++;
+            }
+            }
+            catch (MicroVfpRuntimeException error) when (error.VfpErrorNumber == 9 && assigned > 0)
+            {
+                // Publish the accepted prefix before surfacing a later assignment's type error.
+                assignmentError = error;
             }
             if (candidate is not null)
                 WithImportRow(wa, m.RecNo, candidate, () =>
@@ -724,6 +736,7 @@ public sealed partial class VfpInterpreter
             else if (parentSnap is not null) RestoreSnapshot(parentSnap);
             throw TriggerFailed(RiEvent.Update, area, wa.Alias);
         }
+        if (assignmentError is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(assignmentError).Throw();
         }
         finally
         {

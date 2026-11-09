@@ -66,6 +66,7 @@ public sealed partial class VfpInterpreter
                 edit.Old[field] = ReadFieldOnDisk(wa, field);   // capture the buffer-start (on-disk) value once.
             var v = Eval(clause.Value);
             var col = wa.Table.Columns[idx];
+            CheckUpdateValueType(col, v);
             target[idx] = normalize ? NormalizeUpdateValue(col, v, col.Type == 'Q' ? wa.Table.BinaryTextEncoding : wa.Table.Encoding)
                 : DmlExecutor.StoredFieldValue(wa.Table, col,
                     v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr()));
@@ -80,7 +81,7 @@ public sealed partial class VfpInterpreter
         }
     }
 
-    private object? NormalizeUpdateValue(DbfColumn column, VfpValue value, Encoding encoding)
+    private static void CheckUpdateValueType(DbfColumn column, VfpValue value)
     {
         bool compatible = value.IsNull || column.Type switch
         {
@@ -94,6 +95,11 @@ public sealed partial class VfpInterpreter
             _ => true
         };
         if (!compatible) throw new MicroVfpRuntimeException("Data type mismatch.", 9);
+    }
+
+    private object? NormalizeUpdateValue(DbfColumn column, VfpValue value, Encoding encoding)
+    {
+        CheckUpdateValueType(column, value);
         if (value.IsNull) return null;
         if (column.Type is 'C' or 'V' or 'M') return FitToField(column, value.AsString);
         if (column.Type is not ('N' or 'F' or 'I' or 'B' or 'Y' or 'D' or 'T' or 'Q')) return value.ToClr();
