@@ -333,13 +333,11 @@ public sealed partial class DbfWriter
 
     /// <summary>Bulk-build the structural <c>.cdx</c> for <paramref name="tags"/> over the live table.</summary>
     private void RebuildStructuralCdx(IReadOnlyList<CdxTagDefinition> tags, EvaluationContext? evalContext = null,
-        bool includeDeleted = false, CdxIndexBuilder.AppendUniqueState? appendUniqueState = null,
-        IReadOnlyDictionary<string, byte[]>? preservedKeyStatistics = null)
+        bool includeDeleted = false)
     {
         Flush();
         var rows = MaterializeRows();
-        CdxIndexBuilder.Build(StructuralCdxPath(), _schema, rows, tags, evalContext ?? IndexContext, includeDeleted, appendUniqueState,
-            preservedKeyStatistics: preservedKeyStatistics);
+        CdxIndexBuilder.Build(StructuralCdxPath(), _schema, rows, tags, evalContext ?? IndexContext, includeDeleted);
 
         // The sidecar VFP just wrote is a STRUCTURAL compound .cdx (options 0xE0). Advertise it in the
         // DBF header (byte 28 bit 0) so a real VFP runtime auto-opens it on USE, and flip the writer's

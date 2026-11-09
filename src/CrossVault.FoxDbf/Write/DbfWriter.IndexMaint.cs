@@ -204,16 +204,11 @@ public sealed partial class DbfWriter
         _cdxMaintMode = CdxMaintMode.None;
     }
 
-    /// <summary>Maintain a small append batch incrementally, or bulk-rebuild a large batch.</summary>
-    private void MaintainIndexesAfterAppendBatch(IReadOnlyList<(int RecNo, byte[] Record)> appended, int existingRecordCount)
+    /// <summary>Replay append history for every batch size, as VFP9 APPEND FROM does.</summary>
+    private void MaintainIndexesAfterAppendBatch(IReadOnlyList<(int RecNo, byte[] Record)> appended)
     {
         if (appended.Count == 0 || !ShouldMaintainIndexes())
             return;
-        if (ShouldBulkBuildIndexesAfterAppendBatch(appended.Count, existingRecordCount))
-        {
-            RebuildIndexesAfterBulkAppend(existingRecordCount);
-            return;
-        }
         try
         {
             ThrowIfInjectedFault();
@@ -224,9 +219,11 @@ public sealed partial class DbfWriter
             foreach (var (recNo, bytes) in appended)
             {
                 var record = new DbfRecord(_schema, bytes);
+                // APPEND FROM exposes the count after this row to index expressions,
+                // even though the DBF batch header already contains the final count.
                 foreach (var (tag, computer) in plans)
                 {
-                    if (!computer.TryComputeKey(record, recNo, _recordCount, out var key))
+                    if (!computer.TryComputeKey(record, recNo, recNo, out var key))
                         continue;
                     if (computer.Unique && editor.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
                         continue;
@@ -240,84 +237,6 @@ public sealed partial class DbfWriter
             MarkIndexMaintenanceFailed();
             throw;
         }
-    }
-
-    private static bool ShouldBulkBuildIndexesAfterAppendBatch(int appendedCount, int existingRecordCount)
-        => appendedCount > 0 && appendedCount >= existingRecordCount;
-
-    [ThreadStatic]
-    internal static Action? AfterBulkIndexRebuildForTests;
-
-    private void RebuildIndexesAfterBulkAppend(int existingRecordCount)
-    {
-        try
-        {
-            ThrowIfInjectedFault();
-            var tags = ReadExistingTagDefinitions();
-            if (tags.Count == 0)
-                return;
-            var appendUniqueState = CaptureAppendUniqueState(tags, existingRecordCount);
-            var statistics = CaptureAppendKeyStatistics();
-            RebuildStructuralCdx(tags, includeDeleted: true, appendUniqueState: appendUniqueState,
-                preservedKeyStatistics: statistics);
-            AfterBulkIndexRebuildForTests?.Invoke();
-        }
-        catch
-        {
-            MarkIndexMaintenanceFailed();
-            throw;
-        }
-    }
-
-    private Dictionary<string, byte[]> CaptureAppendKeyStatistics()
-    {
-        // VFP9 keeps the last INDEX ON / REINDEX statistics during APPEND FROM, even for empty or
-        // UNIQUE tags. A bulk rebuild is an append optimization, not a new statistics collection.
-        using var index = IndexFile.Open(ExistingCdxPath());
-        var header = index.ReadCdxHeader(0);
-        var statistics = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (offset, name) in IndexTraversal.EnumerateCompact(index, header.Root, header.KeyLength, pad: 0x20))
-        {
-            var page = index.ReadPage(offset) ?? throw new InvalidDataException("Cannot read CDX tag statistics.");
-            statistics.Add(TrimName(name, _schema.Encoding), page.AsSpan(16, 20).ToArray());
-        }
-        return statistics;
-    }
-
-    private CdxIndexBuilder.AppendUniqueState? CaptureAppendUniqueState(
-        IReadOnlyList<CdxTagDefinition> tags, int existingRecordCount)
-    {
-        var uniqueTags = tags.Where(t => t.Unique).ToList();
-        if (uniqueTags.Count == 0)
-            return null;
-
-        var entriesByTag = new Dictionary<string, IReadOnlyList<IndexEntry>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var tag in uniqueTags)
-            entriesByTag[tag.Name] = Array.Empty<IndexEntry>();
-
-        string cdx = ExistingCdxPath();
-        if (File.Exists(cdx))
-        {
-            using var file = CdxFile.Open(cdx, _schema);
-            uint oldMax = existingRecordCount <= 0 ? 0u : (uint)existingRecordCount;
-            foreach (var def in uniqueTags)
-            {
-                var tag = file.Tag(def.Name);
-                if (tag is null)
-                    continue;
-
-                var existing = new List<IndexEntry>();
-                foreach (var entry in tag.EnumerateEntries())
-                {
-                    if (entry.RecordNumber == 0 || entry.RecordNumber > oldMax)
-                        continue;
-                    existing.Add(new IndexEntry(entry.RecordNumber, (byte[])entry.Key.Clone()));
-                }
-                entriesByTag[def.Name] = existing;
-            }
-        }
-
-        return new CdxIndexBuilder.AppendUniqueState(existingRecordCount, entriesByTag);
     }
 
     /// <summary>Replace changed keys and FOR membership after an in-place update.</summary>

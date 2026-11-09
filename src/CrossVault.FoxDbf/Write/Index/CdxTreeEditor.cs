@@ -8,8 +8,8 @@ namespace CrossVault.FoxDbf.Write;
 /// TRUE INCREMENTAL edit of a live compound <c>.cdx</c> B-tree (project-review finding 5.1): insert or
 /// delete a single <c>(key, recno)</c> entry in one tag's tree by descending to the target leaf,
 /// decoding it (<see cref="CompactLeaf"/>), editing the entry list, and re-encoding via the SAME
-/// primitives the bulk <see cref="CdxIndexBuilder"/> uses — so a maintained leaf reads back byte-identical
-/// to a fresh build. A node that overflows splits or shares its entries with its right sibling exactly as VFP9
+/// primitives the bulk <see cref="CdxIndexBuilder"/> uses, retaining the maintained page's attributes and free bytes.
+/// A node that overflows splits or shares its entries with its right sibling exactly as VFP9
 /// does (the rules head the maintenance code below); new pages come from the end of the file and the root never moves.
 /// Delete allows SPARSE leaves and unlinks a leaf that empties (no merge, as VFP; REINDEX compacts).
 /// </summary>
@@ -223,6 +223,7 @@ internal sealed class CdxTreeEditor : IDisposable
         public long Off;
         public ushort Attr;
         public byte RecnoBits;
+        public byte[] Page = null!;
         public uint? Left, Right;
         public bool IsRoot;
         public List<(byte[] Key, uint Recno)> Entries = new();
@@ -277,7 +278,7 @@ internal sealed class CdxTreeEditor : IDisposable
         int d = path.Branches.Count - 1;
         if (LeafFits(s, 0, n, keyLen, pad))
         {
-            WriteLeaf(leaf.Off, s, 0, n, keyLen, pad, leaf.IsRoot, leaf.Left, leaf.Right, leaf.RecnoBits, leaf.Attr);
+            WriteLeaf(leaf.Off, s, 0, n, keyLen, pad, leaf.IsRoot, leaf.Left, leaf.Right, leaf.RecnoBits, leaf.Attr, leaf.Page);
             UpdateSeparators(path, d, s[^1], keyLen);
             return;
         }
@@ -291,10 +292,14 @@ internal sealed class CdxTreeEditor : IDisposable
             // The root page stays put and becomes a branch over two new leaves (the right one on the lower page).
             int cut = GreedyCut(s, keyLen, pad);
             long right = Alloc(), left = Alloc();
-            WriteLeaf(left, s, 0, cut, keyLen, pad, isRoot: false, null, (uint)right);
+            // The left child carries the old root's history through redistribution;
+            // only the right child starts with a fresh eight-bit budget.
+            WriteLeaf(left, s, 0, cut, keyLen, pad, isRoot: false, null, (uint)right, overflowBits, overflowAttr);
             WriteLeaf(right, s, cut, n - cut, keyLen, pad, isRoot: false, (uint)left, null);
             var kids = new List<CdxIndexBuilder.BranchChild> { Sep(s[cut - 1], left), Sep(s[^1], right) };
-            WriteBranch(leaf.Off, kids, keyLen, (ushort)((leaf.Attr & ~LeafBit) | CdxIndexBuilder.AttrRootBit), null, null);
+            byte leftBits = CdxIndexBuilder.LeafRecordNumberBits(keyLen, s.Take(cut).Max(e => e.Recno));
+            ushort rootAttr = HistoryAttribute(leftBits, overflowBits, overflowAttr);
+            WriteBranch(leaf.Off, kids, keyLen, (ushort)(rootAttr | CdxIndexBuilder.AttrRootBit), null, null);
             return;
         }
 
@@ -303,7 +308,7 @@ internal sealed class CdxTreeEditor : IDisposable
             // Rightmost leaf: keep what fits, the rest opens a new leaf to the right.
             int cut = GreedyCut(s, keyLen, pad);
             long fresh = Alloc();
-            WriteLeaf(leaf.Off, s, 0, cut, keyLen, pad, isRoot: false, leaf.Left, (uint)fresh, overflowBits, overflowAttr);
+            WriteLeaf(leaf.Off, s, 0, cut, keyLen, pad, isRoot: false, leaf.Left, (uint)fresh, overflowBits, overflowAttr, leaf.Page);
             WriteLeaf(fresh, s, cut, n - cut, keyLen, pad, isRoot: false, (uint)leaf.Off, null);
             AddChild(path, d, s[cut - 1], Sep(s[^1], fresh), keyLen);
             return;
@@ -321,8 +326,8 @@ internal sealed class CdxTreeEditor : IDisposable
             int cut = BalancedCut(pool, keyLen, pad);
             if (cut > 0)
             {
-                WriteLeaf(leaf.Off, pool, 0, cut, keyLen, pad, isRoot: false, leaf.Left, leaf.Right, overflowBits, overflowAttr);
-                WriteLeaf(sibling.Off, pool, cut, pool.Count - cut, keyLen, pad, isRoot: false, sibling.Left, sibling.Right, sibling.RecnoBits, sibling.Attr);
+                WriteLeaf(leaf.Off, pool, 0, cut, keyLen, pad, isRoot: false, leaf.Left, leaf.Right, overflowBits, overflowAttr, leaf.Page);
+                WriteLeaf(sibling.Off, pool, cut, pool.Count - cut, keyLen, pad, isRoot: false, sibling.Left, sibling.Right, sibling.RecnoBits, sibling.Attr, sibling.Page);
                 UpdateSeparators(path, d, pool[cut - 1], keyLen);
                 return;
             }
@@ -332,7 +337,7 @@ internal sealed class CdxTreeEditor : IDisposable
         if (split <= 0)
             throw new InvalidDataException($"CDX leaf at {leaf.Off} cannot be split into two pages.");
         long added = Alloc();
-        WriteLeaf(leaf.Off, s, 0, split, keyLen, pad, isRoot: false, leaf.Left, (uint)added, overflowBits, overflowAttr);
+        WriteLeaf(leaf.Off, s, 0, split, keyLen, pad, isRoot: false, leaf.Left, (uint)added, overflowBits, overflowAttr, leaf.Page);
         WriteLeaf(added, s, split, n - split, keyLen, pad, isRoot: false, (uint)leaf.Off, rightOff);
         PatchLeftPointer(rightOff, (uint)added);
         AddChild(path, d, s[split - 1], Sep(s[^1], added), keyLen);
@@ -444,7 +449,7 @@ internal sealed class CdxTreeEditor : IDisposable
 
         // The leaf emptied: unlink it, leave it behind as an empty leaf, drop it from its parent.
         Unlink(leaf.Left, leaf.Right);
-        WriteLeaf(leaf.Off, s, 0, 0, keyLen, pad, isRoot: false, leaf.Left, leaf.Right, leaf.RecnoBits, leaf.Attr);
+        WriteLeaf(leaf.Off, s, 0, 0, keyLen, pad, isRoot: false, leaf.Left, leaf.Right, leaf.RecnoBits, leaf.Attr, leaf.Page);
         RemoveChild(path, d, keyLen, pad);
     }
 
@@ -525,11 +530,24 @@ internal sealed class CdxTreeEditor : IDisposable
     }
 
     private void WriteLeaf(long off, List<(byte[] Key, uint Recno)> s, int start, int count, int keyLen, byte pad,
-        bool isRoot, uint? left, uint? right, byte previousBits = 8, ushort previousAttr = 0)
+        bool isRoot, uint? left, uint? right, byte previousBits = 8, ushort previousAttr = 0, byte[]? previousPage = null)
     {
         var page = CdxIndexBuilder.EncodeLeafPage(s, start, count, keyLen, pad, isRoot, left ?? NoPtr, right ?? NoPtr)
             ?? throw new InvalidDataException($"CDX leaf at {off} does not fit one page.");
         page[0] = (byte)((page[0] & ~4) | HistoryAttribute(page[20], previousBits, previousAttr));
+        // APPEND FROM preserves the unused gap left by INDEX ON, including its last
+        // scratch entry. Re-encoding active entries must not erase that page history.
+        if (previousPage is { } previous)
+        {
+            int gapStart = 24 + count * page[23];
+            int gapEnd = gapStart + BinaryPrimitives.ReadUInt16LittleEndian(page.AsSpan(12));
+            int oldStart = 24 + BinaryPrimitives.ReadUInt16LittleEndian(previous.AsSpan(2)) * previous[23];
+            int oldEnd = oldStart + BinaryPrimitives.ReadUInt16LittleEndian(previous.AsSpan(12));
+            gapStart = Math.Max(gapStart, oldStart);
+            gapEnd = Math.Min(gapEnd, oldEnd);
+            if (gapEnd > gapStart)
+                previous.AsSpan(gapStart, gapEnd - gapStart).CopyTo(page.AsSpan(gapStart));
+        }
         WritePage(off, page);
     }
 
@@ -576,7 +594,7 @@ internal sealed class CdxTreeEditor : IDisposable
     {
         // First insertion starts with an eight-bit record-number budget, not the wider
         // geometry persisted by INDEX ON for an empty tag (CdxPageHistoryVfp9OracleTests).
-        var node = new LeafNode { Off = off, Attr = hdr.Attribute, RecnoBits = hdr.KeyCount == 0 ? (byte)8 : page[20], Left = hdr.LeftSibling, Right = hdr.RightSibling, IsRoot = isRoot };
+        var node = new LeafNode { Off = off, Page = page, Attr = hdr.Attribute, RecnoBits = hdr.KeyCount == 0 ? (byte)8 : page[20], Left = hdr.LeftSibling, Right = hdr.RightSibling, IsRoot = isRoot };
         foreach (var e in CompactLeaf.Decode(page, keyLen, pad))
             node.Entries.Add((e.Key, e.RecordNumber));
         return node;

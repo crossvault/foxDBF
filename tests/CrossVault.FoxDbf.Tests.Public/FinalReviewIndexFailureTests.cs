@@ -98,9 +98,13 @@ public sealed class FinalReviewIndexFailureTests
                         case "append": writer.AppendRecord("CHARLIE"); break;
                         case "update": writer.UpdateRecord(0, ["CHARLIE"]); break;
                         case "smallbatch": writer.AppendRecords([new object?[] { "CHARLIE" }]); break;
-                        // Bulk builds rewrite the complete file; fail after that write to prove undo.
+                        // Large batches journal their ordered page edits too.
                         default:
-                            DbfWriter.AfterBulkIndexRebuildForTests = () => throw new IOException("Injected bulk failure");
+                            int pageWrites = 0;
+                            CdxTreeEditor.AfterPageWriteForTests = () =>
+                            {
+                                if (++pageWrites == 10) throw new IOException("Injected later batch-page failure");
+                            };
                             writer.AppendRecords(Enumerable.Range(0, 80).Select(i => new object?[] { $"NEW{i:D6}" }));
                             break;
                     }
@@ -109,7 +113,6 @@ public sealed class FinalReviewIndexFailureTests
             finally
             {
                 CdxTreeEditor.AfterPageWriteForTests = null;
-                DbfWriter.AfterBulkIndexRebuildForTests = null;
             }
         }
         Assert.Equal(before, File.ReadAllBytes(dbf));
