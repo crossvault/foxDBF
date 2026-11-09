@@ -21,6 +21,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- SQL and microVFP `CREATE TABLE` / `CREATE DBF` support `FREE` and `CODEPAGE = expression`,
+  including VFP9 language-driver bytes, memo encoding and invalid-code-page errors.
+
 - microVFP scoped `DELETE` and `RECALL`: `ALL`, `NEXT`, `RECORD`, `REST`, `FOR`, `WHILE`,
   `IN` and `NOOPTIMIZE`, with VFP9 record order, visibility, final pointers and `_TALLY`.
   Includes row/table buffering, partial progress on predicate or delete-trigger failure,
@@ -66,6 +69,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `SET COLLATE TO "GERMAN"` use the table's code page. GERMAN on code page 850 remains unsupported.
 
 ### Fixed
+
+- BREAKING: `CREATE TABLE` no longer silently ignores constraints or trailing clauses, or creates
+  an unregistered free table while a database is current. `NAME` without a current database,
+  `NAME` with `FREE`, invalid clause order and database-only constraints on free tables raise
+  the corresponding VFP9 errors. DBC member registration, `FROM ARRAY`, candidate indexes via
+  `UNIQUE`, `AUTOINC` and `NOCPTRANS` in CREATE declarations explicitly report not supported
+  before writing files. Use `FREE` to create a free table with a current database.
 
 - microVFP `FILETOSTR()` reads a file the session holds open, such as a used table, as VFP9 does;
   it used to fail with error 1.

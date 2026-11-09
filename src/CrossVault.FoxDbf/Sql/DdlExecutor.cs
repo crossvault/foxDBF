@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using CrossVault.FoxDbf.Expressions;
 using CrossVault.FoxDbf.Write;
 
 namespace CrossVault.FoxDbf.Sql;
@@ -21,6 +22,7 @@ namespace CrossVault.FoxDbf.Sql;
 /// The current FoxPro DBC reader is read-only (it carries no member add/remove primitive), so a
 /// <c>db!name</c> form (CREATE / ALTER / DROP of a DATABASE-CONTAINED member) is rejected up-front
 /// with a clear <see cref="NotSupportedException"/> rather than silently producing a free table.
+/// CREATE without FREE also requires membership whenever a database is current.
 /// Likewise RENAME COLUMN — which the Core ALTER cannot perform without discarding the column's data —
 /// is rejected as not yet supported.
 /// </remarks>
@@ -46,6 +48,21 @@ internal sealed class DdlExecutor
     private SqlResult CreateTable(CreateTableStatement st)
     {
         RejectDbcMember(st.Database, "CREATE TABLE");
+        byte codePage = CreateCodePage(st);
+        if (st.LongName is not null && _session.Database is null)
+            throw new FoxDbfSqlException("No database is open or set as the current database.")
+                { VfpErrorNumber = 1520 };
+        if (st.RequiresDatabase && (st.Free || _session.Database is null))
+            throw new FoxDbfSqlException("Feature is not supported for non-.DBC tables.")
+                { VfpErrorNumber = 1580 };
+        // VFP9 implicitly registers a new table in the current DBC unless FREE is stated.
+        // Reject before creating files: an unregistered free table would silently lose that contract.
+        if (!st.Free && _session.Database is not null)
+            throw new NotSupportedException(
+                "CREATE TABLE in the current database is not supported: DBC member registration is not implemented. " +
+                "Use FREE to explicitly create a free table.");
+        if (st.UnsupportedClause is { } clause)
+            throw new NotSupportedException($"CREATE TABLE ... {clause} is not yet supported; no table was created.");
         RejectBareMember(st.Table);
 
         string path = TargetPath(st.Table);
@@ -62,11 +79,45 @@ internal sealed class DdlExecutor
 
         // DbfWriter.Create writes the .dbf (+ .fpt) and reopens it as a ready writer; close it
         // immediately — the new table is then resolved on disk by subsequent INSERT / SELECT.
-        using (DbfWriter.Create(path, defs))
+        using (DbfWriter.Create(path, defs, new DbfCreateOptions { CodePage = codePage }))
         {
         }
 
         return SqlResult.Dml(0);
+    }
+
+    private byte CreateCodePage(CreateTableStatement st)
+    {
+        if (st.CodePage is null) return 0x03;
+        var value = _session.DdlExpressionEvaluator is { } evaluate
+            ? evaluate(st.CodePage)
+            : st.CodePage.Evaluate(ConstantRow.Instance, _session.SqlContext());
+        if (value.Type is not (VfpType.Numeric or VfpType.Integer or VfpType.Currency))
+            throw new FoxDbfSqlException("Syntax error.") { VfpErrorNumber = 10 };
+
+        // VFP9 truncates fractional numeric values and uses these canonical language-driver
+        // bytes. Reader aliases (e.g. CP860/1255/1256) are NOT accepted by CREATE TABLE.
+        double cp = Math.Truncate(value.AsDouble);
+        return cp switch
+        {
+            0 => 0x00, 437 => 0x01, 850 => 0x02, 1252 => 0x03, 10000 => 0x04,
+            852 => 0x64, 866 => 0x65, 865 => 0x66, 861 => 0x67, 895 => 0x68,
+            620 => 0x69, 737 => 0x6a, 857 => 0x6b, 863 => 0x6c,
+            950 => 0x78, 949 => 0x79, 936 => 0x7a, 932 => 0x7b, 874 => 0x7c,
+            10007 => 0x96, 10029 => 0x97, 10006 => 0x98,
+            1250 => 0xc8, 1251 => 0xc9, 1254 => 0xca, 1253 => 0xcb, 1257 => 0xcc,
+            _ => throw new FoxDbfSqlException("Code page number is invalid.") { VfpErrorNumber = 1914 },
+        };
+    }
+
+    private sealed class ConstantRow : IRowContext
+    {
+        public static readonly ConstantRow Instance = new();
+        public int RecNo => 0;
+        public int RecCount => 0;
+        public bool Deleted => false;
+        public object? GetField(string name)
+            => throw new FoxDbfSqlException($"Variable '{name}' is not found.") { VfpErrorNumber = 12 };
     }
 
     /// <summary>Map a parsed VFP <see cref="ColumnDefinition"/> onto a Core <see cref="DbfColumnDef"/>.

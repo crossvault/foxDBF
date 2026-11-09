@@ -1455,7 +1455,17 @@ public sealed partial class VfpInterpreter
         DisposeAllCachedWriters();
         // An unparseable or failing statement raises (it used to be swallowed, leaving no table behind).
         var parsed = SafeParseSql(s.Sql) ?? ThrowSqlParseError(s.Sql);
-        Session.Execute(s.Sql);
+        var previous = Session.DdlExpressionEvaluator;
+        Session.DdlExpressionEvaluator = expression =>
+            ParseExpressionCached(MicroVfpExprRewrite.Normalize(expression.Text)).Evaluate(_row, _ctx);
+        try
+        {
+            Session.Execute(s.Sql);
+        }
+        finally
+        {
+            Session.DdlExpressionEvaluator = previous;
+        }
         // VFP opens a freshly CREATEd table in a work area; do the same so a follow-up USE/SELECT/field read works.
         if (parsed is CreateTableStatement cts) OpenCreatedTable(cts.Table);
     }

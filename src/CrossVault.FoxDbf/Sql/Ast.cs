@@ -214,11 +214,23 @@ public sealed record ColumnDefinition(
     int? Decimals,
     bool? Nullable);
 
-/// <summary><c>CREATE TABLE [db'!']name (col Type[(len[,dec])] [NULL|NOT NULL] [, ...])</c>.</summary>
+/// <summary><c>CREATE TABLE | DBF name [NAME longname | FREE] [CODEPAGE = expr] (...)</c>.</summary>
 public sealed record CreateTableStatement(
     string? Database,
     string Table,
-    IReadOnlyList<ColumnDefinition> Columns) : SqlStatement;
+    IReadOnlyList<ColumnDefinition> Columns) : SqlStatement
+{
+    /// <summary>Create a free table even when a database is current.</summary>
+    public bool Free { get; init; }
+    /// <summary>The requested logical name in the current database.</summary>
+    public string? LongName { get; init; }
+    /// <summary>Numeric VFP code page, not the DBF language-driver byte.</summary>
+    public VfpExpression? CodePage { get; init; }
+    /// <summary>A recognized clause whose semantics the DDL writer cannot yet preserve.</summary>
+    public string? UnsupportedClause { get; init; }
+    /// <summary>A constraint requiring a database-contained table in VFP9.</summary>
+    public bool RequiresDatabase { get; init; }
+}
 
 /// <summary>The kind of structural change one <c>ALTER TABLE</c> performs.</summary>
 public enum AlterTableActionKind { AddColumn, AlterColumn, DropColumn, RenameColumn }

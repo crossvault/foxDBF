@@ -986,24 +986,108 @@ public static class SqlParser
 
             var (db, table) = ParseDbTable();
 
-            if (Current.Kind != TokKind.LParen) throw Err("Expected '(' to open the column list.");
-            Advance();
+            string? longName = null;
+            bool free = false;
+            VfpExpression? codePage = null;
+            if (IsKw("NAME"))
+            {
+                Advance();
+                longName = ExpectName("a long table name");
+            }
+            else if (IsKw("FREE"))
+            {
+                Advance();
+                free = true;
+            }
+            if (IsKw("CODEPAGE"))
+            {
+                Advance();
+                if (Current.Kind != TokKind.Eq) throw CreateSyntaxError();
+                Advance();
+                codePage = ParseCreateCodePage();
+            }
+
+            string? unsupported = null;
+            bool requiresDatabase = false;
+            void RecordUnsupported(string clause)
+            {
+                unsupported ??= clause;
+                requiresDatabase |= clause is "PRIMARY" or "FOREIGN" or "REFERENCES" or "CHECK" or "DEFAULT";
+            }
 
             var cols = new List<ColumnDefinition>();
-            do { cols.Add(ParseColumnDefinition()); }
-            while (TryComma());
+            if (IsKw("FROM"))
+            {
+                Advance();
+                ExpectKw("ARRAY");
+                ExpectWord("an array name");
+                unsupported = "FROM ARRAY";
+            }
+            else
+            {
+                if (Current.Kind != TokKind.LParen) throw CreateSyntaxError();
+                Advance();
+                do
+                {
+                    if (IsKwAny("CHECK", "PRIMARY", "FOREIGN", "UNIQUE"))
+                    {
+                        RecordUnsupported(Current.Text.ToUpperInvariant());
+                        // Keep recognized table constraints visible to the executor; never create a
+                        // table whose rules or indexes were silently discarded.
+                        ScanRange(null, stopAtComma: false);
+                        break;
+                    }
+                    cols.Add(ParseColumnDefinition(RecordUnsupported));
+                }
+                while (TryComma());
+                if (Current.Kind != TokKind.RParen) throw CreateSyntaxError();
+                Advance();
+            }
 
-            if (Current.Kind != TokKind.RParen) throw Err("Expected ')' to close the column list.");
-            Advance();
+            // VFP9 places constraints INSIDE the column list. Text after ')' is error 36.
+            if (!AtEnd && Current.Kind != TokKind.Semicolon)
+                throw new FoxDbfSqlException("Command contains unrecognized phrase/keyword.", Current.Start)
+                    { VfpErrorNumber = 36 };
 
-            // Trailing options (NOCONSOLE / NAME longname / etc.) are accepted and ignored.
-            while (!AtEnd && Current.Kind != TokKind.Semicolon) Advance();
-
-            return new CreateTableStatement(db, table, cols);
+            return new CreateTableStatement(db, table, cols)
+            {
+                Free = free,
+                LongName = longName,
+                CodePage = codePage,
+                UnsupportedClause = unsupported,
+                RequiresDatabase = requiresDatabase,
+            };
         }
 
-        // colname Type[(len[,dec])] [NULL | NOT NULL] [other column constraints, ignored]
-        private ColumnDefinition ParseColumnDefinition()
+        private FoxDbfSqlException CreateSyntaxError()
+            => new("Syntax error.", Current.Start) { VfpErrorNumber = 10 };
+
+        private VfpExpression ParseCreateCodePage()
+        {
+            int start = _pos;
+            int depth = 0;
+            while (!AtEnd && Current.Kind != TokKind.Semicolon)
+            {
+                if (depth == 0)
+                {
+                    if (IsKwAny("FREE", "NAME", "CODEPAGE")) throw CreateSyntaxError();
+                    if (IsKw("FROM")) break;
+                    // A column declaration starts with name + type; parentheses belonging to
+                    // the numeric expression (including function calls) must stay in that expression.
+                    if (Current.Kind == TokKind.LParen && _pos > start &&
+                        Peek().Kind == TokKind.Word && Peek(2).Kind == TokKind.Word) break;
+                }
+                if (Current.Kind == TokKind.LParen) depth++;
+                if (Current.Kind == TokKind.RParen) depth--;
+                Advance();
+            }
+            if (_pos == start) throw CreateSyntaxError();
+            try { return BuildExpr(RangeText(start, _pos), _t[start].Start); }
+            catch (FoxDbfSqlException) { throw CreateSyntaxError(); }
+        }
+
+        // CREATE records unimplemented modifiers; ALTER retains its existing parsing contract.
+        private ColumnDefinition ParseColumnDefinition(Action<string>? unsupported = null)
         {
             string name = ExpectWord("a column name");
             string typeWord = ExpectWord("a column type");
@@ -1026,8 +1110,8 @@ public static class SqlParser
                 len = 8;
             }
 
-            // Scan the rest of this column's clause for NULL / NOT NULL, skipping (but tolerating) any
-            // other column constraints (DEFAULT expr, CHECK (expr), PRIMARY KEY, UNIQUE, ...). Stop at a
+            // Scan the rest of this column's clause for NULL / NOT NULL and report other column
+            // constraints to the CREATE caller (DEFAULT, CHECK, PRIMARY KEY, UNIQUE, ...). Stop at a
             // top-level comma (next column) or the closing ')' of the column list.
             bool? nullable = null;
             int depth = 0;
@@ -1047,8 +1131,10 @@ public static class SqlParser
                 {
                     Advance();
                     if (IsKw("NULL")) { Advance(); nullable = false; }
+                    else unsupported?.Invoke("NOT");
                     continue;
                 }
+                if (depth == 0) unsupported?.Invoke(t.Text.ToUpperInvariant());
                 Advance();
             }
 
