@@ -1202,6 +1202,13 @@ public sealed partial class VfpInterpreter
         int n = sum.Expressions.Count;
         var acc = new double[n];
         var counts = new int[n];
+        var means = new double[n];
+        var moments = new double[n];
+        var minima = new double[n];
+        var maxima = new double[n];
+        var sawNull = new bool[n];
+        var schema = new SelectExecutor.TableSchema(wa.Table, wa.Alias);
+        var types = sum.Expressions.Select(e => e.Parsed?.InferType(schema) ?? default).ToArray();
         int start = kind == LocScope.All ? 0 : CurrentIndex(order, m);
         if (kind == LocScope.Record)
         {
@@ -1222,7 +1229,19 @@ public sealed partial class VfpInterpreter
                 for (int k = 0; k < n; k++)
                 {
                     var v = Eval(sum.Expressions[k]);
-                    if (!v.IsNull) { acc[k] += v.AsDouble; counts[k]++; }
+                    if (v.IsNull) { sawNull[k] = true; continue; }
+                    double value = v.AsDouble;
+                    acc[k] += value;
+                    counts[k]++;
+                    if (sum.CalculateFunctions is not null)
+                    {
+                        minima[k] = counts[k] == 1 ? value : Math.Min(minima[k], value);
+                        maxima[k] = counts[k] == 1 ? value : Math.Max(maxima[k], value);
+                        // Welford's population variance avoids cancelling two large squared sums.
+                        double delta = value - means[k];
+                        means[k] += delta / counts[k];
+                        moments[k] += delta * (value - means[k]);
+                    }
                 }
             }
             if (--remaining == 0) stopped = true;
@@ -1235,7 +1254,30 @@ public sealed partial class VfpInterpreter
         }
         RepositionChildren(area);
         for (int k = 0; k < sum.To.Count && k < n; k++)
-            AssignTo(sum.To[k], VfpValue.Number(sum.Average && counts[k] > 0 ? acc[k] / counts[k] : acc[k]));
+        {
+            string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
+            bool currency = types[k].Type == VfpType.Currency && function is not ("CNT" or "STD" or "VAR");
+            double result = function switch
+            {
+                "AVG" => counts[k] > 0 ? acc[k] / counts[k] : 0,
+                "CNT" => counts[k],
+                "STD" => counts[k] > 0 ? Math.Sqrt(Math.Max(0, moments[k] / counts[k])) : 0,
+                "VAR" => counts[k] > 0 ? Math.Max(0, moments[k] / counts[k]) : 0,
+                "MIN" => minima[k],
+                "MAX" => maxima[k],
+                _ => acc[k]
+            };
+            // VFP9 CALCULATE AVG on an empty/all-NULL currency input returns this currency
+            // sentinel; AVERAGE returns zero. Keep the observed distinction, including its type.
+            if (currency && function == "AVG" && sum.CalculateFunctions is not null && counts[k] == 0)
+                result = 429496.7295;
+            int decimals = sum.CalculateFunctions is not null ? _ctx.NumericDecimals
+                : sum.Average ? Math.Max(_ctx.NumericDecimals, types[k].Decimals) : types[k].Decimals;
+            var value = currency ? VfpValue.Currency(Math.Round((decimal)result, 4, MidpointRounding.AwayFromZero))
+                : VfpValue.Number(result).WithDisplayDecimals(decimals);
+            if (function is "MIN" or "MAX" && counts[k] == 0 && sawNull[k]) value = VfpValue.Null;
+            AssignTo(sum.To[k], value);
+        }
     }
 
     // ─────────────────────────── P2 table/record movers + whole-table I/O ───────────────────────────

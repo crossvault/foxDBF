@@ -8,6 +8,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- microVFP `SUM` and `AVERAGE` retain VFP9 numeric display precision and currency results.
+  `CALCULATE AVG/SUM/STD/VAR/CNT/MIN/MAX` supports scoped aggregation into variables, including
+  VFP9 empty and NULL-input results. `TRANSFORM` preserves aggregate scale across assignments;
+  `STR()` defaults remain unchanged. `SET DECIMALS` also supplies the default scale of new Double fields.
 - BREAKING: microVFP `SUM` now treats leading `REST` and `RECORD` as VFP9 scope keywords,
   including VFP9 syntax errors when `TO` has no expression; qualify or parenthesize fields
   with these names. `SUM` and `AVERAGE` preserve scope words inside expressions and support

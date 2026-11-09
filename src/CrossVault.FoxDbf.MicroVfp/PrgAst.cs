@@ -325,7 +325,8 @@ internal sealed record SumStmt(
     PrgExpr? For,
     PrgExpr? While,
     IReadOnlyList<string> To,
-    bool Average = false) : PrgStatement;
+    bool Average = false,
+    IReadOnlyList<string>? CalculateFunctions = null) : PrgStatement;
 
 internal sealed record UnlockStmt(bool All, NameRef? Record, NameRef? In) : PrgStatement;
 

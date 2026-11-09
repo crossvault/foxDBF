@@ -37,15 +37,17 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     private readonly bool _isExact;   // numeric uses _dec when true
     private readonly string? _str;
     private readonly bool _isBinary;
+    private readonly byte _displayDecimalsPlusOne;
     private readonly bool _bool;
     private readonly System.DateTime _date; // date + datetime payload
 
     private VfpValue(VfpType type, double num, decimal dec, bool isExact,
-                     string? str, bool b, System.DateTime date, bool isBinary = false)
+                     string? str, bool b, System.DateTime date, bool isBinary = false, byte displayDecimalsPlusOne = 0)
     {
         _type = type; _num = num; _dec = dec; _isExact = isExact;
         _str = str; _bool = b; _date = date;
         _isBinary = isBinary;
+        _displayDecimalsPlusOne = displayDecimalsPlusOne;
     }
 
     /// <summary>The value's VFP type tag.</summary>
@@ -56,6 +58,12 @@ public readonly struct VfpValue : IEquatable<VfpValue>
 
     /// <summary>A byte-preserving VFP varbinary value (TYPE/VARTYPE Q).</summary>
     public bool IsBinary => _isBinary;
+
+    // Display precision belongs to the numeric value, not its magnitude. Aggregates retain
+    // it across assignment and later SET DECIMALS changes without rounding their payload.
+    internal int DisplayDecimals => _displayDecimalsPlusOne - 1;
+    internal VfpValue WithDisplayDecimals(int decimals) => new(_type, _num, _dec, _isExact,
+        _str, _bool, _date, _isBinary, (byte)(Math.Clamp(decimals, 0, 18) + 1));
 
     public static VfpValue Varbinary(byte[] bytes) =>
         new(VfpType.Character, 0d, 0m, false, System.Text.Encoding.Latin1.GetString(bytes), false, default, isBinary: true);

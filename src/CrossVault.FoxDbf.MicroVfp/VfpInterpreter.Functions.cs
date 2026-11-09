@@ -426,6 +426,7 @@ public sealed partial class VfpInterpreter
         if (a.Length == 0) return VfpValue.Character(string.Empty);
         return a[0].AsString.ToUpperInvariant() switch
         {
+            "DECIMALS" => VfpValue.Integer(_ctx.NumericDecimals),
             "REPROCESS" => VfpValue.Character(Runtime.Reprocess == -2 ? "AUTOMATIC" : Runtime.Reprocess.ToString(CultureInfo.InvariantCulture)),
             "EXACT" => VfpValue.Character(_ctx.Exact ? "ON" : "OFF"),
             "DELETED" => VfpValue.Character(_ctx.Deleted ? "ON" : "OFF"),

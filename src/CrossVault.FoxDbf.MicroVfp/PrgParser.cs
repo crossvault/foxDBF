@@ -683,7 +683,7 @@ public static class PrgParser
                 "RENAME" => BuildRename(text),
                 "CREATE" => BuildCreate(text),
                 "FLUSH" => BuildFlush(text),
-                "SUM" or "AVERAGE" => BuildSum(text),
+                "SUM" or "AVERAGE" or "CALCULATE" => BuildSum(text),
                 "COUNT" => BuildCount(text),
                 "THROW" => new ThrowStmt(PrgScan.AfterFirstWord(text).Trim() is { Length: > 0 } tv ? PrgExpr.Parse(tv) : null),
                 "CLEAR" => BuildClear(text),
@@ -1516,7 +1516,23 @@ public static class PrgParser
             }
             // With TO but no expression, VFP reports syntax error after scope positioning.
             if (exprs.Count == 0 && targets.Count > 0) exprs.Add(PrgExpr.Parse(""));
-            return new SumStmt(exprs, scope, forE, whileE, targets, PrgScan.FirstWord(text) == "AVERAGE");
+            List<string>? functions = null;
+            if (PrgScan.FirstWord(text) == "CALCULATE")
+            {
+                functions = new List<string>();
+                for (int i = 0; i < exprs.Count; i++)
+                {
+                    string expression = exprs[i].Text.Trim();
+                    int open = expression.IndexOf('(');
+                    string name = open < 0 ? "" : expression[..open].Trim().ToUpperInvariant();
+                    if (name is not ("AVG" or "SUM" or "STD" or "VAR" or "CNT" or "MIN" or "MAX") || !expression.EndsWith(')'))
+                        throw new MicroVfpRuntimeException("Syntax error.", 10);
+                    string argument = expression[(open + 1)..^1].Trim();
+                    functions.Add(name);
+                    exprs[i] = PrgExpr.Parse(name == "CNT" && argument.Length == 0 ? "1" : argument);
+                }
+            }
+            return new SumStmt(exprs, scope, forE, whileE, targets, PrgScan.FirstWord(text) == "AVERAGE", functions);
         }
 
         // COUNT [Scope] [FOR lExpr] [WHILE lExpr] TO VarName [NOOPTIMIZE] — the clauses may come in any order

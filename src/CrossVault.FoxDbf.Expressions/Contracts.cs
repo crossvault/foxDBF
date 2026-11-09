@@ -92,6 +92,9 @@ public interface IVfpCollation
 /// </summary>
 public sealed class EvaluationContext
 {
+    // SET DECIMALS controls aggregate precision and the default descriptor scale of Double fields.
+    internal int NumericDecimals { get; set; } = 2;
+
     /// <summary>SET EXACT. VFP default is OFF (<c>false</c>).</summary>
     public bool Exact { get; set; }
 

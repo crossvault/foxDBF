@@ -87,7 +87,7 @@ public sealed partial class VfpInterpreter
     }
 
     /// <summary>The default (format-less) TRANSFORM/TEXTMERGE stringification of a value.</summary>
-    private static string TransformNoFormat(VfpValue v) => v.Type switch
+    private string TransformNoFormat(VfpValue v) => v.Type switch
     {
         VfpType.Character => v.IsBinary ? Convert.ToHexString(Encoding.Latin1.GetBytes(v.AsString)) : v.AsString,
         // VFP9 (runtime-verified): the format-less TRANSFORM of a logical is the ".T."/".F." literal, NOT "T"/"F".
@@ -98,7 +98,11 @@ public sealed partial class VfpInterpreter
         // SQL cursor overflow remains numeric; VFP's default TRANSFORM renders ten stars.
         VfpType.Numeric when double.IsNaN(v.AsDouble) => new string('*', 11),
         VfpType.Numeric when double.IsInfinity(v.AsDouble) => new string('*', 10),
-        VfpType.Numeric or VfpType.Integer or VfpType.Currency => NumberToPlainString(v.AsNumber),
+        VfpType.Currency => (v.AsNumber < 0 ? "-$" : "$")
+            + Math.Round(Math.Abs(v.AsNumber), _ctx.NumericDecimals, MidpointRounding.AwayFromZero).ToString("N" + _ctx.NumericDecimals, CultureInfo.InvariantCulture),
+        VfpType.Numeric when v.DisplayDecimals >= 0 && v.AsNumber != decimal.Truncate(v.AsNumber)
+            => Math.Round(v.AsNumber, v.DisplayDecimals, MidpointRounding.AwayFromZero).ToString("F" + v.DisplayDecimals, CultureInfo.InvariantCulture),
+        VfpType.Numeric or VfpType.Integer => NumberToPlainString(v.AsNumber),
         _ => v.ToString(),
     };
 

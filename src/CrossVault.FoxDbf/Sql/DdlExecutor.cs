@@ -315,10 +315,10 @@ internal sealed class DdlExecutor
     /// behaviour (verified against the VFP9 runtime): Currency (<c>Y</c>) always stores <c>4</c>; Double
     /// (<c>B</c>) stores the ambient <c>SET DECIMALS</c> (VFP default <c>2</c>) when the syntax
     /// states none; every other type keeps the stated decimals (or <c>0</c>).</summary>
-    private static int DefaultDecimals(char type, int? stated) => type switch
+    private int DefaultDecimals(char type, int? stated) => type switch
     {
         'Y' => 4,             // Currency: VFP writes a fixed 4 to the descriptor.
-        'B' => stated ?? 2,   // Double: VFP writes SET DECIMALS (default 2) when unspecified.
+        'B' => stated ?? _session.Context.NumericDecimals,
         _ => stated ?? 0,
     };
 

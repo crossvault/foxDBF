@@ -976,6 +976,11 @@ public sealed partial class VfpInterpreter
         string arg = set.Arguments.Trim();
         switch (set.Setting)
         {
+            case "DECIMALS":
+                int decimals = EvalTextLoud(arg.StartsWith("TO ", StringComparison.OrdinalIgnoreCase) ? arg[3..] : arg).AsInteger;
+                if (decimals is < 0 or > 18) throw new MicroVfpRuntimeException("Syntax error.", 10);
+                _ctx.NumericDecimals = decimals;
+                break;
             case "DATE": Session.ImportDateFormat = (arg.StartsWith("TO ", StringComparison.OrdinalIgnoreCase) ? arg[3..].Trim() : arg).ToUpperInvariant(); break;
             case "CENTURY": SetImportCentury(arg); break;
             case "AUTOINCERROR": Session.ImportAutoIncError = OnOff(arg); break;
@@ -1258,7 +1263,7 @@ public sealed partial class VfpInterpreter
                     return property;
                 if (_requireDmlNames && !Memory.IsDefined(rest))
                     throw new MicroVfpRuntimeException($"Variable '{rest.ToUpperInvariant()}' is not found.", 12);
-                return Memory.Get(rest).ToClr();
+                return Memory.Get(rest);
             }
             var wa = Session.FindAreaByAlias(head);
             if (wa is not null)
@@ -1287,9 +1292,11 @@ public sealed partial class VfpInterpreter
             return cur is not null ? ReadField(cur, name) : null;
         }
         // A bare ARRAY name in scalar context = element (1,1)/(1), per VFP.
-        if (Memory.FindArray(name) is { } arr) return arr.First.ToClr();
-        if (Memory.IsDefined(name)) return Memory.Get(name).ToClr();
-        if (_defines.TryGetValue(name, out var d)) return d.ToClr();
+        // Expression evaluation accepts VfpValue directly. A CLR round trip loses currency
+        // identity and aggregate display decimals even for a simple TRANSFORM(memvar).
+        if (Memory.FindArray(name) is { } arr) return arr.First;
+        if (Memory.IsDefined(name)) return Memory.Get(name);
+        if (_defines.TryGetValue(name, out var d)) return d;
         if (_requireDmlNames)
             throw new MicroVfpRuntimeException($"Variable '{name.ToUpperInvariant()}' is not found.", 12);
         return null;
