@@ -1456,6 +1456,17 @@ public sealed partial class VfpInterpreter
         // An unparseable or failing statement raises (it used to be swallowed, leaving no table behind).
         var parsed = SafeParseSql(s.Sql) ?? ThrowSqlParseError(s.Sql);
         var previous = Session.DdlExpressionEvaluator;
+        var previousArray = Session.DdlArrayResolver;
+        Session.DdlArrayResolver = name =>
+        {
+            var array = Memory.FindArray(name);
+            if (array is null) return null;
+            var values = new VfpValue[array.Rows, array.Cols];
+            for (int row = 0; row < array.Rows; row++)
+                for (int col = 0; col < array.Cols; col++)
+                    values[row, col] = array.Get(row + 1, col + 1);
+            return values;
+        };
         Session.DdlExpressionEvaluator = expression =>
             ParseExpressionCached(MicroVfpExprRewrite.Normalize(expression.Text)).Evaluate(_row, _ctx);
         try
@@ -1465,6 +1476,7 @@ public sealed partial class VfpInterpreter
         finally
         {
             Session.DdlExpressionEvaluator = previous;
+            Session.DdlArrayResolver = previousArray;
         }
         // VFP opens a freshly CREATEd table in a work area; do the same so a follow-up USE/SELECT/field read works.
         if (parsed is CreateTableStatement cts) OpenCreatedTable(cts.Table);

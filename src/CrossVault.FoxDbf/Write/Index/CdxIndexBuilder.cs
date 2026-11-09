@@ -366,12 +366,18 @@ internal static class CdxIndexBuilder
 
             entries.Sort(EntryComparer.Instance);
 
+            if (def.Candidate)
+                for (int i = 1; i < entries.Count; i++)
+                    if (entries[i - 1].Key.AsSpan().SequenceEqual(entries[i].Key))
+                        throw new DbfWriteException($"Uniqueness of index '{def.Name}' is violated.", 1884);
+
             if (def.Unique)
                 entries = DropDuplicateKeys(entries);
         }
 
         byte options = standalone ? (byte)0x20 : (byte)0x60; // [compound |] compact
         if (def.Unique) options |= 0x01;
+        if (def.Candidate) options |= 0x04;
         if (hasFor) options |= 0x08;
 
         // Tag signature (byte 15): 0x01 for an IDENTITY/MACHINE collation, 0x02 only for a real

@@ -1007,21 +1007,14 @@ public static class SqlParser
                 codePage = ParseCreateCodePage();
             }
 
-            string? unsupported = null;
-            bool requiresDatabase = false;
-            void RecordUnsupported(string clause)
-            {
-                unsupported ??= clause;
-                requiresDatabase |= clause is "PRIMARY" or "FOREIGN" or "REFERENCES" or "CHECK" or "DEFAULT";
-            }
-
+            string? fromArray = null, check = null, error = null;
+            var keys = new List<CreateTableKey>();
             var cols = new List<ColumnDefinition>();
             if (IsKw("FROM"))
             {
                 Advance();
                 ExpectKw("ARRAY");
-                ExpectWord("an array name");
-                unsupported = "FROM ARRAY";
+                fromArray = ExpectWord("an array name");
             }
             else
             {
@@ -1029,15 +1022,16 @@ public static class SqlParser
                 Advance();
                 do
                 {
-                    if (IsKwAny("CHECK", "PRIMARY", "FOREIGN", "UNIQUE"))
+                    if (IsKw("CHECK"))
                     {
-                        RecordUnsupported(Current.Text.ToUpperInvariant());
-                        // Keep recognized table constraints visible to the executor; never create a
-                        // table whose rules or indexes were silently discarded.
-                        ScanRange(null, stopAtComma: false);
-                        break;
+                        Advance();
+                        check = ReadCreateExpression("ERROR");
+                        if (IsKw("ERROR")) { Advance(); error = ReadCreateExpression(); }
                     }
-                    cols.Add(ParseColumnDefinition(RecordUnsupported));
+                    else if (IsKwAny("PRIMARY", "FOREIGN", "UNIQUE"))
+                        keys.Add(ParseCreateKey(null));
+                    else
+                        cols.Add(ParseColumnDefinition(keys));
                 }
                 while (TryComma());
                 if (Current.Kind != TokKind.RParen) throw CreateSyntaxError();
@@ -1054,8 +1048,12 @@ public static class SqlParser
                 Free = free,
                 LongName = longName,
                 CodePage = codePage,
-                UnsupportedClause = unsupported,
-                RequiresDatabase = requiresDatabase,
+                FromArray = fromArray,
+                Keys = keys,
+                Check = check,
+                Error = error,
+                RequiresDatabase = check is not null || keys.Any(k => k.Kind != "UNIQUE") ||
+                    cols.Any(c => c.Default is not null || c.Check is not null),
             };
         }
 
@@ -1086,13 +1084,45 @@ public static class SqlParser
             catch (FoxDbfSqlException) { throw CreateSyntaxError(); }
         }
 
-        // CREATE records unimplemented modifiers; ALTER retains its existing parsing contract.
-        private ColumnDefinition ParseColumnDefinition(Action<string>? unsupported = null)
+        private string ReadCreateExpression(params string[] stops)
+        {
+            int start = _pos, depth = 0;
+            while (!AtEnd)
+            {
+                if (depth == 0 && (Current.Kind is TokKind.Comma or TokKind.RParen or TokKind.Semicolon ||
+                    stops.Any(IsKw))) break;
+                if (Current.Kind == TokKind.LParen) depth++;
+                if (Current.Kind == TokKind.RParen) depth--;
+                Advance();
+            }
+            if (_pos == start) throw CreateSyntaxError();
+            return RangeText(start, _pos).Trim();
+        }
+
+        private CreateTableKey ParseCreateKey(string? field)
+        {
+            string kind = Current.Text.ToUpperInvariant();
+            Advance();
+            if (kind is "PRIMARY" or "FOREIGN") ExpectKw("KEY");
+            string expression = field ?? ReadCreateExpression("TAG", "REFERENCES");
+            string tag = field ?? "";
+            if (IsKw("TAG")) { Advance(); tag = ExpectWord("a tag name"); }
+            if (tag.Length == 0) throw CreateSyntaxError();
+            string? parent = null, parentTag = null;
+            if (kind == "REFERENCES" || IsKw("REFERENCES"))
+            {
+                if (kind != "REFERENCES") Advance();
+                parent = ExpectName("a referenced table");
+                if (IsKw("TAG")) { Advance(); parentTag = ExpectWord("a referenced tag"); }
+            }
+            return new CreateTableKey(kind, expression, tag, parent, parentTag);
+        }
+
+        private ColumnDefinition ParseColumnDefinition(List<CreateTableKey>? keys = null)
         {
             string name = ExpectWord("a column name");
             string typeWord = ExpectWord("a column type");
             char type = char.ToUpperInvariant(typeWord[0]);
-
             int? len = null, dec = null;
             if (Current.Kind == TokKind.LParen)
             {
@@ -1102,43 +1132,45 @@ public static class SqlParser
                 if (Current.Kind != TokKind.RParen) throw Err("Expected ')' after the column length.");
                 Advance();
             }
-
-            // B(n) specifies decimal places, not the fixed eight-byte storage width.
-            if (type == 'B' && len is not null && dec is null)
-            {
-                dec = len;
-                len = 8;
-            }
-
-            // Scan the rest of this column's clause for NULL / NOT NULL and report other column
-            // constraints to the CREATE caller (DEFAULT, CHECK, PRIMARY KEY, UNIQUE, ...). Stop at a
-            // top-level comma (next column) or the closing ')' of the column list.
+            if (type == 'B' && len is not null && dec is null) { dec = len; len = 8; }
             bool? nullable = null;
-            int depth = 0;
-            while (!AtEnd)
+            bool binary = false;
+            Write.DbfAutoIncrement? auto = null;
+            string? def = null, check = null, error = null;
+            string[] modifiers = ["NULL", "NOT", "DEFAULT", "CHECK", "ERROR", "PRIMARY", "UNIQUE", "REFERENCES", "AUTOINC", "NOCPTRANS"];
+            while (!AtEnd && Current.Kind is not (TokKind.Comma or TokKind.RParen or TokKind.Semicolon))
             {
-                var t = Current;
-                if (t.Kind == TokKind.LParen) { depth++; Advance(); continue; }
-                if (t.Kind == TokKind.RParen)
+                if (IsKw("NULL")) { nullable = true; Advance(); }
+                else if (IsKw("NOT")) { Advance(); ExpectKw("NULL"); nullable = false; }
+                else if (IsKw("NOCPTRANS")) { Advance(); binary = true; }
+                else if (IsKw("DEFAULT")) { Advance(); def = ReadCreateExpression(modifiers); }
+                else if (IsKw("CHECK")) { Advance(); check = ReadCreateExpression(modifiers); }
+                else if (IsKw("ERROR")) { Advance(); error = ReadCreateExpression(modifiers); }
+                else if (IsKwAny("PRIMARY", "UNIQUE", "REFERENCES"))
                 {
-                    if (depth == 0) break;
-                    depth--; Advance(); continue;
+                    var key = ParseCreateKey(name);
+                    keys?.Add(key);
                 }
-                if (depth == 0 && t.Kind == TokKind.Comma) break;
-                if (depth == 0 && t.Kind == TokKind.Semicolon) break;
-                if (depth == 0 && IsKw("NULL")) { nullable = true; Advance(); continue; }
-                if (depth == 0 && IsKw("NOT"))
+                else if (IsKw("AUTOINC"))
                 {
                     Advance();
-                    if (IsKw("NULL")) { Advance(); nullable = false; }
-                    else unsupported?.Invoke("NOT");
-                    continue;
+                    int next = 1, step = 1;
+                    if (IsKw("NEXTVALUE"))
+                    {
+                        Advance();
+                        bool negative = Current.Text == "-";
+                        if (negative) Advance();
+                        next = ExpectInt("an autoincrement seed");
+                        if (negative) next = -next;
+                    }
+                    if (IsKw("STEP")) { Advance(); step = ExpectInt("an autoincrement step"); }
+                    if (step is < 1 or > 255) throw CreateSyntaxError();
+                    auto = new Write.DbfAutoIncrement(unchecked((uint)next), checked((byte)step));
                 }
-                if (depth == 0) unsupported?.Invoke(t.Text.ToUpperInvariant());
-                Advance();
+                else throw CreateSyntaxError();
             }
-
-            return new ColumnDefinition(name, type, len, dec, nullable);
+            return new ColumnDefinition(name, type, len, dec, nullable)
+                { NoCpTrans = binary, AutoIncrement = auto, Default = def, Check = check, Error = error };
         }
 
         // =================================================================

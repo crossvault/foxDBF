@@ -73,9 +73,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - BREAKING: `CREATE TABLE` no longer silently ignores constraints or trailing clauses, or creates
   an unregistered free table while a database is current. `NAME` without a current database,
   `NAME` with `FREE`, invalid clause order and database-only constraints on free tables raise
-  the corresponding VFP9 errors. DBC member registration, `FROM ARRAY`, candidate indexes via
-  `UNIQUE`, `AUTOINC` and `NOCPTRANS` in CREATE declarations explicitly report not supported
-  before writing files. Use `FREE` to create a free table with a current database.
+  the corresponding VFP9 errors. CREATE now registers tables in the current DBC, including `NAME`,
+  long field names, backlinks, DEFAULT/CHECK/ERROR properties, primary/candidate tags and REFERENCES
+  relationships. `FREE` explicitly bypasses membership. Candidate keys reject duplicate inserts and
+  updates after reopening; ADO.NET rollback restores the DBC, its memo and its index together.
+- `CREATE TABLE` / `CREATE DBF` accept AFIELDS-style microVFP arrays with 4–18 columns, including
+  field rules, table properties and autoincrement seeds. Declarations support `AUTOINC NEXTVALUE ...
+  STEP ...` and `NOCPTRANS`, with VFP9 descriptor bytes and validation errors.
 
 - microVFP `FILETOSTR()` reads a file the session holds open, such as a used table, as VFP9 does;
   it used to fail with error 1.

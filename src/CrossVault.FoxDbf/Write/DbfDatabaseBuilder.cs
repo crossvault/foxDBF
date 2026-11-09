@@ -62,6 +62,74 @@ public sealed record DbcCreateOptions
 /// </summary>
 public static class DbfDatabaseBuilder
 {
+    // CREATE TABLE uses the same record/property encoding as CREATE DATABASE. Append to the
+    // existing container: rebuilding it would discard procedures, views, RI and user properties.
+    internal static void AddTable(string dbcPath, string tableName, string relativePath,
+        IReadOnlyList<Sql.ColumnDefinition> columns, IReadOnlyList<Sql.CreateTableKey> keys,
+        string? check, string? error, string? insertTrigger, string? updateTrigger,
+        string? deleteTrigger, string? comment)
+    {
+        using (var writer = DbfWriter.Open(dbcPath,
+                   new DbfOptions { LockMode = LockMode.Exclusive, MemoPath = SidecarFile.ChangeExtension(dbcPath, ".dct") }))
+        {
+            var enc = writer.Schema.Encoding;
+            int nextId = writer.Schema.EnumerateAll(includeDeleted: true)
+                .Select(r => Convert.ToInt32(r["OBJECTID"])).DefaultIfEmpty(0).Max() + 1;
+            byte[] Properties(params (byte Id, string? Value)[] values)
+                => values.Where(v => v.Value is not null)
+                    .SelectMany(v => Property(v.Id, enc.GetBytes(v.Value! + "\0"))).ToArray();
+            int tableId = nextId++;
+            var tableProperties = TablePropertyBlob(relativePath.ToLowerInvariant(), enc);
+            int tableRecord = writer.RecordCount;
+            writer.AppendRecord(tableId, 1, "Table", tableName.ToLowerInvariant(), tableProperties, null, null, null);
+            foreach (var entry in new (byte Id, string? Value)[]
+                { (9, check), (10, error), (14, insertTrigger), (15, updateTrigger), (16, deleteTrigger), (7, comment) })
+            {
+                if (entry.Value is null) continue;
+                tableProperties = tableProperties.Concat(Properties(entry)).ToArray();
+                writer.ReplaceContainerProperty(tableRecord, tableProperties);
+            }
+            foreach (var column in columns)
+            {
+                int fieldRecord = writer.RecordCount;
+                writer.AppendRecord(nextId++, tableId, "Field", column.Name.ToLowerInvariant(), null, null, null, null);
+                byte[] properties = [];
+                foreach (var entry in new (byte Id, string? Value)[] { (11, column.Default), (9, column.Check), (10, column.Error) })
+                {
+                    if (entry.Value is null) continue;
+                    properties = properties.Concat(Properties(entry)).ToArray();
+                    writer.ReplaceContainerProperty(fieldRecord, properties);
+                }
+            }
+            foreach (var key in keys)
+            {
+                writer.AppendRecord(nextId++, tableId, "Index", key.Tag.ToLowerInvariant(),
+                    Property(17, [(byte)(key.Kind is "PRIMARY" or "UNIQUE" ? 1 : 0)]), null, null, null);
+                // VFP assigns PrimaryKey after creating its Index object. A PROPERTY that
+                // outgrows its current memo block relocates at this point (the old block remains).
+                if (key.Kind == "PRIMARY")
+                    writer.ReplaceContainerProperty(tableRecord,
+                        tableProperties.Concat(Properties((20, key.Tag.ToLowerInvariant()))).ToArray());
+            }
+            int relation = 0;
+            foreach (var key in keys.Where(k => k.ReferencedTable is not null))
+                writer.AppendRecord(nextId++, tableId, "Relation", $"Relation {++relation}",
+                    Properties((13, key.Tag.ToLowerInvariant()), (18, key.ReferencedTable!.ToLowerInvariant()),
+                        (19, key.ReferencedTag?.ToLowerInvariant())), null, null, null);
+        }
+        BuildStructuralDcx(dbcPath);
+    }
+
+    private static byte[] Property(byte id, byte[] value)
+    {
+        var bytes = new byte[7 + value.Length];
+        BinaryPrimitives.WriteInt32LittleEndian(bytes, bytes.Length);
+        bytes[4] = 1;
+        bytes[6] = id;
+        value.CopyTo(bytes, 7);
+        return bytes;
+    }
+
     /// <summary>
     /// Build the container at <paramref name="dbcPath"/> with the given member <paramref name="tables"/>
     /// (plan §D6). Creates each member <c>.dbf</c> via <see cref="DbfWriter.Create(string, System.Collections.Generic.IEnumerable{DbfColumnDef}, DbfCreateOptions)"/>

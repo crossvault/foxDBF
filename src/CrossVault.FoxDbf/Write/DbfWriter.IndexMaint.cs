@@ -44,6 +44,36 @@ public sealed partial class DbfWriter
         Update,
     }
 
+    private void ValidateCandidateKeys(int recNo, DbfRecord record, DbfRecord? previous = null)
+    {
+        if (_cdxMaintPlans is null || _cdxMaintEditor is null) return;
+        foreach (var (tag, computer) in _cdxMaintPlans)
+        {
+            if (!tag.Header.IsCandidate || !computer.TryComputeKey(record, recNo, _recordCount, out var key)) continue;
+            // Updating a row without changing its key must not collide with that row's own entry.
+            if (previous is { } old && computer.TryComputeKey(old, recNo, _recordCount, out var oldKey)
+                && key.AsSpan().SequenceEqual(oldKey)) continue;
+            if (_cdxMaintEditor.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
+                throw new DbfWriteException($"Uniqueness of index '{tag.Name}' is violated.", 1884);
+        }
+    }
+
+    private void ValidateCandidateBatch(IReadOnlyList<(int RecNo, byte[] Record)> records, int finalCount)
+    {
+        foreach (var (tag, computer) in _cdxMaintPlans!)
+        {
+            if (!tag.Header.IsCandidate) continue;
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (recNo, bytes) in records)
+            {
+                if (!computer.TryComputeKey(new DbfRecord(_schema, bytes), recNo, finalCount, out var key)) continue;
+                if (!keys.Add(Convert.ToHexString(key)) ||
+                    _cdxMaintEditor!.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
+                    throw new DbfWriteException($"Uniqueness of index '{tag.Name}' is violated.", 1884);
+            }
+        }
+    }
+
     internal int CdxAppendPageCachePageCountForTests
         => _cdxMaintEditor?.AppendPageCachePageCountForTests ?? 0;
 
@@ -413,7 +443,7 @@ public sealed partial class DbfWriter
             // be mistaken for derivable just because its width happens to match.
             if (IndexExpressionSupported(hdr.KeyExpression) && IndexExpressionSupported(forExpr))
             {
-                var def = new CdxTagDefinition(tag.Name, hdr.KeyExpression, forExpr, hdr.Descending, hdr.SortOrder, hdr.IsUnique);
+                var def = new CdxTagDefinition(tag.Name, hdr.KeyExpression, forExpr, hdr.Descending, hdr.SortOrder, hdr.IsUnique) { Candidate = hdr.IsCandidate };
 
                 // No ambient EvaluationContext on the raw write path → VFP-neutral defaults (EXACT/ANSI OFF), the
                 // same defaults the bulk builder uses when CreateTag/Reindex run without a context.

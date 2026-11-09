@@ -594,8 +594,9 @@ public sealed partial class DbfWriter : IDisposable
             }
 
             byte[] record = RecordEncoder.Encode(_schema, positional, deleted: false, blankWhenNull);
-            using var mutation = BeginIndexMutation(dataOffset, append: true);
             PatchMemoPointers(record, positional);
+            ValidateCandidateKeys(newCount, new DbfRecord(_schema, record));
+            using var mutation = BeginIndexMutation(dataOffset, append: true);
 
             // Write the row (overwriting any pre-existing EOF byte), the fresh EOF, and pin the
             // exact file length so no stale trailing bytes survive.
@@ -707,7 +708,6 @@ public sealed partial class DbfWriter : IDisposable
 
             byte[] record = RecordEncoder.Encode(_schema, toEncode, deleted: false);
             record[0] = deletionMarker;
-            using var mutation = BeginIndexMutation(offset, append: false, before: existing);
             PatchMemoPointers(record, toEncode);
 
             if (hasKeep && existing is not null)
@@ -723,6 +723,9 @@ public sealed partial class DbfWriter : IDisposable
                 }
             }
 
+            ValidateCandidateKeys(index + 1, new DbfRecord(_schema, record),
+                existing is null ? null : new DbfRecord(_schema, existing));
+            using var mutation = BeginIndexMutation(offset, append: false, before: existing);
             _stream.Seek(offset, SeekOrigin.Begin);
             _stream.Write(record, 0, record.Length);
             writtenRecord = record;   // the exact bytes just written — reused for index maintenance

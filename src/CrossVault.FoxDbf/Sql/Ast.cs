@@ -212,7 +212,23 @@ public sealed record ColumnDefinition(
     char Type,
     int? Length,
     int? Decimals,
-    bool? Nullable);
+    bool? Nullable)
+{
+    /// <summary>Suppress code-page translation for character and memo storage.</summary>
+    public bool NoCpTrans { get; init; }
+    /// <summary>Integer autoincrement seed and step.</summary>
+    public Write.DbfAutoIncrement? AutoIncrement { get; init; }
+    /// <summary>Stored field default expression.</summary>
+    public string? Default { get; init; }
+    /// <summary>Stored field validation expression.</summary>
+    public string? Check { get; init; }
+    /// <summary>Stored validation error expression.</summary>
+    public string? Error { get; init; }
+}
+
+/// <summary>A CREATE-time index or persistent relationship.</summary>
+public sealed record CreateTableKey(string Kind, string Expression, string Tag,
+    string? ReferencedTable = null, string? ReferencedTag = null);
 
 /// <summary><c>CREATE TABLE | DBF name [NAME longname | FREE] [CODEPAGE = expr] (...)</c>.</summary>
 public sealed record CreateTableStatement(
@@ -226,10 +242,24 @@ public sealed record CreateTableStatement(
     public string? LongName { get; init; }
     /// <summary>Numeric VFP code page, not the DBF language-driver byte.</summary>
     public VfpExpression? CodePage { get; init; }
-    /// <summary>A recognized clause whose semantics the DDL writer cannot yet preserve.</summary>
-    public string? UnsupportedClause { get; init; }
+    /// <summary>AFIELDS-style array supplying the structure.</summary>
+    public string? FromArray { get; init; }
+    /// <summary>Keys in declaration order.</summary>
+    public IReadOnlyList<CreateTableKey> Keys { get; init; } = Array.Empty<CreateTableKey>();
+    /// <summary>Table validation expression.</summary>
+    public string? Check { get; init; }
+    /// <summary>Table validation error expression.</summary>
+    public string? Error { get; init; }
     /// <summary>A constraint requiring a database-contained table in VFP9.</summary>
     public bool RequiresDatabase { get; init; }
+    /// <summary>Table trigger expressions supplied by AFIELDS-style arrays.</summary>
+    public string? InsertTrigger { get; init; }
+    /// <summary>Table update trigger supplied by an AFIELDS-style array.</summary>
+    public string? UpdateTrigger { get; init; }
+    /// <summary>Table delete trigger supplied by an AFIELDS-style array.</summary>
+    public string? DeleteTrigger { get; init; }
+    /// <summary>Table comment supplied by an AFIELDS-style array.</summary>
+    public string? Comment { get; init; }
 }
 
 /// <summary>The kind of structural change one <c>ALTER TABLE</c> performs.</summary>

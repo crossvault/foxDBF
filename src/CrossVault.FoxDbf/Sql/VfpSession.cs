@@ -131,6 +131,7 @@ public sealed class VfpSession : IDisposable
 
     /// <summary>Evaluate CREATE CODEPAGE in the hosting interpreter's live variable scope.</summary>
     internal Func<VfpExpression, VfpValue>? DdlExpressionEvaluator { get; set; }
+    internal Func<string, VfpValue[,]?>? DdlArrayResolver { get; set; }
 
     // EnforceRules expands each array row to VALUES for validation; retain its blank-tail semantics.
     internal bool InsertArrayRow { get; set; }

@@ -19,12 +19,8 @@ namespace CrossVault.FoxDbf.Sql;
 /// </para>
 /// </summary>
 /// <remarks>
-/// The current FoxPro DBC reader is read-only (it carries no member add/remove primitive), so a
-/// <c>db!name</c> form (CREATE / ALTER / DROP of a DATABASE-CONTAINED member) is rejected up-front
-/// with a clear <see cref="NotSupportedException"/> rather than silently producing a free table.
-/// CREATE without FREE also requires membership whenever a database is current.
-/// Likewise RENAME COLUMN — which the Core ALTER cannot perform without discarding the column's data —
-/// is rejected as not yet supported.
+/// CREATE without FREE registers the table, fields, rules and keys in the current database.
+/// ALTER / DROP of database members and RENAME COLUMN retain their existing unsupported boundary.
 /// </remarks>
 internal sealed class DdlExecutor
 {
@@ -47,23 +43,34 @@ internal sealed class DdlExecutor
 
     private SqlResult CreateTable(CreateTableStatement st)
     {
-        RejectDbcMember(st.Database, "CREATE TABLE");
+        if (st.Database is not null)
+            throw new FoxDbfSqlException("Object name is invalid.") { VfpErrorNumber = 1575 };
+        if (st.FromArray is not null) st = ResolveArray(st);
         byte codePage = CreateCodePage(st);
-        if (st.LongName is not null && _session.Database is null)
+        if (st.LongName is not null && st.FromArray is null && _session.Database is null)
             throw new FoxDbfSqlException("No database is open or set as the current database.")
                 { VfpErrorNumber = 1520 };
         if (st.RequiresDatabase && (st.Free || _session.Database is null))
             throw new FoxDbfSqlException("Feature is not supported for non-.DBC tables.")
                 { VfpErrorNumber = 1580 };
-        // VFP9 implicitly registers a new table in the current DBC unless FREE is stated.
-        // Reject before creating files: an unregistered free table would silently lose that contract.
-        if (!st.Free && _session.Database is not null)
-            throw new NotSupportedException(
-                "CREATE TABLE in the current database is not supported: DBC member registration is not implemented. " +
-                "Use FREE to explicitly create a free table.");
-        if (st.UnsupportedClause is { } clause)
-            throw new NotSupportedException($"CREATE TABLE ... {clause} is not yet supported; no table was created.");
-        RejectBareMember(st.Table);
+        bool member = !st.Free && _session.Database is not null;
+        var logicalFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var column in st.Columns)
+        {
+            if (!logicalFields.Add(column.Name) || (!member && column.Name.Length > 10))
+                throw new FoxDbfSqlException("Field name is a duplicate or invalid.") { VfpErrorNumber = 1712 };
+            if (column.AutoIncrement is not null && column.Type != 'I')
+                throw new FoxDbfSqlException("Invalid autoincrement field type.") { VfpErrorNumber = 1804 };
+            if (column.AutoIncrement is not null && (column.Nullable ?? _session.Context.NullSetting))
+                throw new FoxDbfSqlException("Function argument value, type, or count is invalid.") { VfpErrorNumber = 11 };
+            if (column.NoCpTrans && column.Type is not ('C' or 'V' or 'M'))
+                throw new FoxDbfSqlException("Syntax error.") { VfpErrorNumber = 10 };
+        }
+        if (st.Keys.Any(k => k.Tag.Length > 10))
+            throw new FoxDbfSqlException("Tag name is too long.") { VfpErrorNumber = 1888 };
+        string logicalName = st.LongName ?? Path.GetFileNameWithoutExtension(st.Table);
+        if (member && _session.Database!.TableNames.Contains(logicalName, StringComparer.OrdinalIgnoreCase))
+            throw new FoxDbfSqlException($"Table '{logicalName}' already exists.");
 
         string path = TargetPath(st.Table);
         if (File.Exists(path))
@@ -73,17 +80,114 @@ internal sealed class DdlExecutor
         // (without this, CREATE would silently survive a rollback). No-op in autocommit.
         _session.SnapshotForDdl(path);
 
-        var defs = new List<DbfColumnDef>(st.Columns.Count);
-        foreach (var col in st.Columns)
-            defs.Add(ToColumnDef(col));
-
-        // DbfWriter.Create writes the .dbf (+ .fpt) and reopens it as a ready writer; close it
-        // immediately — the new table is then resolved on disk by subsequent INSERT / SELECT.
-        using (DbfWriter.Create(path, defs, new DbfCreateOptions { CodePage = codePage }))
+        var columns = st.Columns.Select(c => c with
         {
+            Default = Normalize(c.Default), Check = Normalize(c.Check), Error = Normalize(c.Error)
+        }).ToArray();
+        var defs = new List<DbfColumnDef>(columns.Length);
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var col in columns)
+        {
+            string name = col.Name[..Math.Min(10, col.Name.Length)];
+            for (int suffix = 2; !names.Add(name); suffix++)
+            {
+                string number = suffix.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                name = col.Name[..Math.Min(10 - number.Length, col.Name.Length)] + number;
+            }
+            defs.Add(ToColumnDef(col with { Name = name }));
+        }
+        var keys = st.Keys.Select(k => k with
+        {
+            ReferencedTag = k.ReferencedTable is not null && k.ReferencedTag is null
+                ? _session.Database!.GetTableRules(k.ReferencedTable).PrimaryKey : k.ReferencedTag
+        }).ToArray();
+        string? backlink = member ? Path.GetRelativePath(Path.GetDirectoryName(path)!, _session.DatabasePath!).ToLowerInvariant() : null;
+        using (DbfWriter.Create(path, defs, new DbfCreateOptions { CodePage = codePage, BacklinkPath = backlink })) { }
+        if (keys.Length > 0)
+        {
+            using var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive },
+                physical => DbfDatabase.ApplyLongNames(physical, columns.Select(c => c.Name).ToArray()));
+            foreach (var key in keys)
+                writer.CreateTag(new CdxTagDefinition(key.Tag.ToUpperInvariant(), key.Expression, collation: _session.Context.Collation.Name)
+                    { Candidate = key.Kind is "PRIMARY" or "UNIQUE" }, _session.SqlContext());
+        }
+        if (member)
+        {
+            _session.SnapshotForDdl(_session.DatabasePath!);
+            _session.RewriteDatabase(dbc => DbfDatabaseBuilder.AddTable(dbc, logicalName,
+                Path.GetRelativePath(Path.GetDirectoryName(dbc)!, path), columns, keys, Normalize(st.Check), Normalize(st.Error),
+                Normalize(st.InsertTrigger), Normalize(st.UpdateTrigger), Normalize(st.DeleteTrigger), st.Comment));
         }
 
+        // VFP CREATE leaves an empty DBF at the end of its header; the first append writes EOF.
+        using (var empty = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            empty.SetLength(empty.Length - 1);
+
         return SqlResult.Dml(0);
+    }
+
+    private static string? Normalize(string? expression)
+        => expression is null ? null : VfpExpressionText.Canonicalize(expression);
+
+    private CreateTableStatement ResolveArray(CreateTableStatement statement)
+    {
+        var array = _session.DdlArrayResolver?.Invoke(statement.FromArray!)
+            ?? throw new FoxDbfSqlException($"Variable '{statement.FromArray}' is not found.") { VfpErrorNumber = 12 };
+        int width = array.GetLength(1);
+        if (width is < 4 or > 18)
+            throw new FoxDbfSqlException("Syntax error.") { VfpErrorNumber = 10 };
+        var columns = new List<ColumnDefinition>();
+        string? TableText(int column)
+        {
+            if (column > width) return null;
+            var value = array[0, column - 1];
+            if (value.Type != VfpType.Character) throw new FoxDbfSqlException("Data type mismatch.") { VfpErrorNumber = 9 };
+            return value.AsString.Length == 0 ? null : value.AsString;
+        }
+        for (int row = 0; row < array.GetLength(0); row++)
+        {
+            string? Text(int column)
+            {
+                if (column > width) return null;
+                var value = array[row, column - 1];
+                if (value.Type != VfpType.Character) throw new FoxDbfSqlException("Data type mismatch.") { VfpErrorNumber = 9 };
+                return value.AsString.Length == 0 ? null : value.AsString;
+            }
+            int Number(int column)
+            {
+                if (column > width) return 0;
+                var value = array[row, column - 1];
+                if (value.Type is not (VfpType.Numeric or VfpType.Integer))
+                    throw new FoxDbfSqlException("Data type mismatch.") { VfpErrorNumber = 9 };
+                return (int)value.AsDouble;
+            }
+            bool? Logical(int column)
+            {
+                if (column > width) return null;
+                var value = array[row, column - 1];
+                if (value.Type != VfpType.Logical) throw new FoxDbfSqlException("Data type mismatch.") { VfpErrorNumber = 9 };
+                return value.AsLogical;
+            }
+            string name = Text(1) ?? "";
+            string type = Text(2) ?? "";
+            if (type.Length != 1) throw new FoxDbfSqlException("Invalid field type.") { VfpErrorNumber = 9 };
+            columns.Add(new ColumnDefinition(name, type[0], Number(3), Number(4), Logical(5))
+            {
+                NoCpTrans = Logical(6) ?? false,
+                Check = Text(7), Error = Text(8), Default = Text(9),
+                AutoIncrement = width >= 18 && Number(18) != 0
+                    ? new DbfAutoIncrement(unchecked((uint)Number(17)), checked((byte)Number(18))) : null
+            });
+        }
+        return statement with
+        {
+            Columns = columns,
+            LongName = statement.LongName ?? TableText(12)?.ToLowerInvariant(),
+            Check = TableText(10), Error = TableText(11), InsertTrigger = TableText(13),
+            UpdateTrigger = TableText(14), DeleteTrigger = TableText(15), Comment = TableText(16),
+            RequiresDatabase = columns.Any(c => c.Check is not null || c.Default is not null) ||
+                Enumerable.Range(10, 7).Any(c => TableText(c) is not null)
+        };
     }
 
     private byte CreateCodePage(CreateTableStatement st)
@@ -128,14 +232,15 @@ internal sealed class DdlExecutor
     {
         char type = char.ToUpperInvariant(c.Type);
         // Varbinary (Q) and Blob (W) are NOCPTRANS binary types in VFP.
-        bool binary = type is 'Q' or 'W';
+        bool binary = c.NoCpTrans || type is 'Q' or 'W';
         return new DbfColumnDef(
             name: c.Name,
             type: type,
             length: c.Length ?? 0,
             decimalCount: DefaultDecimals(type, c.Decimals),
             nullable: c.Nullable ?? _session.Context.NullSetting,
-            binary: binary);
+            binary: binary,
+            autoIncrement: c.AutoIncrement);
     }
 
     /// <summary>The descriptor decimal-count for a DDL column, matching the AUTHORITATIVE VFP9
@@ -247,11 +352,8 @@ internal sealed class DdlExecutor
                 "database container (.dbc) is opened read-only and has no member add/remove primitive.");
     }
 
-    /// <summary>Rejects a BARE-name DDL target that is actually a member of the open <c>.dbc</c>.
-    /// Without this guard a bare CREATE/ALTER/DROP would silently operate on free files in the .dbc's
-    /// directory — DROP would orphan the member record (DBC corruption), ALTER would rewrite the file
-    /// behind the DBC's back, and CREATE would add an unregistered free file where VFP adds a member.
-    /// The reader-only DBC has no member add/remove primitive, so this is a clear NotSupported.</summary>
+    /// <summary>Protect ALTER / DROP of a database member: these operations also need to update
+    /// its catalog records. CREATE uses the member-registration path above.</summary>
     private void RejectBareMember(string tableName)
     {
         if (_session.Database is { } db &&
