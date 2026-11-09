@@ -113,6 +113,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- ADO.NET `EnforceRules` DELETE reuses an already open renamed alias, so delete triggers
+  observe the caller's work area and no extra alias is opened.
+
 - INSERT rejects recursive writes from the target's validation rule with VFP error 1887,
   preserving AUTOINC values. Rule callbacks run outside the append lock; concurrent changes
   trigger at most one revalidation before an I/O conflict is reported.
