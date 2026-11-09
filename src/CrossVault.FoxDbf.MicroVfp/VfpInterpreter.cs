@@ -165,6 +165,11 @@ public sealed partial class VfpInterpreter
         // memvar store: the SQL engine (SelectExecutor / DmlExecutor) reaches the store through this bridge,
         // so both the microVFP SP path and the ADO.NET command path write/read the same active-session arrays.
         Session.MemoryBridge = new MemvarBridge(this);
+        Session.AdditionalIndexPaths = path =>
+        {
+            RequireCompactIndexWriteContext(path);   // the same transaction / rollback limits as our own writers.
+            return OpenAdditionalIndexPaths(path);
+        };
         Runtime = new RuntimeState();
         _row = new Row(this);
         _ctx = session.Context;

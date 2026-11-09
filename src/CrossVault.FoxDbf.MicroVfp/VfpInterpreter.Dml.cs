@@ -181,10 +181,10 @@ public sealed partial class VfpInterpreter
             return;
         }
 
-        // The fallback uses a session-owned SQL writer with no standalone-index inventory.
-        if (ResolveInsertTablePath(table) is string indexedPath
-            && OpenAdditionalIndexPaths(indexedPath).Count > 0)
-            throw new MicroVfpRuntimeException("This INSERT path cannot maintain open standalone indexes.");
+        // The fallback's SQL writer maintains the open standalone indexes (VfpSession.AdditionalIndexPaths)
+        // under the same restrictions as the interpreter's own writers.
+        if (ResolveInsertTablePath(table) is string indexedPath)
+            RequireCompactIndexWriteContext(indexedPath);
 
         // A write-through INSERT appends through the SQL DML writer (OpenWritableTarget), NOT the cached
         // interpreter writer — that foreign append bumps the on-disk record count under any writer this

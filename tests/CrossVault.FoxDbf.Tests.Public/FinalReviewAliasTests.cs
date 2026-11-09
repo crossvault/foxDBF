@@ -10,23 +10,39 @@ public sealed class FinalReviewAliasTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void InsertFromArray_CustomAliasCompactIndex_RefusesBeforeWriting(bool database)
+    public void InsertFromArray_CustomAliasCompactIndex_MaintainsOpenIdx(bool database)
     {
+        // VFP9 appends the row and maintains the open standalone .idx (FinalReviewAliasVfp9OracleTests).
         using var temp = new MicroVfpTestSupport.TempDir("alias_idx");
         using var session = new VfpSession();
         session.OpenDirectory(temp.Path);
         CreateTable(temp, database);
         if (database) session.OpenDatabase(temp.File("sample.dbc"));
         using var vfp = new VfpInterpreter(session) { EnforceReferentialIntegrity = false };
-        vfp.Execute("USE customer ALIAS cust INDEX x.idx");
-        byte[] dbf = File.ReadAllBytes(temp.File("customer.dbf"));
-        byte[] idx = File.ReadAllBytes(temp.File("x.idx"));
+        vfp.Execute("USE customer ALIAS cust INDEX x.idx\nSET ORDER TO 1");
         vfp.Execute("DIMENSION values[1]\nvalues[1] = 'CHARLIE'");
-        var error = Assert.Throws<MicroVfpRuntimeException>(() => vfp.Execute("INSERT INTO customer FROM ARRAY values"));
-        Assert.Contains("standalone indexes", error.Message);
-        vfp.Execute("USE");
-        Assert.Equal(dbf, File.ReadAllBytes(temp.File("customer.dbf")));
-        Assert.Equal(idx, File.ReadAllBytes(temp.File("x.idx")));
+        vfp.Execute("INSERT INTO customer FROM ARRAY values");
+        vfp.Execute("SELECT cust");
+        Assert.Equal(2m, vfp.EvalExpression("RECCOUNT()").AsNumber);
+        Assert.True(vfp.EvalExpression("SEEK('CHARLIE')").AsLogical);
+        vfp.Execute("USE\nUSE customer INDEX x.idx\nSET ORDER TO 1");
+        Assert.True(vfp.EvalExpression("SEEK('CHARLIE')").AsLogical);
+        Assert.True(vfp.EvalExpression("SEEK('ALPHA')").AsLogical);
+    }
+
+    [Fact]
+    public void UpdateSql_OpenIdx_IsMaintained()
+    {
+        using var temp = new MicroVfpTestSupport.TempDir("alias_idx_upd");
+        using var session = new VfpSession();
+        session.OpenDirectory(temp.Path);
+        CreateTable(temp, database: false);
+        using var vfp = new VfpInterpreter(session) { EnforceReferentialIntegrity = false };
+        vfp.Execute("USE customer ALIAS cust INDEX x.idx\nSET ORDER TO 1");
+        session.Execute("UPDATE customer SET k = 'ZULU' WHERE k = 'ALPHA'");   // SQL DML writer, open .idx
+        vfp.Execute("USE\nUSE customer INDEX x.idx\nSET ORDER TO 1");
+        Assert.True(vfp.EvalExpression("SEEK('ZULU')").AsLogical);
+        Assert.False(vfp.EvalExpression("SEEK('ALPHA')").AsLogical);
     }
 
     [Theory]

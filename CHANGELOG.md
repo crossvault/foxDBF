@@ -97,6 +97,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP: SQL writes maintain the open standalone `.idx` files of the table as VFP9 does. `INSERT … FROM ARRAY` /
+  `FROM MEMVAR` no longer refuse with an open `.idx`, and `UPDATE` / `DELETE` through the session's SQL layer no
+  longer leave it stale. Transactions and candidate/RI rollback keep their existing standalone-index restriction.
 - Batched appends retain VFP9's incremental CDX page order, build statistics and UNIQUE winners
   at every batch size instead of rebuilding the index. Root splits preserve node-attribute history,
   and leaf maintenance retains existing unused bytes without carrying removed entries into free space.

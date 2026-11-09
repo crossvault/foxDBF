@@ -121,6 +121,11 @@ public sealed class VfpSession : IDisposable
     /// </summary>
     internal IVfpMemoryBridge? MemoryBridge { get; set; }
 
+    /// <summary>The open standalone index files (<c>.idx</c> / extra <c>.cdx</c>) that a write to the table
+    /// at a path must maintain, registered by the bound <c>VfpInterpreter</c>; the SQL DML writer maintains
+    /// them as VFP9 does. <see langword="null"/> without an interpreter (no standalone indexes are open).</summary>
+    internal Func<string, IReadOnlyList<string>>? AdditionalIndexPaths { get; set; }
+
     /// <summary>
     /// Evaluates the DBC field <c>DEFAULT</c> expressions of one INSERT row (arguments: the target table,
     /// fields/expressions in field order, and the supplied values). Fills the values the INSERT writes,
@@ -800,6 +805,7 @@ public sealed class VfpSession : IDisposable
 
         string path;
         ReopenInfo? reopen = null;
+        IReadOnlyList<string>? extraIndexes = null;   // read while the areas that opened them are still open.
         // The column names the session READS this table under (a DBC member: its long field names); the
         // writer presents the same names so SET / WHERE / INSERT column lists and the .cdx tag expressions
         // resolve exactly as in a SELECT. Taken from the read handle that is released below, else from the
@@ -810,6 +816,7 @@ public sealed class VfpSession : IDisposable
             path = existing.Table.SourcePath
                    ?? throw new FoxDbfSqlException($"Open table '{name}' has no source path on disk to write to.");
             readColumns = existing.Table.Columns;
+            extraIndexes = AdditionalIndexPaths?.Invoke(path);
             reopen = new ReopenInfo(existing.Area, existing.Table.SourcePath!, existing.Alias, existing.Exclusive, existing.NoUpdate, existing.OpenSequence);
             _areas.Remove(existing.Area);
             existing.Dispose(); // release the read handle so the writer can open the file.
@@ -818,6 +825,7 @@ public sealed class VfpSession : IDisposable
         {
             (path, readColumns) = ResolveWritablePath(name);
             path = Path.GetFullPath(path);
+            extraIndexes = AdditionalIndexPaths?.Invoke(path);
             // The table may be open under a CUSTOM alias (alias != name): match by the RESOLVED file
             // path so its stale read handle is released for the write and re-opened on dispose —
             // otherwise the write opens a second handle and the aliased area keeps a stale view.
@@ -850,6 +858,11 @@ public sealed class VfpSession : IDisposable
                 SessionCodePage = Context.SessionCodePage,
             }, NamesOf(readColumns));
             writer.IndexContext = Context;
+            if (extraIndexes is { Count: > 0 })
+            {
+                try { writer.SetOpenAdditionalIndexes(extraIndexes, Context); }
+                catch { writer.Dispose(); throw; }
+            }
         }
         catch
         {
