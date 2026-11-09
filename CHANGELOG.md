@@ -8,6 +8,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- NORDAN and SWEFIN collations with VFP9-exact index keys on code pages 1252, 437, 850, 865
+  and 10000; ICELAND on 1252, 437, 850 and 861. Includes NORDAN's case-insensitive `aa`
+  contraction, index creation and maintenance of VFP-made tags, SEEK with EXACT OFF/ON,
+  Rushmore prefix filtering and microVFP `SET COLLATE TO` / `INDEX ON` / `SEEK`.
 - **BREAKING:** `DATETIME(year, month, day [, hour [, minute [, second]]])` in expressions, SQL and microVFP,
   including fractional-component truncation, NULL component defaults and empty results for impossible
   calendar dates, as in VFP9. Invalid arguments now raise VFP errors 11, 1229 or 1230
