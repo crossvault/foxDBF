@@ -505,7 +505,7 @@ public sealed partial class VfpInterpreter
         meta.KeyVisible = null;
     }
 
-    private void ExecReplace(ReplaceStmt rp)
+    private void ExecReplace(ReplaceStmt rp, bool rulesValidated = false)
     {
         if (rp.Scope is not null || rp.For is not null || rp.While is not null)
         {
@@ -587,6 +587,9 @@ public sealed partial class VfpInterpreter
             var writer = lease.Writer;
             var values = new object?[writer.Schema.Columns.Count];
             for (int i = 0; i < values.Length; i++) values[i] = DbfWriter.KeepValue;
+            var candidate = EnforceReferentialIntegrity && !rulesValidated
+                ? wa.Table.Columns.Where(c => !c.IsSystem).ToDictionary(c => c.Name, c => ReadField(wa, c.Name), StringComparer.OrdinalIgnoreCase)
+                : null;
 
             foreach (var clause in rp.Clauses)
             {
@@ -603,7 +606,24 @@ public sealed partial class VfpInterpreter
                 char type = wa.Table.Columns[idx].Type;
                 values[idx] = v.IsNull ? null : (type == 'M' && v.IsBinary ? v.ToClr()
                     : type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
+                if (candidate is not null)
+                {
+                    candidate[field] = values[idx];
+                    WithImportRow(wa, m.RecNo, candidate, () =>
+                    {
+                        DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud,
+                            fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false);
+                        return true;
+                    });
+                }
             }
+            if (candidate is not null)
+                WithImportRow(wa, m.RecNo, candidate, () =>
+                {
+                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud,
+                        fieldsToValidate: new HashSet<string>(), validateRecord: true);
+                    return true;
+                });
             writer.UpdateRecord(recIndex, values);
             writer.Flush();
         }

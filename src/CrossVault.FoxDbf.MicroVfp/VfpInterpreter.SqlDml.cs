@@ -176,9 +176,14 @@ public sealed partial class VfpInterpreter
                 };
                 if (!compatible) throw new MicroVfpRuntimeException("Data type mismatch.", 9);
                 values[field] = value.ToClr();
+                // VFP checks each SET field before evaluating the next clause, even without buffering.
+                if (EnforceReferentialIntegrity && Meta(wa.Area).Buffering <= 1)
+                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalTextLoud,
+                        fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false);
             }
             if (EnforceReferentialIntegrity && Meta(wa.Area).Buffering <= 1)
-                DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalTextLoud);
+                DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalTextLoud,
+                    fieldsToValidate: new HashSet<string>(), validateRecord: true);
             return true;
         });
         foreach (string field in assignments.Select(a => a.Field).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -187,7 +192,7 @@ public sealed partial class VfpInterpreter
         }
         // Keep all writes on the interpreter's writer: cached handles, CDX/IDX, triggers, buffers
         // and PRG/COW transactions therefore share precisely the REPLACE path.
-        ExecReplace(new ReplaceStmt(clauses, null, null, null, null));
+        ExecReplace(new ReplaceStmt(clauses, null, null, null, null), rulesValidated: true);
         // VFP retains an invalid SQL candidate in a row/table buffer so it can be corrected or
         // reverted. The same failure must still prevent a later TABLEUPDATE from publishing it.
         if (EnforceReferentialIntegrity && Meta(wa.Area).Buffering > 1)
