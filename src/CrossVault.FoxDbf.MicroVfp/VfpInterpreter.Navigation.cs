@@ -59,7 +59,7 @@ public sealed partial class VfpInterpreter
             return;
         }
 
-        var order = TraversalOrder(area, wa);         // recnos in the CURRENT order (index order or physical).
+        var order = TraversalOrder(area, wa, includeCurrent: kind != LocScope.All); // recnos in the CURRENT order (index order or physical).
         int startIdx = kind == LocScope.All ? 0 : CurrentIndex(order, m);   // REST/NEXT start at the current record.
         if (startIdx < 0) startIdx = order.Count;     // current at EOF/BOF ⇒ REST/NEXT window is empty.
 
@@ -98,7 +98,7 @@ public sealed partial class VfpInterpreter
         var wa = Session.AreaAt(area);                // MUST re-fetch: a commit may reopen the file areas.
         if (wa is null) return;
 
-        var order = TraversalOrder(area, wa);
+        var order = TraversalOrder(area, wa, includeCurrent: true);
         int curIdx = CurrentIndex(order, m);
         int from = (m.Eof || curIdx < 0) ? order.Count : curIdx + 1;   // resume AFTER the current record.
 
@@ -136,10 +136,24 @@ public sealed partial class VfpInterpreter
 
     /// <summary>The recnos of <paramref name="area"/> in its CURRENT traversal order — the active index
     /// sequence (<see cref="ActiveOrder"/>) or, with no controlling order, physical 1..count.</summary>
-    private List<int> TraversalOrder(int area, VfpSession.WorkArea wa)
+    private List<int> TraversalOrder(int area, VfpSession.WorkArea wa, bool includeCurrent = false)
     {
         var ord = ActiveOrder(area);
-        if (ord is not null) return ord;
+        if (ord is not null)
+        {
+            var m = Meta(area);
+            if (includeCurrent && !m.Eof && m.RecNo >= 1 && m.RecNo <= EffCount(area, wa)
+                && CurrentIndex(ord, m) < 0)
+            {
+                // A reopen/order reset can discard the tombstone. REST still starts on that
+                // physical row; synthesize its slot without adding it to the live index cache.
+                int position = MissingOrderInsertionPoint(area, m);
+                var scoped = new List<int>(m.Ordered!);
+                scoped.Insert(position, -m.RecNo);
+                return scoped;
+            }
+            return ord;
+        }
         int rc = EffCount(area, wa);
         var list = new List<int>(rc);
         for (int i = 1; i <= rc; i++) list.Add(i);
@@ -273,7 +287,7 @@ public sealed partial class VfpInterpreter
         }
         else
         {
-            var order = TraversalOrder(area, wa);
+            var order = TraversalOrder(area, wa, includeCurrent: kind != LocScope.All);
             int startIdx = kind == LocScope.All ? 0 : CurrentIndex(order, m);
             if (startIdx < 0) startIdx = order.Count;   // current at EOF/BOF ⇒ REST/NEXT window is empty.
             int remaining = kind == LocScope.Next ? count : int.MaxValue;
@@ -889,10 +903,13 @@ public sealed partial class VfpInterpreter
         }
         else
         {
-            deleted = _meta.TryGetValue(wa.Area, out var bufferedMeta)
+            // With SET DELETED OFF (or RECALL's inclusive walk), the mark cannot hide
+            // this row. Avoid a DBF flag read on every SKIP and again in the SCAN body.
+            deleted = !includeDeleted && _ctx.Deleted &&
+                (_meta.TryGetValue(wa.Area, out var bufferedMeta)
                 && bufferedMeta.Buf?.Rows.TryGetValue(rec, out var edit) == true
                 && edit.DeletedOverride is bool bufferedDeleted
-                    ? bufferedDeleted : wa.Table.IsRecordDeleted(rec - 1);
+                    ? bufferedDeleted : wa.Table.IsRecordDeleted(rec - 1));
         }
         if (!includeDeleted && _ctx.Deleted && deleted) return false;
         // SET KEY / SET FILTER: per-area visibility gates layered on top of SET DELETED, composing by AND
@@ -1070,9 +1087,9 @@ public sealed partial class VfpInterpreter
         {
             int dirO = count > 0 ? 1 : -1, stepsO = Math.Abs(count);
             int pos = m.OrderPos;
-            if (pos >= 0 && pos < ord.Count && ord[pos] < 0) EnsureOrderSlots(m);
             if (pos < 0 || (pos < ord.Count && ord[pos] < 0 && !m.OrderKeyIsField))
             {
+                if (pos < 0 && !m.Eof) EnsureOrderSlots(m);
                 pos = OrderSlot(m, m.RecNo);
                 if (pos >= 0 && ord[pos] < 0 && !m.OrderKeyIsField) pos = -1;
                 if (pos < 0 && m.RecNo >= 1 && m.RecNo <= EffCount(area, wa))

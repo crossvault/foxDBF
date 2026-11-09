@@ -41,7 +41,7 @@ public sealed class MicroVfpDeletionScanCacheReviewTests
         using var session = new VfpSession();
         session.OpenDirectory(dir.Path);
         using var vfp = new VfpInterpreter(session);
-        vfp.Execute("USE t EXCLUSIVE\nSET ORDER TO k\nGO TOP\nDELETE\nSKIP");
+        vfp.Execute("USE t EXCLUSIVE\nSET ORDER TO k\nGO 2\nSKIP\nGO TOP\nDELETE\nSKIP");
     }
 }
 

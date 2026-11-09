@@ -1093,7 +1093,7 @@ public sealed partial class VfpInterpreter
         if (sum.Scope is null && sum.While is not null) kind = LocScope.Rest;
         MaybeAutoCommitRow(area);
         wa = Session.AreaAt(area)!;
-        var order = TraversalOrder(area, wa);
+        var order = TraversalOrder(area, wa, includeCurrent: kind != LocScope.All);
         int n = sum.Expressions.Count;
         var acc = new double[n];
         var counts = new int[n];

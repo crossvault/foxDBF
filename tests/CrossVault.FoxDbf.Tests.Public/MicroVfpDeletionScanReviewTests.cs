@@ -10,13 +10,14 @@ public sealed class MicroVfpDeletionScanReviewTests
         INSERT INTO t VALUES (3, 'T', 0)
         """;
 
-    internal static string RemovedScenario(string command, bool deleted = false) => $$"""
+    internal static string RemovedScenario(string command, bool deleted = false, bool rebuild = false) => $$"""
         USE t EXCLUSIVE
         SET DELETED OFF
         INDEX ON k TAG live FOR NOT DELETED()
         SET ORDER TO live
         LOCATE FOR id=2
         DELETE
+        {{(rebuild ? "SET ORDER TO 0\nSET ORDER TO live" : "")}}
         SET DELETED {{(deleted ? "ON" : "OFF")}}
         value=-99
         {{command}}
@@ -37,7 +38,21 @@ public sealed class MicroVfpDeletionScanReviewTests
 
     [Theory]
     [MemberData(nameof(RemovedCases))]
-    public void RemovedSlotScopes(int command, bool deleted)
+    public void RemovedSlotScopes(int command, bool deleted) => AssertRemoved(command, deleted, false);
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    [InlineData(8)]
+    public void RemovedSlotScopesAfterRebuild(int command) => AssertRemoved(command, false, true);
+
+    private static void AssertRemoved(int command, bool deleted, bool rebuild)
     {
         string prefix = command switch
         {
@@ -51,7 +66,7 @@ public sealed class MicroVfpDeletionScanReviewTests
             8 => "|0.F.|0.F.|0.F.",
             _ => deleted ? "|0.F.|0.F." : "|0.F.|0.T.|0.F."
         };
-        Assert.Equal(prefix + rows, MicroVfpSqlDmlConsolidatedTests.Run(Setup, RemovedScenario(RemovedCommands[command], deleted)));
+        Assert.Equal(prefix + rows, MicroVfpSqlDmlConsolidatedTests.Run(Setup, RemovedScenario(RemovedCommands[command], deleted, rebuild)));
     }
 
     [Fact]
@@ -68,6 +83,7 @@ public sealed class MicroVfpDeletionScanReviewTests
     internal static readonly string[] RemovedCommands =
     [
         "COUNT REST TO value", "CONTINUE", "LOCATE REST", "SUM id REST TO value",
+        // Compare the numeric average independently of TRANSFORM's existing numeric-scale limitation.
         "AVERAGE id REST TO value\nvalue=value*100", "SCAN REST\nresult=result+TRANSFORM(id)\nENDSCAN",
         "REPLACE REST n WITH n+1", "DELETE REST", "RECALL REST"
     ];
