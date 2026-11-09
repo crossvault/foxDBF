@@ -627,28 +627,40 @@ public sealed partial class VfpInterpreter
 
     private void ExecReplaceScope(ReplaceStmt rp)
     {
-        int savedArea = Session.CurrentArea;
         int area = rp.In is not null ? ResolveAreaRef(rp.In) : AreaOfClause(rp.Clauses[0]);
+        var single = rp with { Scope = null, For = null, While = null };
+        ExecRecordScope(area, rp.Scope, rp.For, rp.While, () => ExecReplace(single));
+    }
+
+    // REPLACE, DELETE and RECALL share VFP's scope order, visibility and final-pointer rules.
+    private void ExecRecordScope(int area, string? scope, PrgExpr? forExpr, PrgExpr? whileExpr,
+        Action action, bool includeDeleted = false, (LocScope Kind, int Count)? resolvedScope = null)
+    {
+        int savedArea = Session.CurrentArea;
         FlushPendingAppends(area);
         var wa = Session.AreaAt(area)
             ?? throw new MicroVfpRuntimeException("No table is open in the current work area.", 52);
-        var (kind, count) = ResolveLocScope(rp.Scope);
-        if (rp.Scope is null && rp.While is not null) kind = LocScope.Rest;
-        var single = rp with { Scope = null, For = null, While = null };
+        var (kind, count) = resolvedScope ?? ResolveLocScope(scope);
+        if (scope is null && whileExpr is not null) kind = LocScope.Rest;
         Session.SelectArea(area);
         try
         {
+            if (scope is null && forExpr is null && whileExpr is null)
+            {
+                action();
+                return;
+            }
             if (kind == LocScope.Record)
             {
                 GoRecord(area, count);
-                if ((rp.While is null || Truth(Eval(rp.While))) && (rp.For is null || Truth(Eval(rp.For))))
-                    ExecReplace(single);
+                if ((whileExpr is null || ScopePredicate(whileExpr)) && (forExpr is null || ScopePredicate(forExpr)))
+                    action();
                 return;
             }
 
             // ALL without WHILE uses physical order; bounded/WHILE scopes follow the controlling index.
             // Snapshot before changing indexed fields, including the table buffer's unpublished keys.
-            var order = ReplaceOrder(wa, kind == LocScope.All && rp.While is null, out var keyVisible);
+            var order = ReplaceOrder(wa, kind == LocScope.All && whileExpr is null, out var keyVisible);
             int start = kind == LocScope.All ? 0 : CurrentIndex(order, Meta(area));
             if (start < 0) start = order.Count;
             int remaining = kind == LocScope.Next ? count : int.MaxValue;
@@ -657,16 +669,24 @@ public sealed partial class VfpInterpreter
             {
                 wa = Session.AreaAt(area)!;
                 int rec = order[i];
-                if ((kind == LocScope.All || i != start) && !Visible(wa, rec, keyVisible)) continue;
+                if ((kind == LocScope.All || i != start) && !Visible(wa, rec, keyVisible, includeDeleted)) continue;
                 GoRecord(area, rec);
-                if (rp.While is not null && !Truth(Eval(rp.While))) return;
-                if (rp.For is null || Truth(Eval(rp.For))) ExecReplace(single);
+                if (whileExpr is not null && !ScopePredicate(whileExpr)) return;
+                if (forExpr is null || ScopePredicate(forExpr)) action();
                 // VFP leaves a bounded scope ON its last examined record (unlike SCAN's final SKIP).
                 if (--remaining == 0) return;
             }
             GoRecord(area, EffCount(area, Session.AreaAt(area)!) + 1);
         }
         finally { Session.SelectArea(savedArea); }
+
+        bool ScopePredicate(PrgExpr expression)
+        {
+            var value = Eval(expression);
+            if (resolvedScope is not null && !value.IsNull && value.Type != VfpType.Logical)
+                throw new MicroVfpRuntimeException("Expression is not logical.", 1127);
+            return Truth(value);
+        }
     }
 
     private List<int> ReplaceOrder(VfpSession.WorkArea wa, bool physical, out HashSet<int>? keyVisible)
@@ -718,51 +738,163 @@ public sealed partial class VfpInterpreter
 
     private void ExecDelete(DeleteStmt del)
     {
-        if (del.Scope is not null || del.For is not null || del.While is not null)
-            throw new MicroVfpRuntimeException("DELETE: record scope/FOR/WHILE clauses are not supported.");
-        int area = del.In is not null ? ResolveAreaRef(del.In) : Session.CurrentArea;
-        var mdel = Meta(area);
-        if (mdel.Buffering > 1 && Session.AreaAt(area) is { } wdel) { BufferDeleteFlag(area, wdel, mdel, deleted: true); return; }
-        // P3b: a bound delete trigger fires BEFORE the mark; a RESTRICT rule returning .F. ABORTS it.
-        if (EnforceReferentialIntegrity && !FireDmlTrigger(RiEvent.Delete, area))
-            throw TriggerFailed(RiEvent.Delete, area, Session.AreaAt(area)?.Alias ?? string.Empty);
-        WriteFlag(area, recall: false);
+        ExecDeleteRecall(del.In, del.Scope, del.For, del.While, del.SyntaxError, recall: false);
     }
 
     private void ExecRecall(RecallStmt rc)
     {
-        if (rc.Scope is not null || rc.For is not null || rc.While is not null)
-            throw new MicroVfpRuntimeException("RECALL: record scope/FOR/WHILE clauses are not supported.");
-        int area = Session.CurrentArea;
-        var mrc = Meta(area);
-        if (mrc.Buffering > 1 && Session.AreaAt(area) is { } wrc) { BufferDeleteFlag(area, wrc, mrc, deleted: false); return; }
-        WriteFlag(area, recall: true);
+        ExecDeleteRecall(rc.In, rc.Scope, rc.For, rc.While, rc.SyntaxError, recall: true);
     }
 
-    private void WriteFlag(int area, bool recall)
+    private void ExecDeleteRecall(NameRef? inArea, string? scope, PrgExpr? forExpr, PrgExpr? whileExpr, int syntaxError, bool recall)
     {
-        var wa = Session.AreaAt(area);
-        if (wa is null) return;
-        var m = Meta(area);
-        int recIndex = m.RecNo - 1;
-        if (recIndex < 0 || recIndex >= wa.Table.RecordCount) return;
-        var path = wa.Table.SourcePath;
-        if (path is null) return;
-        // COPY-ON-WRITE seam (ADO.NET transaction): a DELETE/RECALL mark (incl. an RI-delete-cascade child
-        // DELETE) lands on the table's private copy so it is isolated + rollback-able. No-op in autocommit.
-        path = BeginTxWrite(path);
-        SnapshotForTxn(path);
-        using (var lease = LeaseWriter(path))
+        // Validate the entire syntax before moving or marking any row. The general scope resolver is
+        // permissive for legacy commands; DELETE/RECALL must never turn an invalid scope into ALL.
+        if (syntaxError != 0) throw new MicroVfpRuntimeException("Syntax error.", syntaxError);
+        ValidateDeleteRecallScope(scope, forExpr, whileExpr);
+        int area = inArea is not null ? ResolveAreaRef(inArea) : Session.CurrentArea;
+        if (Session.AreaAt(area) is null)
+            throw new MicroVfpRuntimeException(inArea is null ? "No table is open." : "Alias is not found.", inArea is null ? 52 : 13);
+        int tally = 0;
+        WriterLease? lease = null;
+        string? writePath = null;
+        bool savedRequireNames = _requireDmlNames;
+        _requireDmlNames = true;
+        bool started = false;
+        try
         {
-            var writer = lease.Writer;
-            if (recall) writer.Recall(recIndex); else writer.Delete(recIndex);
-            writer.Flush();
+            var resolvedScope = ResolveDeleteRecallScope(scope, area);
+            started = true;
+            Memory.Set("_TALLY", VfpValue.Integer(0));
+            ExecRecordScope(area, scope, forExpr, whileExpr, Mark, includeDeleted: recall, resolvedScope: resolvedScope);
+            if (EffCount(area, Session.AreaAt(area)!) == 0) Meta(area).Bof = true;
         }
-        // A DELETE/RECALL flips only the deletion flag — no cdx entry moves (VFP keeps a deleted row's key
-        // until PACK) and the count is unchanged, so the 5.5 fast in-place refresh applies: drop the read
-        // buffers in place (no file re-open) and PRESERVE the ordered recno sequence (empty field set).
-        var wref = Session.AreaAt(area) ?? wa;
-        RefreshAfterInPlaceWrite(path, wref, System.Array.Empty<string>());
+        finally
+        {
+            _requireDmlNames = savedRequireNames;
+            try { lease?.Writer.Flush(); }
+            finally { lease?.Dispose(); }
+            if (started) Memory.Set("_TALLY", VfpValue.Integer(tally));
+        }
+
+        void Mark()
+        {
+            var wa = Session.AreaAt(area)!;
+            var m = Meta(area);
+            int rec = m.RecNo;
+            if (m.Eof || rec < 1 || rec > EffCount(area, wa)) return;
+            bool deleted = m.Buf?.Rows.TryGetValue(rec, out var edit) == true && edit.DeletedOverride is bool flag
+                ? flag : rec > wa.Table.RecordCount
+                    ? m.Buf!.Appends[rec - wa.Table.RecordCount - 1].Deleted
+                    : wa.Table.IsRecordDeleted(rec - 1);
+            if (deleted != recall) return; // VFP counts transitions, not matching records.
+            if (m.Buffering > 1)
+            {
+                BufferDeleteFlag(area, wa, m, deleted: !recall);
+                Memory.Set("_TALLY", VfpValue.Integer(++tally));
+                // Multi-record commands finish each row even when NEXT leaves the pointer on it.
+                // Bare and RECORD scopes retain the pending row edit for TABLEUPDATE/TABLEREVERT.
+                if ((scope is not null || forExpr is not null || whileExpr is not null)
+                    && (scope is null || PrgScan.FirstWord(scope) != "RECORD"))
+                {
+                    try { MaybeAutoCommitRow(area); }
+                    catch when (EnforceReferentialIntegrity && LastDmlTriggerAborted)
+                    {
+                        throw TriggerFailed(RiEvent.Delete, area, wa.Alias);
+                    }
+                }
+                return;
+            }
+            else
+            {
+                // Triggers can recurse and invalidate cached writers, so retain a statement lease only
+                // on the ordinary path. A rejected trigger leaves earlier records marked.
+                bool trigger = !recall && EnforceReferentialIntegrity && ResolveTriggerProc(RiEvent.Delete, wa) is not null;
+                if (wa.Table.SourcePath is not { } path) return;
+                if (writePath is null)
+                {
+                    writePath = BeginTxWrite(path);
+                    SnapshotForTxn(writePath);
+                }
+                if (trigger)
+                {
+                    using (var rowLease = LeaseWriter(writePath))
+                    {
+                        rowLease.Writer.Delete(rec - 1);
+                        rowLease.Writer.Flush();
+                    }
+                    RefreshDeletionFlag(writePath);
+                    // VFP exposes the candidate mark inside the trigger and includes a rejected row
+                    // in _TALLY. On rejection it restores that row, retaining earlier successful marks.
+                    Memory.Set("_TALLY", VfpValue.Integer(++tally));
+                    try
+                    {
+                        if (!FireDmlTrigger(RiEvent.Delete, area))
+                            throw TriggerFailed(RiEvent.Delete, area, wa.Alias);
+                    }
+                    catch
+                    {
+                        using var undo = LeaseWriter(writePath);
+                        undo.Writer.Recall(rec - 1);
+                        undo.Writer.Flush();
+                        RefreshDeletionFlag(writePath);
+                        throw;
+                    }
+                    return;
+                }
+                else
+                {
+                    lease ??= LeaseWriter(writePath);
+                    if (recall) lease.Value.Writer.Recall(rec - 1);
+                    else lease.Value.Writer.Delete(rec - 1);
+                }
+                // Preserve index order, but make each flag visible to subsequent predicates/UDFs.
+                RefreshDeletionFlag(writePath);
+            }
+            Memory.Set("_TALLY", VfpValue.Integer(++tally));
+        }
+    }
+
+    // A missing name in a DELETE/RECALL predicate (including its UDFs) aborts the scan, not a NULL match.
+    private bool _requireDmlNames;
+
+    private void RefreshDeletionFlag(string path)
+    {
+        // The COW redirect has already rebound the areas. A mark changes neither record count nor
+        // ordinary index keys, so even a transient writer needs no per-record close/reopen.
+        foreach (var wa in Session.OpenAreas)
+        {
+            if (!SamePath(wa.Table.SourcePath, path)) continue;
+            wa.Table.RefreshView();
+            if (_meta.TryGetValue(wa.Area, out var m)) m.Cached = null;
+        }
+    }
+
+    private (LocScope Kind, int Count) ResolveDeleteRecallScope(string? scope, int area)
+    {
+        if (scope is null) return (LocScope.All, 0);
+        string head = PrgScan.FirstWord(scope);
+        if (head == "ALL") return (LocScope.All, 0);
+        if (head == "REST") return (LocScope.Rest, 0);
+        var value = Eval(PrgExpr.Parse(PrgScan.AfterFirstWord(scope)));
+        if (!IsNumeric(value)) throw new MicroVfpRuntimeException("Syntax error.", 10);
+        int count = (int)value.AsNumber;
+        FlushPendingAppends(area);
+        if (head == "RECORD" && (count < 1 || count > EffCount(area, Session.AreaAt(area)!)))
+            throw new MicroVfpRuntimeException("Record is out of range.", 5);
+        return (head == "NEXT" ? LocScope.Next : LocScope.Record, count);
+    }
+
+    private static void ValidateDeleteRecallScope(string? scope, PrgExpr? forExpr, PrgExpr? whileExpr)
+    {
+        if (forExpr is { IsParsed: false } || whileExpr is { IsParsed: false })
+            throw new MicroVfpRuntimeException("Syntax error.", 10);
+        if (scope is null) return;
+        string head = PrgScan.FirstWord(scope);
+        string rest = PrgScan.AfterFirstWord(scope).Trim();
+        if (head is "ALL" or "REST" && rest.Length == 0) return;
+        if (head is "NEXT" or "RECORD" && rest.Length > 0 && PrgExpr.Parse(rest).IsParsed) return;
+        throw new MicroVfpRuntimeException("Command contains unrecognized phrase/keyword.", 36);
     }
 
     private void ExecSum(SumStmt sum)

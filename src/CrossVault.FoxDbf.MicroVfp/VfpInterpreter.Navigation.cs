@@ -836,7 +836,7 @@ public sealed partial class VfpInterpreter
         return m;
     }
 
-    private bool Visible(VfpSession.WorkArea wa, int rec, HashSet<int>? keyVisible = null)
+    private bool Visible(VfpSession.WorkArea wa, int rec, HashSet<int>? keyVisible = null, bool includeDeleted = false)
     {
         bool deleted;
         if (rec > wa.Table.RecordCount)
@@ -853,7 +853,7 @@ public sealed partial class VfpInterpreter
                 && edit.DeletedOverride is bool bufferedDeleted
                     ? bufferedDeleted : wa.Table.IsRecordDeleted(rec - 1);
         }
-        if (_ctx.Deleted && deleted) return false;
+        if (!includeDeleted && _ctx.Deleted && deleted) return false;
         // SET KEY / SET FILTER: per-area visibility gates layered on top of SET DELETED, composing by AND
         // (a record shows only when NOT deleted-hidden AND in the SET KEY range AND the filter passes). Use
         // TryGetValue — never Meta() — to avoid re-entering GoTop while a navigation loop is already inside

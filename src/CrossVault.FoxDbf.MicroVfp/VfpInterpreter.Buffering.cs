@@ -131,7 +131,7 @@ public sealed partial class VfpInterpreter
         var m = Meta(area);
         bool hasFields = edit.Fields.Count > 0;
 
-        // A buffered DELETE fires the delete trigger BEFORE the mark (ExecDelete order); a RESTRICT aborts.
+        // The buffer exposes the candidate deletion to the trigger; a RESTRICT keeps it pending.
         if (EnforceReferentialIntegrity && edit.DeletedOverride == true)
         {
             GoRecordCore(area, recno);
@@ -228,7 +228,24 @@ public sealed partial class VfpInterpreter
         _inBufferCommit = true;
         try
         {
-            if (allRows)
+            if (allRows && (buf.Rows.Values.Any(e => e.DeletedOverride is not null) || buf.Appends.Any(e => e.Deleted)))
+            {
+                // VFP commits deletion buffers record by record, including mixed field edits/appends.
+                // A rejected delete retains that row and the remaining edits; earlier commits survive.
+                foreach (int rec in buf.Rows.Keys.OrderBy(r => r).ToArray())
+                {
+                    wa = Session.AreaAt(area)!;
+                    if (!CommitExistingRow(area, wa, path, rec, buf.Rows[rec])) { ok = false; break; }
+                    buf.Rows.Remove(rec);
+                }
+                if (ok)
+                    foreach (var append in buf.Appends.ToArray())
+                    {
+                        if (!CommitAppend(append)) { ok = false; break; }
+                        buf.Appends.Remove(append);
+                    }
+            }
+            else if (allRows)
             {
                 // ATOMIC (task requirement): wrap the whole multi-row commit in a transaction frame so the
                 // per-file pre-images are captured (SnapshotForTxn, incl. any child tables a deferred RI
@@ -612,6 +629,7 @@ public sealed partial class VfpInterpreter
         var m = Meta(area);
         if (m.Buffering <= 1)
             throw new MicroVfpRuntimeException("Function requires row or table buffering mode.", 1586);
+        if (m.Eof) return VfpValue.Null;
         bool isField0 = IsNumeric(a[0]) && a[0].AsNumber == 0m;
         int colIdx = IsNumeric(a[0]) ? (int)a[0].AsNumber - 1 : ColumnIndex(wa.Table, StripQualifier(a[0].AsString));
         // -1 is reserved for numeric field 0 (the record delete-state). An unresolved character

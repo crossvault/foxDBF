@@ -19,6 +19,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- microVFP scoped `DELETE` and `RECALL`: `ALL`, `NEXT`, `RECORD`, `REST`, `FOR`, `WHILE`,
+  `IN` and `NOOPTIMIZE`, with VFP9 record order, visibility, final pointers and `_TALLY`.
+  Includes row/table buffering, partial progress on predicate or delete-trigger failure,
+  and one writer lease for ordinary multi-record operations. `RECALL` sees deleted rows even
+  with `SET DELETED ON`; rejected delete triggers restore their row while retaining earlier changes.
 - Per-interpreter `sessionCodePage` / `CPCURRENT()` and writer `SessionCodePage` options for VFP9
   session-dependent `UPPER()`/`LOWER()` in CDX and IDX expressions, including rebuilds and maintenance.
 - VFP9-exact CZECH, SLOVAK and POLISH index weights on Macintosh Central European code page 10029.
