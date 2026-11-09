@@ -340,6 +340,9 @@ internal static partial class VfpRuntime
     /// (<see cref="OperatorMode"/>), every other type <see cref="Compare"/>.</summary>
     internal static int CompareOperands(VfpValue l, VfpValue r, EvaluationContext ctx)
     {
+        // VFP does not coerce logical results to numbers for relational operators.
+        if ((l.Type == VfpType.Logical && IsNumeric(r)) || (r.Type == VfpType.Logical && IsNumeric(l)))
+            throw new ExpressionException("Operator/operand type mismatch.") { VfpErrorNumber = 107 };
         if (l.Type == VfpType.Character && r.Type == VfpType.Character)
             return l.IsBinary || r.IsBinary ? CompareBinaryStrings(l, r, ctx, false)
                 : CompareStrings(l.AsString, r.AsString, OperatorMode(ctx), ctx);

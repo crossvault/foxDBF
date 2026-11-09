@@ -224,7 +224,12 @@ public sealed class MicroVfpSqlDmlFinalReviewTests(ITestOutputHelper output)
         return connection;
     }
 
-    internal static string Run(string setup, string scenario, string procedures = "") =>
-        MicroVfpSqlDmlConsolidatedTests.Run(setup, scenario, procedures, true);
+    [Fact]
+    public void G1ComparisonIsNotAnAssignment() => Assert.Equal("ERR:107|0", Run(
+        "PUBLIC calls\ncalls=0\nCREATE TABLE t (n I, CHECK (calls=calls+1)<2)",
+        "USE t\n" + MicroVfpSqlDmlTests.Catch("INSERT INTO t VALUES (1)") + "\nresult=result+TRANSFORM(calls)"));
+
+    internal static string Run(string setup, string scenario, string procedures = "", bool enforce = true) =>
+        MicroVfpSqlDmlConsolidatedTests.Run(setup, scenario, procedures, enforce);
 }
 

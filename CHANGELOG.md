@@ -115,6 +115,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - ADO.NET rule errors evaluate DBC ERROR expressions instead of exposing their quoted source;
   microVFP MESSAGE()/AERROR() report the same VFP9 field/record validation text.
   Missing rule functions/variables preserve their VFP error number in a provider DbException.
+- Logical/numeric relational comparisons raise VFP error 107 instead of coercing logical operands.
 - ADO.NET `EnforceRules=on` validates generated AUTOINC and rounded numeric values as VFP9 stores them,
   and reuses the target work area across INSERT/UPDATE statements, including a table opened under
   a different alias, instead of opening another copy each time.
