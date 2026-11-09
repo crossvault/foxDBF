@@ -747,9 +747,16 @@ public sealed partial class VfpInterpreter
                 return;
             }
 
-            // ALL without WHILE uses physical order; bounded/WHILE scopes follow the controlling index.
+            // ALL without WHILE normally uses physical order. DELETE/RECALL on a filtered
+            // tag follows its membership/order even for ALL (VFP9); REPLACE keeps its own rule.
             // Snapshot before changing indexed fields, including the table buffer's unpublished keys.
-            var order = ReplaceOrder(wa, kind == LocScope.All && whileExpr is null, out var keyVisible);
+            bool physical = kind == LocScope.All && whileExpr is null;
+            if (physical && resolvedScope is not null)
+            {
+                using var master = OpenMasterOrder(area);
+                physical = string.IsNullOrWhiteSpace(master?.CdxTag?.ForExpression ?? master?.Idx?.Header.ForExpression);
+            }
+            var order = ReplaceOrder(wa, physical, out var keyVisible);
             int start = kind == LocScope.All ? 0 : CurrentIndex(order, Meta(area));
             if (start < 0) start = order.Count;
             int remaining = kind == LocScope.Next ? count : int.MaxValue;
@@ -853,6 +860,7 @@ public sealed partial class VfpInterpreter
         if (Session.AreaAt(area) is null)
             throw new MicroVfpRuntimeException(inArea is null ? "No table is open." : "Alias is not found.", inArea is null ? 52 : 13);
         int tally = 0;
+        bool rekeyed = false;
         WriterLease? lease = null;
         string? writePath = null;
         bool savedRequireNames = _requireDmlNames;
@@ -881,25 +889,21 @@ public sealed partial class VfpInterpreter
         {
             _requireDmlNames = savedRequireNames;
             Session.SelectArea(savedArea);
-            bool rekeyed = false;
             try
             {
-                rekeyed = lease?.Writer.ConsumeDeletionRekey() == true;
-                lease?.Writer.Flush();
+                // Also invalidate after a failed mutation/rollback, before propagating its error.
+                if (lease?.Writer.ConsumeDeletionRekey() == true && writePath is not null)
+                {
+                    rekeyed = true;
+                    RefreshDeletionIndexViews(writePath);
+                }
+                // Delete/Recall flush the flag and each index edit under the mutation lock.
+                // Flush() here also closes the cached CDX editor, forcing SCAN to reopen it
+                // for every re-keyed row. Keep the existing lifecycle for ordinary marks;
+                // the lease still disposes transient transaction writers.
+                if (!rekeyed) lease?.Writer.Flush();
             }
             finally { lease?.Dispose(); }
-            // A DELETE-dependent key/FOR can change index membership even though no field changed.
-            // Refresh only after the writer flushes its index pages; otherwise SEEK sees stale keys.
-            // Other indexes are unchanged by a deletion flip, so SCAN … DELETE keeps its per-row cost.
-            if (writePath is not null && rekeyed)
-            {
-                foreach (var changedArea in Session.OpenAreas.Where(w => SamePath(w.Table.SourcePath, writePath)).ToArray())
-                {
-                    // Keep cached slots and file handles: only the tag roots/read buffer changed.
-                    if (changedArea.Cdx?.IsMemoryMapped == true) Session.ReopenAreaTable(changedArea.Area);
-                    else changedArea.Cdx?.RefreshView();
-                }
-            }
             if (started) Memory.Set("_TALLY", VfpValue.Integer(tally));
         }
 
@@ -964,6 +968,13 @@ public sealed partial class VfpInterpreter
                         RefreshDeletionFlag(writePath);
                         throw;
                     }
+                    finally
+                    {
+                        // A trigger can replace files or recurse into another writer. Reopen this
+                        // cold path after acceptance/undo so subsequent SEEK sees the final keys.
+                        ReopenFileAreas(writePath);
+                        ResetMetaCachesForPath(writePath);
+                    }
                     return;
                 }
                 else
@@ -972,6 +983,12 @@ public sealed partial class VfpInterpreter
                     if (recall) lease.Value.Writer.Recall(rec - 1);
                     else lease.Value.Writer.Delete(rec - 1);
                     RefreshDeletionOrder(writePath, lease.Value.Writer);
+                    if (lease.Value.Writer.ConsumeDeletionRekey())
+                    {
+                        rekeyed = true;
+                        // Predicates/UDFs on the next row of this same statement can SEEK too.
+                        RefreshDeletionIndexViews(writePath);
+                    }
                 }
                 // Preserve index order, but make each flag visible to subsequent predicates/UDFs.
                 RefreshDeletionFlag(writePath);
@@ -982,6 +999,16 @@ public sealed partial class VfpInterpreter
 
     // A missing name in a DELETE/RECALL predicate (including its UDFs) aborts the scan, not a NULL match.
     private bool _requireDmlNames;
+
+    private void RefreshDeletionIndexViews(string path)
+    {
+        foreach (var wa in Session.OpenAreas.Where(w => SamePath(w.Table.SourcePath, path)).ToArray())
+        {
+            // Mapped views have a fixed length; a RECALL can grow the tree beyond that view.
+            if (wa.Cdx?.IsMemoryMapped == true) Session.ReopenAreaTable(wa.Area);
+            else wa.Cdx?.RefreshView();
+        }
+    }
 
     private void RefreshDeletionFlag(string path)
     {

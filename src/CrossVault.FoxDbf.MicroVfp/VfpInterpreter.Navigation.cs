@@ -773,6 +773,7 @@ public sealed partial class VfpInterpreter
         public Dictionary<int, int>? OrderSlots;
         public bool OrderDescending;
         public bool OrderKeyIsField;
+        public bool OrderIsStructural;
         public string? OrderExpression;
         public Func<VfpValue, byte[]>? OrderEncodeKey;
         public string? OrderedFor;  // the tag name the Ordered cache was built for.
@@ -950,6 +951,7 @@ public sealed partial class VfpInterpreter
         m.OrderDescending = src.Descending != m.OrderReversed;
         m.Ordered = ordered;
         m.OrderedFor = m.Order;
+        m.OrderIsStructural = wa.Cdx?.Tag(m.Order!) is not null;
         // Remember the controlling key expression so a later REPLACE can decide (tag-scoped, 5.5) whether it
         // touched the order key — a CDX tag exposes it; a standalone .idx does not (null ⇒ drop on any REPLACE).
         m.OrderedKeyExpr = src.CdxTag?.KeyExpression?.Trim();
@@ -1108,7 +1110,7 @@ public sealed partial class VfpInterpreter
             m.KeyVisible = null;
             if (m.Ordered is null) continue;
             // Additional indexes do not supply structural-tag deltas; refresh them normally.
-            if (wa.Cdx?.Tag(m.Order!) is null)
+            if (!m.OrderIsStructural)
             {
                 m.Ordered = null;
                 m.OrderPos = -1;
