@@ -119,6 +119,8 @@ public sealed class MicroVfpSqlDmlConsolidatedTests(ITestOutputHelper output)
         foreach (int buffering in new[] { 1, 3, 5 })
         foreach (bool record in new[] { false, true })
             yield return new object[] { kind, buffering, record };
+        // VFP9 retains the already accepted record rule across the failed batch and external
+        // memvar change. R2's proposed invalidation would reject a retry which VFP accepts.
         yield return new object[] { "retry", 5, true };
     }
 
