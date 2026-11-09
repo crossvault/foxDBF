@@ -38,10 +38,11 @@ public sealed class CentralEuropeanCollationTests
     [Theory]
     [InlineData("CH", "ch")]
     [InlineData("cH", "ch")]
-    public void Hungary_ZeroTailPositions_DoNotMakeCaseVariantsUnequal(string left, string right)
+    public void Hungary_MissingLeftZeroTailSortsBeforeCaseVariant_WithExactOff(string left, string right)
     {
         var collation = (GeneralCollation)VfpCollations.ByName("HUNGARY", 1250);
-        Assert.Equal(0, collation.Compare(left, right, StringCompareMode.TruncateLeft));
+        // Live GrokCollationVfp9OracleTests distinguishes unpadded expressions from C(n) fields.
+        Assert.Equal(-1, collation.Compare(left, right, StringCompareMode.TruncateLeft));
     }
 
     [Theory]

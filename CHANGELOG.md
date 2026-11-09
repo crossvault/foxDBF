@@ -33,7 +33,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `SET COLLATE TO` / `INDEX ON` / `SEEK`.
 - **BREAKING:** `UPPER()` and `LOWER()` with these eight code pages now use VFP9's language byte
   mappings instead of Unicode casing, including in index expressions. Turkish dotted-I comparisons
-  also treat an absent secondary weight like a zero weight, as VFP9 does.
+  treat an absent secondary weight like a zero weight with EXACT ON or SQL ANSI OFF, as VFP9 does.
 - CZECH and SLOVAK collations on code pages 1250, 852 and 895; POLISH on 1250, 852 and 620;
   HUNGARY on 1250 and 852. VFP9-exact keys support bulk and incremental index creation, existing-tag
   maintenance, SEEK with EXACT OFF/ON, Rushmore ranges and microVFP `SET COLLATE TO` / `INDEX ON`.
@@ -83,6 +83,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `DTOC(d)+x`, `TTOC(t)`, date arithmetic and literals. Logical index expressions store VFP9's F/T keys.
 - BREAKING: `DTOC` of an empty date returns VFP9's date separators (`"  /  /    "`) instead of ten spaces;
   `TTOC` now honours its format argument and VFP9's empty DateTime representation.
+- **BREAKING:** with `SET EXACT OFF`, unpadded SWEFIN `Æ < AE`, TURKISH `İ < i` and
+  HUNGARY `CH < ch` comparisons now match VFP9: a missing left secondary weight sorts
+  before an explicit zero. SQL ANSI OFF still equates these pairs; embedded secondary
+  weights retain their positions. Accent differences now precede a missing primary suffix
+  on the left in inexact comparisons, including GENERAL `á > ab` and comparisons
+  with a longer, blank-padded right operand. SPANISH's asymmetric SQL comparisons and CP1254's
+  historical `UPPER()`/`LOWER()` byte mappings are protected by additional VFP9 regression tests.
 - microVFP `REPLACE` preserves fields named `all`, `rest`, `next` or `record` in values and
   predicates instead of misreading them as trailing record scopes.
 - **BREAKING:** with RI enforcement enabled, unbuffered `APPEND BLANK` fires the insert trigger

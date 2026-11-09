@@ -218,25 +218,36 @@ public sealed class GeneralCollation : IVfpCollation
             BuildKey(right, hR, tR, out int hcR, out int tcR, trim: false);
             if (_name == "SPANISH")
                 return CompareSpanishCutKeys(hL[..hcL], tL[..tcL], hR[..hcR], tR[..tcR], mode);
+            bool cutLeft = hcL > hcR;
             if (mode == StringCompareMode.TruncateLeft) hcL = Math.Min(hcL, hcR);
             else hcL = hcR = Math.Min(hcL, hcR);
 
-            int d = hL[..hcL].SequenceCompareTo(hR[..hcR]);
+            int commonHeads = Math.Min(hcL, hcR);
+            int d = hL[..commonHeads].SequenceCompareTo(hR[..commonHeads]);
             if (d != 0) return d < 0 ? -1 : 1;
+            if (hcL < hcR)
+            {
+                // VFP9 checks accents before the missing primary suffix with EXACT OFF:
+                // TURKISH ıé > Ié followed by blanks, likewise HUNGARY cHé > Ché plus blanks.
+                for (int i = 0; i < tcL; i++)
+                {
+                    byte rightTail = i < tcR ? tR[i] : (byte)0;
+                    if (tL[i] != rightTail) return tL[i] < rightTail ? -1 : 1;
+                }
+                return -1;
+            }
 
             var a = tL[..tcL];
             var b = tR[..tcR];
             if (a.StartsWith(b)) return 0;
-            // VFP9 SWEFIN gives Æ one zero tail but AE two and ignores that difference.
-            // This is sequence-specific: SPANISH Æ < AE with EXACT OFF (golden oracle).
-            if (_name == "SWEFIN" && b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
-            // VFP9 TURKISH equates dotted capital I (no tail) with i (zero tail).
-            // An absent secondary weight compares as zero, including with EXACT OFF.
-            if (_name == "TURKISH" && b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
+            // With EXACT OFF a missing left tail sorts before an explicit zero: VFP9
+            // gives SWEFIN Æ < AE, TURKISH İ < i and HUNGARY CH < ch. SQL ANSI OFF
+            // permits either tail run to extend the other; embedded zeros still keep their positions.
             if (mode == StringCompareMode.Shorter && b.StartsWith(a)) return 0;
-            // HUNGARY H suppresses a tail that h retains as zero. VFP9 still compares CH = ch.
-            // This is sequence-specific: SPANISH's suppressed ligature tails compare differently.
-            if (_name == "HUNGARY" && b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
+            // Cutting a longer primary run supplies missing zero tails. This is why a padded
+            // DBF field can match where the same unpadded literal does not (the live SCAN oracles).
+            if (cutLeft && (_name is "SWEFIN" or "TURKISH" or "HUNGARY") &&
+                b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
             d = a.SequenceCompareTo(b);
             return d < 0 ? -1 : 1;
         }
