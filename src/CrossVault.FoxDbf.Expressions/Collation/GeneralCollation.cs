@@ -5,7 +5,7 @@ using System.Linq;
 namespace CrossVault.FoxDbf.Expressions;
 
 /// <summary>
-/// VFP's table-driven collations: <c>GENERAL</c> (code pages 1252, 850, 437 and 1250) and <c>SPANISH</c> (1252
+/// VFP's table-driven collations: <c>GENERAL</c> (the VFP9 Western and Central European code pages) and <c>SPANISH</c> (1252
 /// and 850). The two-pass key is built from a per-code-page weight table (<see cref="GeneralWeights1252"/> and the
 /// CP850 / CP437 tables, ported from CodeBase <c>COLL4ARR.C</c>, the CP1250 table derived from VFP9's keys, plus
 /// their VFP9-verified variants):
@@ -45,6 +45,36 @@ public sealed class GeneralCollation : IVfpCollation
     /// <summary>GENERAL over CP1250 table bytes.</summary>
     internal static readonly GeneralCollation Cp1250 = new("GENERAL", CollationTable.General1250);
 
+    /// <summary>GENERAL over CP852 table bytes.</summary>
+    internal static readonly GeneralCollation Cp852 = new("GENERAL", CollationTable.General852);
+
+    /// <summary>GENERAL over CP857 table bytes.</summary>
+    internal static readonly GeneralCollation Cp857 = new("GENERAL", CollationTable.General857);
+
+    /// <summary>GENERAL over CP861 table bytes.</summary>
+    internal static readonly GeneralCollation Cp861 = new("GENERAL", CollationTable.General861);
+
+    /// <summary>GENERAL over CP863 table bytes.</summary>
+    internal static readonly GeneralCollation Cp863 = new("GENERAL", CollationTable.General863);
+
+    /// <summary>GENERAL over CP865 table bytes.</summary>
+    internal static readonly GeneralCollation Cp865 = new("GENERAL", CollationTable.General865);
+
+    /// <summary>GENERAL over CP1254 table bytes.</summary>
+    internal static readonly GeneralCollation Cp1254 = new("GENERAL", CollationTable.General1254);
+
+    /// <summary>GENERAL over CP10000 table bytes.</summary>
+    internal static readonly GeneralCollation Cp10000 = new("GENERAL", CollationTable.General10000);
+
+    /// <summary>GENERAL over CP10029 table bytes.</summary>
+    internal static readonly GeneralCollation Cp10029 = new("GENERAL", CollationTable.General10029);
+
+    /// <summary>GENERAL over CP620 table bytes.</summary>
+    internal static readonly GeneralCollation Cp620 = new("GENERAL", CollationTable.General620);
+
+    /// <summary>GENERAL over CP895 table bytes.</summary>
+    internal static readonly GeneralCollation Cp895 = new("GENERAL", CollationTable.General895);
+
     /// <summary>SPANISH over CP1252 table bytes.</summary>
     internal static readonly GeneralCollation Spanish1252 = new("SPANISH", CollationTable.Spanish1252);
 
@@ -63,7 +93,7 @@ public sealed class GeneralCollation : IVfpCollation
     /// <inheritdoc/>
     public string Name => _name;
 
-    /// <summary>The code page whose bytes this collation's weight table is indexed by (1252, 850, 437 or 1250).</summary>
+    /// <summary>The code page whose bytes this collation's weight table is indexed by (the table code page).</summary>
     public int CodePage => _table.CodePage;
 
     /// <summary>

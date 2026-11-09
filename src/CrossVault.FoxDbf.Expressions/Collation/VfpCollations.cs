@@ -77,6 +77,36 @@ public static class VfpCollations
 
         switch (codePage)
         {
+            case 852 when general:
+                collation = GeneralCollation.Cp852;
+                return CollationSupport.Exact;
+            case 857 when general:
+                collation = GeneralCollation.Cp857;
+                return CollationSupport.Exact;
+            case 861 when general:
+                collation = GeneralCollation.Cp861;
+                return CollationSupport.Exact;
+            case 863 when general:
+                collation = GeneralCollation.Cp863;
+                return CollationSupport.Exact;
+            case 865 when general:
+                collation = GeneralCollation.Cp865;
+                return CollationSupport.Exact;
+            case 1254 when general:
+                collation = GeneralCollation.Cp1254;
+                return CollationSupport.Exact;
+            case 10000 when general:
+                collation = GeneralCollation.Cp10000;
+                return CollationSupport.Exact;
+            case 10029 when general:
+                collation = GeneralCollation.Cp10029;
+                return CollationSupport.Exact;
+            case 620 when general:
+                collation = GeneralCollation.Cp620;
+                return CollationSupport.Exact;
+            case 895 when general:
+                collation = GeneralCollation.Cp895;
+                return CollationSupport.Exact;
             case 437 when general:
                 collation = GeneralCollation.Cp437;
                 return CollationSupport.Exact;

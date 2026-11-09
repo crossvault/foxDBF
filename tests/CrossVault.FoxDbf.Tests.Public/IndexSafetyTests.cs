@@ -80,8 +80,8 @@ public sealed class IndexSafetyTests
         {
             var error = Assert.Throws<DbfWriteException>(() => writer.AppendRecord("DELTA", "new memo"));
             Assert.Contains("BAD", error.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains(kind == "approximate" ? "852" : "1252", error.Message);
-            Assert.Contains(kind == "approximate" ? "GENERAL" : kind == "german" ? "GERMAN" : "MACHINE", error.Message);
+            Assert.Contains(kind == "approximate" ? "437" : "1252", error.Message);
+            Assert.Contains(kind == "approximate" ? "SPANISH" : kind == "german" ? "GERMAN" : "MACHINE", error.Message);
             Assert.Equal(1, writer.RecordCount);
         }
         foreach (var (path, bytes) in before) Assert.Equal(bytes, File.ReadAllBytes(path));
@@ -98,18 +98,18 @@ public sealed class IndexSafetyTests
     }
 
     [Theory]
-    [InlineData(false, "GENERAL")]
-    [InlineData(true, "GENERAL")]
-    [InlineData(false, "SPANISH")]
-    [InlineData(true, "SPANISH")]
-    public void ApproximateBuild_RefusesBeforeCreatingIndex(bool compact, string collation)
+    [InlineData(false, "GENERAL", 0xC9)]
+    [InlineData(true, "GENERAL", 0xC9)]
+    [InlineData(false, "SPANISH", 0x01)]
+    [InlineData(true, "SPANISH", 0x01)]
+    public void ApproximateBuild_RefusesBeforeCreatingIndex(bool compact, string collation, byte mark)
     {
         using var temp = new IndexMaintTestSupport.TempDir();
         string dbf = Path.Combine(temp.Path, "t.dbf");
         using (var writer = DbfWriter.Create(dbf, [new DbfColumnDef("k", 'C', 10)]))
             writer.AppendRecord("ALPHA");
         byte[] bytes = File.ReadAllBytes(dbf);
-        bytes[29] = 0x64;
+        bytes[29] = mark;
         File.WriteAllBytes(dbf, bytes);
         string index = Path.ChangeExtension(dbf, compact ? ".idx" : ".cdx");
         using (var writer = DbfWriter.Open(dbf))
@@ -128,7 +128,7 @@ public sealed class IndexSafetyTests
             [new DbfColumnDef("k", 'C', 10), new DbfColumnDef("note", 'M')],
             [new object?[] { "ALPHA", "original memo" }],
             new CdxTagDefinition("GOOD", "k"),
-            new CdxTagDefinition("BAD", "UPPER(k)", collation: kind is "udf" or "builtin" ? "MACHINE" : "GENERAL"));
+            new CdxTagDefinition("BAD", "UPPER(k)", collation: kind is "udf" or "builtin" ? "MACHINE" : kind == "approximate" ? "SPANISH" : "GENERAL"));
         string cdx = Path.ChangeExtension(dbf, ".cdx");
         byte[] bytes = File.ReadAllBytes(cdx);
         if (kind == "udf") Replace(bytes, "UPPER(k)", "e1udf(k)");
@@ -138,7 +138,8 @@ public sealed class IndexSafetyTests
         if (kind == "approximate")
         {
             bytes = File.ReadAllBytes(dbf);
-            bytes[29] = 0x64;
+            // GENERAL/852 is now exact; SPANISH/437 still exercises the approximate guard.
+            bytes[29] = 0x01;
             File.WriteAllBytes(dbf, bytes);
         }
         return dbf;

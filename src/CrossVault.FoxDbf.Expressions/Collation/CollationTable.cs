@@ -95,6 +95,46 @@ internal sealed class CollationTable
     public static CollationTable General1250 { get; } = new(1250, GeneralWeights1250.Head, GeneralWeights1250.Tail,
         GeneralWeights1250.Expansions, expansionTails: true, NoContractions, Map1250.Value);
 
+    /// <summary>GENERAL CP852, measured from VFP9 CDX keys.</summary>
+    public static CollationTable General852 { get; } = new(852, GeneralWeights852.Head, GeneralWeights852.Tail,
+        GeneralWeights852.Expansions, expansionTails: true, NoContractions, HighCharMap(GeneralWeights852.HighChars));
+
+    /// <summary>GENERAL CP857, measured from VFP9 CDX keys.</summary>
+    public static CollationTable General857 { get; } = new(857, GeneralWeights857.Head, GeneralWeights857.Tail,
+        GeneralWeights857.Expansions, expansionTails: true, NoContractions, HighCharMap(GeneralWeights857.HighChars));
+
+    /// <summary>GENERAL CP861, measured from VFP9 CDX keys.</summary>
+    public static CollationTable General861 { get; } = new(861, GeneralWeights861.Head, GeneralWeights861.Tail,
+        GeneralWeights861.Expansions, expansionTails: true, NoContractions, HighCharMap(GeneralWeights861.HighChars));
+
+    /// <summary>GENERAL CP863, measured from VFP9 CDX keys.</summary>
+    public static CollationTable General863 { get; } = new(863, GeneralWeights863.Head, GeneralWeights863.Tail,
+        GeneralWeights863.Expansions, expansionTails: true, NoContractions, HighCharMap(GeneralWeights863.HighChars));
+
+    /// <summary>GENERAL CP865, measured from VFP9 CDX keys.</summary>
+    public static CollationTable General865 { get; } = new(865, GeneralWeights865.Head, GeneralWeights865.Tail,
+        GeneralWeights865.Expansions, expansionTails: true, NoContractions, HighCharMap(GeneralWeights865.HighChars));
+
+    /// <summary>GENERAL CP1254, measured from VFP9 CDX keys.</summary>
+    public static CollationTable General1254 { get; } = new(1254, GeneralWeights1254.Head, GeneralWeights1254.Tail,
+        GeneralWeights1254.Expansions, expansionTails: true, NoContractions, HighCharMap(GeneralWeights1254.HighChars));
+
+    /// <summary>GENERAL CP10000, measured from VFP9 CDX keys.</summary>
+    public static CollationTable General10000 { get; } = new(10000, GeneralWeights10000.Head, GeneralWeights10000.Tail,
+        GeneralWeights10000.Expansions, expansionTails: true, NoContractions, HighCharMap(GeneralWeights10000.HighChars));
+
+    /// <summary>GENERAL CP10029, measured from VFP9 CDX keys.</summary>
+    public static CollationTable General10029 { get; } = new(10029, GeneralWeights10029.Head, GeneralWeights10029.Tail,
+        GeneralWeights10029.Expansions, expansionTails: true, NoContractions, HighCharMap(GeneralWeights10029.HighChars));
+
+    /// <summary>GENERAL CP620, measured from VFP9 CDX keys.</summary>
+    public static CollationTable General620 { get; } = new(620, GeneralWeights620.Head, GeneralWeights620.Tail,
+        GeneralWeights620.Expansions, expansionTails: true, NoContractions, HighCharMap(GeneralWeights620.HighChars));
+
+    /// <summary>GENERAL CP895, measured from VFP9 CDX keys.</summary>
+    public static CollationTable General895 { get; } = new(895, GeneralWeights895.Head, GeneralWeights895.Tail,
+        GeneralWeights895.Expansions, expansionTails: true, NoContractions, HighCharMap(GeneralWeights895.HighChars));
+
     /// <summary>
     /// SPANISH, CP1252: VFP9 uses the CP1252 GENERAL weights with <c>ñ</c>/<c>Ñ</c> as their own letter (head 113,
     /// no tail), <c>ch</c>/<c>ll</c> contractions, tail-less expansions and NO-BREAK SPACE (0xA0) weighted as a
