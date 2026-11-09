@@ -183,6 +183,8 @@ public sealed class MicroVfpSqlDmlFinalReviewTests(ITestOutputHelper output)
     [InlineData(true, "nosuchudf()", 1)]
     [InlineData(false, "nosuchvar", 12)]
     [InlineData(true, "nosuchvar", 12)]
+    [InlineData(false, ".F.<2", 107)]
+    [InlineData(true, ".F.<2", 107)]
     public void AdoRuleEvaluationErrors(bool update, string expression, int code)
     {
         using var dir = new MicroVfpTestSupport.TempDir("ado_rule_eval");

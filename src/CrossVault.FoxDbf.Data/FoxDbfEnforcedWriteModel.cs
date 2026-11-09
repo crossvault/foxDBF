@@ -39,11 +39,13 @@ internal sealed class FoxDbfEnforcedWriteModel
     internal int Execute(string sql)
     {
         try { return ExecuteCore(sql); }
-        catch (Exception ex) when (ex is not FoxDbfException && ex is IVfpErrorCode)
+        catch (Exception ex) when (ex is not FoxDbfException && ex is IVfpErrorCode or ExpressionException)
         {
             // Rules and RI failures originate in microVFP; keep the provider's DbException contract.
-            throw ((IVfpErrorCode)ex).VfpErrorNumber is { } number
-                ? new FoxDbfException(ex.Message, number, ex) : new FoxDbfException(ex.Message, ex);
+            // The independent expression assembly exposes its error number without IVfpErrorCode.
+            int? number = ex is IVfpErrorCode coded ? coded.VfpErrorNumber : ((ExpressionException)ex).VfpErrorNumber;
+            throw number is { } code
+                ? new FoxDbfException(ex.Message, code, ex) : new FoxDbfException(ex.Message, ex);
         }
     }
 
