@@ -1461,17 +1461,54 @@ public static class PrgParser
         {
             string rest = PrgScan.AfterFirstWord(text);
             var (head, segs) = Carve(rest, "FOR", "WHILE", "TO");
-            string? scope = PeelTrailingScope(ref head);
             var exprs = PrgScan.SplitTopCommas(head).Where(p => p.Length > 0).Select(PrgExpr.Parse).ToList();
+            string? scope = null;
+            string first = PrgScan.FirstWord(head);
+            // VFP reserves a leading scope word, even if a field has that name. Qualified
+            // fields and scope words inside an otherwise valid expression remain expressions.
+            if (IsScopeText(head) && (head.Length == first.Length || head[first.Length] != '.'))
+            {
+                string tail = PrgScan.AfterFirstWord(head);
+                scope = first;
+                head = tail;
+                if (first is "NEXT" or "RECORD")
+                {
+                    scope = first + " " + tail;
+                    head = "";
+                    foreach (var word in PrgScan.TopWords(tail))
+                    {
+                        if (word.Start == 0 || !char.IsWhiteSpace(tail[word.Start - 1])) continue;
+                        string count = tail[..word.Start].TrimEnd();
+                        if (!PrgExpr.Parse(count).IsParsed) continue;
+                        scope = first + " " + count;
+                        head = tail[word.Start..];
+                        break;
+                    }
+                }
+                exprs = PrgScan.SplitTopCommas(head).Where(p => p.Length > 0).Select(PrgExpr.Parse).ToList();
+            }
+            if (exprs.Any(e => !e.IsParsed))
+            {
+                scope ??= PeelTrailingScope(ref head);
+                exprs = PrgScan.SplitTopCommas(head).Where(p => p.Length > 0).Select(PrgExpr.Parse).ToList();
+            }
             PrgExpr? forE = null, whileE = null;
             var targets = new List<string>();
             foreach (var (k, b) in segs)
             {
-                if (k == "FOR") forE = PrgExpr.Parse(b);
-                else if (k == "WHILE") whileE = PrgExpr.Parse(b);
+                string body = b;
+                if (PrgScan.SplitTopCommas(body).Any(p => !PrgExpr.Parse(p).IsParsed))
+                {
+                    string? trailingScope = PeelTrailingScope(ref body);
+                    scope ??= trailingScope;
+                }
+                if (k == "FOR") forE = PrgExpr.Parse(body);
+                else if (k == "WHILE") whileE = PrgExpr.Parse(body);
                 else if (k == "TO") targets.AddRange(
-                    PrgScan.SplitTopCommas(b).Select(p => p.Trim()).Where(p => p.Length > 0));
+                    PrgScan.SplitTopCommas(body).Select(p => p.Trim()).Where(p => p.Length > 0));
             }
+            // With TO but no expression, VFP reports syntax error after scope positioning.
+            if (exprs.Count == 0 && targets.Count > 0) exprs.Add(PrgExpr.Parse(""));
             return new SumStmt(exprs, scope, forE, whileE, targets, PrgScan.FirstWord(text) == "AVERAGE");
         }
 

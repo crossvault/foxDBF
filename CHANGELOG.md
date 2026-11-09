@@ -8,6 +8,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- BREAKING: microVFP `SUM` now treats leading `REST` and `RECORD` as VFP9 scope keywords,
+  including VFP9 syntax errors when `TO` has no expression; qualify or parenthesize fields
+  with these names. `SUM` and `AVERAGE` preserve scope words inside expressions and support
+  scopes before expressions, after `TO` targets, and after `FOR`/`WHILE` predicates.
 - BREAKING: character, Varchar and memo writes now use VFP9's session-to-table best-fit bytes
   when a session code page is set and differs from the table page; reads use the reverse VFP9 map.
   microVFP always runs with a session code page (`CPCURRENT()`, the current ANSI code page by default).
