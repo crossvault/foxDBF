@@ -167,11 +167,13 @@ public sealed partial class VfpInterpreter
         Session.MemoryBridge = new MemvarBridge(this);
         Session.AdditionalIndexPaths = path =>
         {
-            // A SQL-layer write takes no PRG snapshot of a standalone index, and an ADO.NET copy-on-write commit
-            // swaps only DBF/FPT/CDX: inside either transaction it refuses instead of leaving the index stale.
-            if ((_txn.Count > 0 || Session.TxBeginWritePath is not null) && HasAdditionalIndexesOnTable(path))
+            // ADO.NET copy-on-write swaps only DBF/FPT/CDX, so additional indexes remain unsupported there.
+            if (Session.TxBeginWritePath is not null && HasAdditionalIndexesOnTable(path))
                 throw new MicroVfpRuntimeException("Writing with open standalone indexes is not supported in transactions or with candidate/RI rollback enforcement.");
             RequireCompactIndexWriteContext(path);   // the same candidate / RI limits as our own writers.
+            // The session calls this before releasing the work area or opening its writer. Capture
+            // every PRG frame's pre-image while the additional-index inventory is still available.
+            SnapshotForTxn(path);
             return OpenAdditionalIndexPaths(path);
         };
         Runtime = new RuntimeState();
