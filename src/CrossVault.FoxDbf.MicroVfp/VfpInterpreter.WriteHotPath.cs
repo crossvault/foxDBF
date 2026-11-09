@@ -110,6 +110,23 @@ public sealed partial class VfpInterpreter
 
     private void RequireCompactIndexWriteContext(string path)
     {
+        // Extra CDX files and legacy IDX files do not pass through structural-CDX maintenance.
+        // USE may open their VFP built-ins, but a write still needs an executable KEY and FOR.
+        foreach (var area in Session.OpenAreas)
+        {
+            if (!SamePath(area.Table.SourcePath, path)
+                || !_meta.TryGetValue(area.Area, out var meta) || meta.ExtraIndexes is not { Count: > 0 })
+                continue;
+            foreach (var index in IndexInventory(area.Area))
+            {
+                if (index.Structural) continue;
+                string? function = VfpRuntime.UnsupportedIndexFunction(index.KeyExpr)
+                    ?? VfpRuntime.UnsupportedIndexFunction(index.ForExpr);
+                if (function is not null && VfpFunctionNames.IsBuiltin(function))
+                    throw new DbfWriteException($"Cannot maintain index '{index.Name}': function {function}() is not supported by the index engine.");
+            }
+        }
+
         // These rollback mechanisms snapshot DBF/FPT/CDX only. Refuse before a write
         // rather than letting an IDX retain keys for a row that was rolled back.
         if (OpenCompactIdxPaths(path).Count > 0 && (_txn.Count > 0 || Session.TxBeginWritePath is not null

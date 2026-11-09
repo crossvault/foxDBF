@@ -350,6 +350,8 @@ internal static class VfpRuntime
     /// </summary>
     public static VfpValue CallFunction(string name, VfpValue[] args, EvaluationContext ctx, IRowContext row)
     {
+        // VFP resolves built-in abbreviations before looking for a user procedure of that spelling.
+        name = VfpFunctionAbbreviations.Canonical(name);
         // HOST HOOK (microVFP): a live interpreter may own the runtime STATE functions
         // (SEEK/ALIAS/SELECT/USED/RECNO(alias)/PCOUNT/SYS/EVALUATE/TYPE …) and user-defined
         // procedure/function calls. Consulted FIRST; false falls through to the built-ins below.
@@ -422,6 +424,9 @@ internal static class VfpRuntime
             case "VAL": return VfpValue.Number(Val(Arg(args, 0).AsString));
             case "CTOD": return Ctod(Arg(args, 0).AsString);
             case "CTOT": return Ctot(Arg(args, 0).AsString);
+            // VFP9: a Date becomes midnight, including the empty Date; NULL propagates above.
+            case "DTOT": return Arg(args, 0).Type == VfpType.Date
+                ? VfpValue.DateTime(Arg(args, 0).AsDateTime) : VfpValue.Null;
             case "DTOC":
             {
                 var d = Arg(args, 0).AsDate;
@@ -524,7 +529,7 @@ internal static class VfpRuntime
             "UPPER", "LOWER", "ALLTRIM", "TRIM", "RTRIM", "LTRIM", "LEFT", "RIGHT", "SUBSTR", "STR", "STRZERO",
             "PADL", "PADR", "PADC", "AT", "RAT", "STUFF", "CHRTRAN", "STRTRAN", "REPLICATE", "SPACE", "LEN",
             "CHR", "ASC",
-            "VAL", "CTOD", "CTOT", "DTOC", "DTOS", "TTOC",
+            "VAL", "CTOD", "CTOT", "DTOT", "DTOC", "DTOS", "TTOC",
             "DATE", "DATETIME", "DAY", "MONTH", "YEAR", "DOW", "CDOW", "CMONTH", "GOMONTH",
             "INT", "ROUND", "ABS", "MOD", "MAX", "MIN",
             "RECNO", "RECCOUNT", "DELETED", "BETWEEN", "INLIST",
@@ -532,22 +537,36 @@ internal static class VfpRuntime
             "LIKE", "LIKEC", "NORMALIZE", "TXTWIDTH",
         }, StringComparer.Ordinal);
 
+    /// <summary>The first function the index engine cannot evaluate, with VFP abbreviations expanded.</summary>
+    internal static string? UnsupportedIndexFunction(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        string? unsupported = null;
+        try
+        {
+            VfpExpression.Parse(text).ContainsFunction((name, _) =>
+            {
+                name = VfpFunctionAbbreviations.Canonical(name);
+                if (EngineFunctionNames.Contains(name)) return false;
+                unsupported = name;
+                return true;
+            });
+        }
+        catch (ExpressionException) { } // The caller also rejects unparseable definitions.
+        return unsupported;
+    }
+
     // Out of CallFunction's frame on purpose (MaxCallDepth headroom, see its default arm): the .NULL.-argument
     // tail. A known name propagates .NULL.; an unknown one is reported like any other unknown call.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static VfpValue NullArgument(string name, VfpValue[] args, EvaluationContext ctx, IRowContext row)
         => EngineFunctionNames.Contains(name) ? VfpValue.Null : UnknownFunction(name, args, ctx, row);
 
-    /// <summary>A name neither the host nor the engine implements. An abbreviation of a VFP function
-    /// (<c>SUBS</c>, <c>RECC</c>, see <see cref="VfpFunctionAbbreviations"/>) is dispatched once more under the
-    /// full name, so an abbreviation of a function nobody implements is reported under that full name. Anything
-    /// else goes to the host (microVFP), which raises VFP's error 1; without one (the SQL / ADO.NET / index path)
-    /// the call evaluates to <c>.NULL.</c> as before.</summary>
+    /// <summary>A name neither the host nor the engine implements, already expanded by CallFunction.
+    /// The host decides the failure; without one (SQL / ADO.NET / index evaluation), it yields NULL.</summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static VfpValue UnknownFunction(string name, VfpValue[] args, EvaluationContext ctx, IRowContext row)
     {
-        // Never re-expands: no full name is itself an abbreviation (a test pins this).
-        if (VfpFunctionAbbreviations.TryExpand(name, out var full)) return CallFunction(full, args, ctx, row);
         return row is IVfpFunctionHost host ? host.UnknownFunction(name, args) : VfpValue.Null;
     }
 

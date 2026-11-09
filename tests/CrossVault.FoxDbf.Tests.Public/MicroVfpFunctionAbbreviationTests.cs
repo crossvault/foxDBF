@@ -12,7 +12,7 @@ namespace CrossVault.FoxDbf.Tests;
 /// VFP9 accepts an abbreviation of a built-in function name: <c>SUBS()</c> is SUBSTR(), <c>RECC()</c> is
 /// RECCOUNT(). Four letters at least; when a prefix fits several functions the older one wins (SUBS is SUBSTR,
 /// not SUBSTRC; MESS is MESSAGE, not MESSAGEBOX); some later functions need 10 letters or the full name. The
-/// engine resolves an abbreviation in its unknown-function path, so it works in microVFP, in SQL and without a
+/// engine resolves an abbreviation before dispatch, so it works in microVFP, in SQL and without a
 /// host. SCATTER NAME / GATHER NAME (record objects) are not modelled and raise error 36 instead of doing nothing.
 /// Expected values are VFP9's (pinned by the internal MicroVfpFunctionAbbreviationVfp9OracleTests run).
 /// </summary>
@@ -116,12 +116,11 @@ public sealed class MicroVfpFunctionAbbreviationTests : IDisposable
     }
 
     [Fact]
-    public void UserProcedure_NamedLikeAnAbbreviation_IsCalled()
+    public void UserProcedure_NamedLikeAnAbbreviation_DoesNotOverrideBuiltin()
     {
-        // DOCUMENTED DEVIATION: VFP9 compiles SUBST( to SUBSTR even when a procedure SUBST exists; microVFP
-        // looks up procedures first, as it does for full function names.
+        // VFP9's compiler resolves SUBST to SUBSTR even when a procedure SUBST exists.
         _i.Execute("PROCEDURE subst(a, b)\nRETURN 'udf'\nENDPROC");
-        Assert.Equal("udf", Show("SUBST('abcdef', 2)"));
+        Assert.Equal("bcdef", Show("SUBST('abcdef', 2)"));
     }
 
     // ─────────────────────────── the engine, without a host ───────────────────────────

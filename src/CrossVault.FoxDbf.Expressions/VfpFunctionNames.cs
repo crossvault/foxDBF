@@ -69,6 +69,10 @@ internal static class VfpFunctionNames
 
     private static readonly Dictionary<string, string> Map = Build();
 
+    // SET/FOR have special argument grammar and are not in the decompiler probe's name(x) table.
+    internal static bool IsBuiltin(string upperName)
+        => upperName is "SET" or "FOR" || Map.ContainsKey(upperName);
+
     /// <summary>The function an upper-case <paramref name="upperName"/> calls. VFP's decompiler prints FIELD(),
     /// FILE() and MESSAGE() as FIELDS(), FILES(), MESSAGES() (one internal function each), so an index text
     /// VFP — or we — stored with the plural means the singular function.</summary>
