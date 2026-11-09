@@ -183,6 +183,31 @@ public sealed partial class VfpInterpreter
 
     // INDEXSEEK(key [, move [, area [, index]]]) uses SEEK's visibility and character-needle rules,
     // but VFP9 preserves the pointer on a miss, even when movement was requested.
+    private SeekStmt CheckSeekStatement(SeekStmt statement)
+    {
+        int area = statement.In is null ? Session.CurrentArea : ResolveAreaRef(statement.In);
+        string? tag = statement.Order is null ? null : NameOf(statement.Order);
+        var value = Eval(statement.Key);
+        CheckSeekValue(value, area, tag);
+        // A key UDF can SELECT another area. VFP binds the target before invoking it.
+        return statement with
+        {
+            Key = PrgExpr.Constant(value),
+            In = NameRef.OfName(area.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            Order = tag is null ? null : NameRef.OfName(tag)
+        };
+    }
+
+    private void CheckSeekValue(VfpValue value, int area, string? tag)
+    {
+        string? identity = tag ?? DefaultOrderIdentity(area);
+        if (identity is null) return;
+        using var source = OpenOrderSource(area, identity);
+        // VFP9 reports 9 for a numeric SEEK against a logical key, rather than a miss.
+        if (source?.KeyType == IndexKeyType.Logical && !value.IsNull && value.Type != VfpType.Logical)
+            throw new MicroVfpRuntimeException("Data type mismatch.", 9);
+    }
+
     private bool FnIndexSeek(VfpValue[] a)
     {
         if (a.Length == 0) return false;
@@ -218,6 +243,7 @@ public sealed partial class VfpInterpreter
         int hit;
         try
         {
+            CheckSeekValue(a[0], area, identity);
             found = DoSeekCore(a[0], area, identity);
             hit = m.RecNo;
         }

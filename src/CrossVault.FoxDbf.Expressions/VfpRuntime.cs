@@ -29,8 +29,8 @@ internal enum UnOp { Neg, Not }
 /// <summary>
 /// Single source of truth for VFP operator and function semantics. Both the
 /// tree-walking interpreter and the compiled (System.Linq.Expressions) delegate
-/// call into these methods, guaranteeing identical results. Nothing here throws
-/// on bad/null data — it coerces or yields <c>.NULL.</c> per VFP rules.
+/// call into these methods, guaranteeing identical results. Incompatible comparison operands
+/// raise VFP error 107; NULL propagation and valid conversions follow VFP rules.
 /// </summary>
 internal static partial class VfpRuntime
 {
@@ -222,7 +222,7 @@ internal static partial class VfpRuntime
         if ((l.Type is VfpType.Date or VfpType.DateTime) &&
             (r.Type is VfpType.Date or VfpType.DateTime))
             return l.IsEmptyDate == r.IsEmptyDate && l.AsDateTime == r.AsDateTime;
-        return false;
+        throw new ExpressionException("Operator/operand type mismatch.") { VfpErrorNumber = 107 };
     }
 
     // Q values compare raw bytes, never linguistic weights or space padding (VFP9).
@@ -340,9 +340,6 @@ internal static partial class VfpRuntime
     /// (<see cref="OperatorMode"/>), every other type <see cref="Compare"/>.</summary>
     internal static int CompareOperands(VfpValue l, VfpValue r, EvaluationContext ctx)
     {
-        // VFP does not coerce logical results to numbers for relational operators.
-        if ((l.Type == VfpType.Logical && IsNumeric(r)) || (r.Type == VfpType.Logical && IsNumeric(l)))
-            throw new ExpressionException("Operator/operand type mismatch.") { VfpErrorNumber = 107 };
         if (l.Type == VfpType.Character && r.Type == VfpType.Character)
             return l.IsBinary || r.IsBinary ? CompareBinaryStrings(l, r, ctx, false)
                 : CompareStrings(l.AsString, r.AsString, OperatorMode(ctx), ctx);
@@ -361,8 +358,9 @@ internal static partial class VfpRuntime
             return l.IsEmptyDate != r.IsEmptyDate ? (l.IsEmptyDate ? -1 : 1) : l.AsDateTime.CompareTo(r.AsDateTime);
         if (l.Type == VfpType.Logical && r.Type == VfpType.Logical)
             return l.AsLogical.CompareTo(r.AsLogical);
-        // Fallback: numeric coercion.
-        return l.AsDouble.CompareTo(r.AsDouble);
+        // VFP9 rejects mixed domains; dates and datetimes above are compatible.
+        // NULL propagation happens before operator/function dispatch.
+        throw new ExpressionException("Operator/operand type mismatch.") { VfpErrorNumber = 107 };
     }
 
     // ===================================================================

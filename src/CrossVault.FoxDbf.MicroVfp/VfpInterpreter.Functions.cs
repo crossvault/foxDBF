@@ -417,6 +417,7 @@ public sealed partial class VfpInterpreter
         if (a.Length == 0) return false;
         int area = a.Length > 1 ? AreaNumber(a[1]) : Session.CurrentArea;
         string? tag = a.Length > 2 ? a[2].AsString : null;
+        CheckSeekValue(a[0], area, tag);
         return DoSeek(a[0], area, tag);
     }
 

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using CrossVault.FoxDbf;
 using CrossVault.FoxDbf.Expressions;
 using CrossVault.FoxDbf.Query;
@@ -154,24 +156,55 @@ internal sealed partial class DmlExecutor
     private static void AppendAllColumns(VfpSession session, string table, DbfWriter writer, IReadOnlyList<DbfColumn> columns, object?[] values)
     {
         CheckInsertValueCount(columns, values);
-        using var appendLock = session.InsertValidatorFor(table) is null ? null : writer.LockAppendScope();
         if (session.InsertValidatorFor(table) is { } validate)
         {
             var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < columns.Count; i++) map[columns[i].Name] = values[i];
-            validate(table, writer.Schema, StoredInsertValues(writer, map, new bool[columns.Count]), new bool[columns.Count], writer.RecordCount + 1);
+            ValidateAndAppend(table, writer, map, new bool[columns.Count], validate);
         }
-        writer.AppendRecord(values);
+        else writer.AppendRecord(values);
     }
 
     private static void AppendValidatedRow(VfpSession session, string table, DbfWriter writer,
         Dictionary<string, object?> map, bool honourSetNull)
     {
         var blank = OmittedColumnsBlankMask(session, table, writer.Schema.Columns, map, honourSetNull);
-        using var appendLock = session.InsertValidatorFor(table) is null ? null : writer.LockAppendScope();
         if (session.InsertValidatorFor(table) is { } validate)
-            validate(table, writer.Schema, StoredInsertValues(writer, map, blank), blank, writer.RecordCount + 1);
-        writer.AppendRecord(map, blank);
+            ValidateAndAppend(table, writer, map, blank, validate);
+        else writer.AppendRecord(map, blank);
+    }
+
+    private static void ValidateAndAppend(string table, DbfWriter writer, Dictionary<string, object?> map,
+        bool[] blank, Action<string, DbfTable, Dictionary<string, object?>, bool[], int> validate)
+    {
+        var schema = writer.Schema;
+        var values = schema.Columns.Select(c => map.GetValueOrDefault(c.Name)).ToArray();
+        bool autoIncrement = schema.Columns.Any(c => c.IsAutoIncrement);
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            byte[] preview;
+            int recno;
+            using (writer.LockAppendScope())
+            {
+                preview = writer.EncodeRuleRow(values, blank);
+                recno = writer.RecordCount + 1;
+            }
+            // User code may open/write tables. Never invoke it while holding the append lock.
+            try { validate(table, schema, StoredImportValues(schema, new DbfRecord(schema, preview), map), blank, recno); }
+            catch
+            {
+                if (autoIncrement) writer.ConsumeRejectedRuleAutoincrement(preview);
+                throw;
+            }
+            using (writer.LockAppendScope())
+            {
+                if (writer.RecordCount + 1 != recno
+                    || (autoIncrement && !preview.AsSpan().SequenceEqual(writer.EncodeRuleRow(values, blank)))) continue;
+                writer.AppendRecord(map, blank);
+                return;
+            }
+        }
+        throw new IOException("INSERT target changed during both validation attempts.");
     }
 
     // ---- INSERT ... FROM ARRAY | FROM MEMVAR ----------------------------------------------
@@ -248,9 +281,9 @@ internal sealed partial class DmlExecutor
         Dictionary<string, object?> map, bool[] blank,
         Action<string, DbfTable, Dictionary<string, object?>, bool[], int> validate)
     {
-        // Exclusive work areas must be restored while PRG rules run. After reopening the writer,
-        // verify the candidate under the append lock; only contention repeats rule evaluation.
-        while (true)
+        // Restore exclusive areas for PRG callbacks, then verify the candidate under the lock.
+        // One revalidation handles contention without permitting a callback-driven endless loop.
+        for (int attempt = 0; attempt < 2; attempt++)
         {
             var schema = target.Writer.Schema;
             byte[] preview;
@@ -263,7 +296,16 @@ internal sealed partial class DmlExecutor
             }
             var stored = StoredImportValues(schema, new DbfRecord(schema, preview), map);
             target.Dispose();
-            validate(table, schema, stored, blank, recno);
+            try { validate(table, schema, stored, blank, recno); }
+            catch
+            {
+                if (schema.Columns.Any(c => c.IsAutoIncrement))
+                {
+                    target = _session.OpenWritableTarget(table);
+                    target.Writer.ConsumeRejectedRuleAutoincrement(preview);
+                }
+                throw;
+            }
             target = _session.OpenWritableTarget(table);
             using (target.Writer.LockAppendScope())
             {
@@ -273,6 +315,7 @@ internal sealed partial class DmlExecutor
                 return;
             }
         }
+        throw new IOException("INSERT target changed during both validation attempts.");
     }
 
     // ---- omitted INSERT columns -----------------------------------------------------------
@@ -348,14 +391,6 @@ internal sealed partial class DmlExecutor
         Span<byte> bytes = stackalloc byte[column.Length];
         FieldEncoder.Encode(column, value, schema.Encoding, bytes);
         return FieldDecoder.Decode(column, bytes, schema.Encoding);
-    }
-
-    private static Dictionary<string, object?> StoredInsertValues(DbfWriter writer,
-        Dictionary<string, object?> map, bool[] blank)
-    {
-        var values = writer.Schema.Columns.Select(c => map.GetValueOrDefault(c.Name)).ToArray();
-        var record = new DbfRecord(writer.Schema, writer.EncodeRuleRow(values, blank));
-        return StoredImportValues(writer.Schema, record, map);
     }
 
     /// <summary>The DBC Field record of <paramref name="col"/>, the <paramref name="field"/>-th non-system

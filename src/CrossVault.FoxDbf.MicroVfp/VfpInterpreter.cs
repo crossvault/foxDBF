@@ -575,7 +575,7 @@ public sealed partial class VfpInterpreter
             case XbaseUpdateStmt update: ExecXbaseUpdate(update); break;
             case SelectAreaStmt sa: ExecSelectArea(sa); break;
             case SqlSelectStmt sq: ExecSqlSelect(sq); break;
-            case SeekStmt sk: ExecSeek(sk); break;
+            case SeekStmt sk: ExecSeek(CheckSeekStatement(sk)); break;
             case GoStmt go: ExecGo(go); break;
             case SkipStmt sp: ExecSkip(sp); break;
             case SetOrderStmt so: ExecSetOrder(so); break;

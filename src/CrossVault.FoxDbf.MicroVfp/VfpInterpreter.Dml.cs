@@ -16,6 +16,7 @@ namespace CrossVault.FoxDbf.MicroVfp;
 public sealed partial class VfpInterpreter
 {
     private Exception? _insertDefaultRuleError;
+    private HashSet<string>? _activeRulePaths;
 
     /// <summary>Every route below (direct append, buffered, CANDIDATE, RI, the SQL DML fallback) fills a DBC
     /// member's omitted columns from their field DEFAULTs, as VFP9 does: the session's
@@ -23,6 +24,11 @@ public sealed partial class VfpInterpreter
     /// previous evaluator is restored afterwards, so an INSERT inside a DEFAULT's UDF nests.</summary>
     private void ExecInsert(InsertStmt ins)
     {
+        // VFP9 forbids inserting into the table whose validation rule is currently running.
+        // Reject before DEFAULTs or writer callbacks can consume an AUTOINC value.
+        if (_activeRulePaths is { Count: > 0 } && ResolveInsertStatement(ins) is { } nested
+            && ResolveInsertTablePath(nested.Table) is { } rulePath && _activeRulePaths.Contains(Path.GetFullPath(rulePath)))
+            throw new MicroVfpRuntimeException("Cannot modify a table while its rule is being evaluated.", 1887);
         var previousDefaultRuleError = _insertDefaultRuleError;
         _insertDefaultRuleError = null;
         var previous = Session.DbcDefaultEvaluator;
@@ -65,8 +71,7 @@ public sealed partial class VfpInterpreter
                     count = Math.Max(count, writer.RecordCount);
                 PositionPointer(Meta(wa.Area), null, count);
             }
-            if (_insertDefaultRuleError is { } defaultError)
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(defaultError).Throw();
+            ThrowInsertDefaultRuleError();
         }
         finally
         {
@@ -76,6 +81,12 @@ public sealed partial class VfpInterpreter
             Session.InsertRuleFilter = previousFilter;
             _insertDefaultRuleError = previousDefaultRuleError;
         }
+    }
+
+    private void ThrowInsertDefaultRuleError()
+    {
+        if (_insertDefaultRuleError is { } error)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
     }
 
     private void ValidateInsertRules(string table, DbfTable schema, Dictionary<string, object?> supplied, bool[] blank, int recno, DbcTableRules rules)
@@ -113,9 +124,18 @@ public sealed partial class VfpInterpreter
     private VfpValue EvalRuleExpression(string expression)
     {
         bool previous = _requireDmlNames;
+        string? path = Session.AreaAt(Session.CurrentArea)?.Table.SourcePath;
+        path = path is null ? null : Path.GetFullPath(path);
+        var active = _activeRulePaths ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (path is not null && !active.Add(path))
+            throw new MicroVfpRuntimeException("Cannot modify a table while its rule is being evaluated.", 1887);
         _requireDmlNames = true;
         try { return EvalTextLoud(expression); }
-        finally { _requireDmlNames = previous; }
+        finally
+        {
+            _requireDmlNames = previous;
+            if (path is not null) active.Remove(path);
+        }
     }
 
     private VfpValue EvalFieldRuleError(string expression, string field)
@@ -123,11 +143,22 @@ public sealed partial class VfpInterpreter
         var row = DefaultRowFor(Session.CurrentArea);
         var area = Session.AreaAt(Session.CurrentArea);
         if (row is null || area is null) return EvalTextLoud(expression);
-        // VFP rolls the rejected field back before evaluating its ERROR expression. A record
+        // Unbuffered VFP rolls the rejected field back before its ERROR expression. A record
         // rule's ERROR expression, in contrast, still sees the complete rejected candidate.
         bool supplied = row.Values.TryGetValue(field, out var candidate);
-        row.Values[field] = ReadFieldOnDisk(area, field);
+        var buffer = Meta(area.Area).Buf;
+        int appendIndex = row.RecNo - area.Table.RecordCount - 1;
+        bool retainedBuffer = _xbaseUpdateUnbufferedArea != area.Area && buffer is not null
+            && (buffer.Rows.ContainsKey(row.RecNo) || (appendIndex >= 0 && appendIndex < buffer.Appends.Count));
+        // A rejected edit remains in a real buffer, and VFP's ERROR expression sees it.
+        // An INSERT candidate not yet admitted to that buffer still sees the blank disk row.
+        if (!retainedBuffer) row.Values[field] = ReadFieldOnDisk(area, field);
         try { return EvalTextLoud(expression); }
+        catch (MicroVfpRuntimeException error)
+        {
+            error.FromFieldErrorExpression = true;
+            throw;
+        }
         finally
         {
             if (supplied) row.Values[field] = candidate;
@@ -713,18 +744,28 @@ public sealed partial class VfpInterpreter
                     assigned++;
                 }
             }
-            catch (MicroVfpRuntimeException error) when (error.VfpErrorNumber == 9 && assigned > 0)
+            catch (MicroVfpRuntimeException error) when (error.VfpErrorNumber == 9 && !error.FromFieldErrorExpression && assigned > 0)
             {
                 // Publish the accepted prefix before surfacing a later assignment's type error.
                 assignmentError = error;
             }
-            if (candidate is not null)
-                WithImportRow(wa, m.RecNo, candidate, () =>
-                {
-                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
-                        fieldsToValidate: new HashSet<string>(), validateRecord: true, rules: rules);
-                    return true;
-                });
+            try
+            {
+                if (candidate is not null)
+                    WithImportRow(wa, m.RecNo, candidate, () =>
+                    {
+                        DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
+                            fieldsToValidate: new HashSet<string>(), validateRecord: true, rules: rules);
+                        return true;
+                    });
+            }
+            catch when (assignmentError is not null)
+            {
+                // VFP still runs the record rule, but a pending type error has precedence.
+                // A rejected record leaves the original row intact.
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(assignmentError).Throw();
+                throw;
+            }
             writer.UpdateRecord(recIndex, values);
             writer.Flush();
         }

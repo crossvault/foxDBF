@@ -210,6 +210,8 @@ public sealed partial class VfpInterpreter
                 DmlExecutor.EvaluateDbcDefaults(Session, statement.Table, area.Table.Columns, map);
                 if (buffered)
                 {
+                    // VFP retains the partially defaulted row only on an unbuffered INSERT.
+                    ThrowInsertDefaultRuleError();
                     WithImportRow(area, EffCount(area.Area, area) + 1, map, () =>
                     {
                         DmlExecutor.ValidateImportRules(Session, statement.Table, area.Table.Columns, map, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError);
@@ -262,6 +264,8 @@ public sealed partial class VfpInterpreter
                     finally { snapshot?.Cleanup(); }
                 }
                 Memory.Set("_TALLY", VfpValue.Integer(++tally));
+                // A nested DEFAULT failure belongs to this candidate, not the whole source.
+                ThrowInsertDefaultRuleError();
             }
         }
         finally { if (!buffered) ReopenFileAreas(path); }

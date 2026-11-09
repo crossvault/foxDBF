@@ -104,10 +104,10 @@ public sealed partial class VfpInterpreter
                 if (match)
                 {
                     try { BufferReplace(statement.Replacement, target, Session.AreaAt(target)!, Meta(target), normalize: true); }
-                    catch (MicroVfpRuntimeException error) when (buffering == 1 && error.VfpErrorNumber == 9)
+                    catch (MicroVfpRuntimeException error) when (buffering == 1 && error.VfpErrorNumber == 9 && !error.FromFieldErrorExpression)
                     {
                         // A later type mismatch retains the preceding assignments on this row.
-                        FinishRow(leavingRow: false);
+                        FinishRow(leavingRow: false, pendingTypeError: error);
                         throw;
                     }
                     tally++;
@@ -145,12 +145,23 @@ public sealed partial class VfpInterpreter
             return dot < 0 ? text : text[(dot + 1)..];
         }
 
-        void FinishRow(bool leavingRow = true)
+        void FinishRow(bool leavingRow = true, MicroVfpRuntimeException? pendingTypeError = null)
         {
             var current = Meta(target);
             if (current.Buf?.Rows.TryGetValue(current.RecNo, out var edit) == true)
             {
-                if (buffering <= 3 || leavingRow) ValidateBufferedRow(Session.AreaAt(target)!, current.RecNo, edit);
+                // A CHECK evaluation error already completed the field assignment in VFP.
+                // Do not evaluate that field again while publishing the accepted prefix.
+                if (pendingTypeError is not null) edit.ValidatedFields.UnionWith(edit.Fields.Keys);
+                try
+                {
+                    if (buffering <= 3 || leavingRow) ValidateBufferedRow(Session.AreaAt(target)!, current.RecNo, edit);
+                }
+                catch when (pendingTypeError is not null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(pendingTypeError).Throw();
+                    throw;
+                }
                 if (buffering == 1)
                 {
                     // Publish through the normal REPLACE writer so candidate uniqueness and RI

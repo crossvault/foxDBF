@@ -117,13 +117,37 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- ADO.NET `EnforceRules` DELETE reuses an already open renamed alias, so delete triggers
+  observe the caller's work area and no extra alias is opened.
+
+- INSERT rejects recursive writes from the target's validation rule with VFP error 1887,
+  without publishing a row. A rejected unbuffered INSERT VALUES rule consumes its assigned
+  AUTOINC value as VFP9 does, including when a CANDIDATE index is present.
+  Rule callbacks run outside the append lock; concurrent changes
+  trigger at most one revalidation before an I/O conflict is reported.
+
+- Field-rule ERROR expressions now read the rejected value retained in a row/table buffer,
+  including buffered appends. Unbuffered replacements continue to report the preceding value.
+
+- `REPLACE` rejects incompatible field types before evaluating later clauses and retains the
+  accepted prefix on error 9. Error 9 in a field ERROR expression discards the candidate;
+  error 9 in CHECK evaluation retains it as in VFP9. Record rules still run on a partial replacement,
+  including `UPDATE ON`, but their failure no longer replaces the pending error 9.
+
+- `INSERT ... SELECT` stops after the current candidate when a nested DEFAULT fails validation.
+  VFP9 retains that candidate unbuffered and discards it with row/table buffering; later source
+  rows are never inserted. `INSERT FROM ARRAY` continues to leave omitted fields blank.
+
 - ADO.NET rule errors evaluate DBC ERROR expressions instead of exposing their quoted source;
   microVFP MESSAGE()/AERROR() report the same VFP9 field/record validation text.
   Rule evaluation errors, including missing functions/variables, preserve their VFP error number
   in a provider DbException.
-- REPLACE rejects incompatible field values and preserves earlier assignments when a later value has
-  the wrong type, including buffered writes.
-- Logical/numeric relational comparisons raise VFP error 107 instead of coercing logical operands.
+- BREAKING: incompatible non-NULL comparison operands (including logical/numeric,
+  logical/date and character/numeric) raise VFP error 107 for `=`, `==`, `<>`, `#`, `!=`,
+  `<`, `<=`, `>`, `>=`, `INLIST`, `BETWEEN`, `MIN` and `MAX`. NULL still propagates;
+  Date/DateTime comparisons remain supported. Indexed filtering and counting preserve these
+  errors instead of pruning incompatible date/numeric predicates or returning zero.
+  A numeric SEEK against a logical index reports VFP error 9.
 - ADO.NET `EnforceRules=on` validates generated AUTOINC and rounded numeric values as VFP9 stores them,
   keeping append validation consistent with the stored counter when another writer appends,
   and reuses the target work area across INSERT/UPDATE statements, including a table opened under

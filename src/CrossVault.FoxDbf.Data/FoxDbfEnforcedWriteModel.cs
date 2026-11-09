@@ -241,7 +241,7 @@ internal sealed class FoxDbfEnforcedWriteModel
     private int Delete(DeleteStatement del)
     {
         var recs = MatchingRecords(del.Table, del.Where?.Text);
-        TryExecute($"USE {del.Table} IN 0");
+        int area = EnsureWriteArea(del.Table);
         foreach (int rec in recs)
         {
             // Each matched-row DELETE auto-fires the bound __RI_DELETE_* trigger (cascade to children, or a
@@ -249,7 +249,7 @@ internal sealed class FoxDbfEnforcedWriteModel
             // .F. return ⇒ raise VFP err 1539 (don't report a phantom success); the multi-row loop stops on
             // the first blocked row.
             _interp.LastDmlTriggerAborted = false;
-            _interp.Execute($"SELECT {del.Table}\nGO {rec}\nDELETE");
+            _interp.Execute($"SELECT {area}\nGO {rec}\nDELETE");
             ThrowIfTriggerAborted(del.Table);
         }
         return recs.Count;
@@ -293,11 +293,6 @@ internal sealed class FoxDbfEnforcedWriteModel
         if (area is not null) return area.Area;
         _interp.Execute($"USE {table} IN 0");
         return _connection.Session.FindInsertArea(table)!.Area;
-    }
-
-    private void TryExecute(string prg)
-    {
-        try { _interp.Execute(prg); } catch { /* best-effort setup (USE/SELECT) — failures surface downstream */ }
     }
 
     // Render a microVFP value as a VFP literal for the augmented INSERT statement. Reuses the provider's
