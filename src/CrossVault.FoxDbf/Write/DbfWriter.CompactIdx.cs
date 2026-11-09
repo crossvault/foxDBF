@@ -83,6 +83,28 @@ public sealed partial class DbfWriter
         return skip(index.Header.KeyExpression) || skip(index.Header.ForExpression);
     }
 
+    private bool _deletionRekeyed;
+
+    /// <summary>True (once; the flag resets) when a DELETE / RECALL since the last call re-keyed an open index,
+    /// i.e. a structural tag, compact <c>.idx</c> or additional index whose KEY/FOR depends on the deletion
+    /// state. Read views of every other index stay valid across a deletion flip.</summary>
+    internal bool ConsumeDeletionRekey()
+    {
+        bool rekeyed = _deletionRekeyed;
+        _deletionRekeyed = false;
+        return rekeyed;
+    }
+
+    private bool AdditionalIndexesDependOnDeletion()
+    {
+        foreach (var (path, context) in _openAdditionalIndexes)
+            if (GetAdditionalIndexPlan(path, context).Computers.Values.Any(c => c.DependsOnDeletionState)) return true;
+        foreach (var (path, context) in _openCompactIndexes)
+            if (!SkipUnavailableCompactIndex(path, context) && ReadCompactIndexPlan(path, context).Computer.DependsOnDeletionState)
+                return true;
+        return false;
+    }
+
     private void ValidateCompactIndexes()
     {
         ValidateAdditionalIndexes();

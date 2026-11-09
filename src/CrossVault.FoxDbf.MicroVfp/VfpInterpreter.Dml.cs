@@ -808,12 +808,17 @@ public sealed partial class VfpInterpreter
         {
             _requireDmlNames = savedRequireNames;
             Session.SelectArea(savedArea);
-            try { lease?.Writer.Flush(); }
+            bool rekeyed = false;
+            try
+            {
+                rekeyed = lease?.Writer.ConsumeDeletionRekey() == true;
+                lease?.Writer.Flush();
+            }
             finally { lease?.Dispose(); }
             // A DELETE-dependent key/FOR can change index membership even though no field changed.
             // Reopen only after the writer flushes its index pages; otherwise SEEK sees stale keys.
-            if (writePath is not null && (Session.OpenAreas.Any(w => SamePath(w.Table.SourcePath, writePath)
-                && w.Cdx is not null) || OpenAdditionalIndexPaths(writePath).Count > 0))
+            // Other indexes are unchanged by a deletion flip, so SCAN … DELETE keeps its per-row cost.
+            if (writePath is not null && rekeyed)
             {
                 ReopenFileAreas(writePath);
                 ResetMetaCachesForPath(writePath);

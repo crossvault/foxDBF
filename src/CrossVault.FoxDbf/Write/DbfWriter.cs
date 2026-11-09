@@ -779,6 +779,7 @@ public sealed partial class DbfWriter : IDisposable
             // Only a tag whose KEY/FOR can see the deletion flag changes (VFP9 keeps every other key in place).
             bool structural = _cdxMaintEditor is not null && _cdxMaintPlans is not null
                 && _cdxMaintPlans.Exists(plan => plan.Computer.DependsOnDeletionState);
+            if (structural || (HasAdditionalIndexes && AdditionalIndexesDependOnDeletion())) _deletionRekeyed = true;
             byte[]? before = structural || HasAdditionalIndexes
                 ? ReadRaw(_handle, offset, _recordLength) : null;
             using var mutation = structural ? BeginIndexMutation(offset, append: false, before: before) : null;
