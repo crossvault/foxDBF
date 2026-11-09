@@ -30,8 +30,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
-- microVFP runs UPDATE-SQL and DELETE-SQL in PRGs with VFP9-matched row expressions, `_TALLY`, work-area/record-pointer behavior, errors, validation and triggers, buffering, index maintenance, and transaction commit/rollback.
-
+- microVFP runs UPDATE-SQL and DELETE-SQL (`UPDATE … SET … WHERE`, `DELETE [target] FROM … WHERE`) in
+  programs with VFP9's row expressions (memvars, UDFs), left-to-right SET, `_TALLY`, final pointers and work
+  areas, error numbers, field/record rules and triggers, buffering, index maintenance and transactions.
+  One writer serves the whole statement, and `SCAN` / `SKIP` keep their place when a DELETE changes the
+  membership of the controlling index.
 - `CREATE TABLE` / `CREATE DBF` accept AFIELDS-style microVFP arrays with 4–18 columns, including
   field rules, table properties and autoincrement seeds. Declarations support `AUTOINC NEXTVALUE ...
   STEP ...` and `NOCPTRANS`, with VFP9 descriptor bytes and validation errors.
@@ -52,7 +55,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   accepted prefix rows on constraint failures and validate keys against the transaction's write copy.
   VFP9 integer import overflow bytes are preserved, including with insert triggers or additional
   indexes, and exposed as overflow in expressions. VALUES retains its strict overflow errors.
-
 - microVFP scoped `DELETE` and `RECALL`: `ALL`, `NEXT`, `RECORD`, `REST`, `FOR`, `WHILE`,
   `IN` and `NOOPTIMIZE`, with VFP9 record order, visibility, final pointers and `_TALLY`.
   Includes row/table buffering, partial progress on predicate or delete-trigger failure,
@@ -89,6 +91,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `ADDITIVE`, `BLANK`, `MEMO`, and `FIELDS` lists, `LIKE` and `EXCEPT` patterns.
 - microVFP `REPLACE` supports `ALL`, `FOR`, `WHILE`, `NEXT`, `REST` and `RECORD`, preserving VFP9's final
   record position, visibility under SET DELETED/FILTER/KEY, buffering and index maintenance.
+  `_TALLY` counts the processed rows, including a row a trigger rejects, and keeps its previous value
+  when no table is open.
 - BREAKING: `DATETIME(year, month, day [, hour [, minute [, second]]])` in expressions, SQL and microVFP,
   including fractional-component truncation, NULL component defaults and empty results for impossible
   calendar dates, as in VFP9. Invalid arguments now raise VFP errors 11, 1229 or 1230
@@ -99,19 +103,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
-- `DELETE` / `RECALL` no longer re-key an index whose KEY/FOR reaches `DELETED()` only through a UDF
-  (`INDEX ON id FOR livefn()`); VFP9 keeps such entries, and the record stays findable by `SEEK`.
-- microVFP `SCAN` and `SKIP` retain their place after `DELETE`/`RECALL` changes membership in
-  the controlling index. SQL `DELETE FROM` shares one statement writer and refreshes
-  deletion-dependent indexes once per statement.
 - BREAKING: With `EnforceReferentialIntegrity = true`, buffered field rules run when `REPLACE`
-  changes the field and can reject it immediately; record rules run once at commit.
-  SQL UPDATE's successful validations are retained through `TABLEUPDATE` and row-buffer commits,
-  avoiding duplicate rule-UDF side effects while still rejecting invalid buffered values.
-- Scoped microVFP `REPLACE` preserves `_TALLY` when no table is open and includes the rejected
-  row when an update trigger fails. `UPDATE ON` again reports an explicitly unsupported xBase
-  command; ambiguous `DELETE FOR from=1` retains VFP9's SQL filename interpretation and error.
-
+  changes the field and can reject it immediately; record rules run once at commit (`TABLEUPDATE`
+  or the row-buffer commit on a pointer move), as in VFP9. Rule UDFs run once per validation.
+- BREAKING: microVFP reads `DELETE <word> FROM …` as DELETE-SQL, as VFP9 does. `DELETE FOR from=1`
+  and `DELETE IN from` (a field or alias named `from`) now raise VFP9's errors 1 and 10 instead of
+  deleting.
 - microVFP: SQL writes maintain the open standalone `.idx` files of the table as VFP9 does. `INSERT … FROM ARRAY` /
   `FROM MEMVAR` no longer refuse with an open `.idx`, and `UPDATE` / `DELETE` through the session's SQL layer no
   longer leave it stale. Transactions and candidate/RI rollback keep their existing standalone-index restriction.
@@ -144,7 +141,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   library access remains readable and refuses unsupported maintenance. Native scalar keys retain their
   compiled path. Open nonstructural CDX and legacy IDX files are maintained incrementally alongside compact
   IDX files, without rebuilding the whole index per row. UNIQUE maintenance no longer resurrects previously
-  suppressed duplicates after REPLACE.
+  suppressed duplicates after REPLACE. `DELETE` / `RECALL` re-key only tags whose own KEY/FOR expression
+  depends on the deletion state; like VFP9, a dependence hidden in a UDF (`FOR livefn()`) is not re-keyed.
 - microVFP `SYS(2335,0)` enables VFP9's unattended index-error behavior: after an array used by an
   open index is released, row and memo writes proceed without a catchable error and the unavailable
   index retains its old entries. `SYS(2335,1)` restores normal missing-function rejection.
