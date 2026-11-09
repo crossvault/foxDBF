@@ -45,6 +45,28 @@ public sealed class FinalReviewAliasTests
         Assert.False(vfp.EvalExpression("SEEK('ALPHA')").AsLogical);
     }
 
+    [Fact]
+    public void UpdateSql_OpenIdx_InPrgTransaction_RefusesBeforeWriting()
+    {
+        // The SQL writer takes no PRG snapshot of the .idx, so ROLLBACK could not restore it: refuse instead.
+        using var temp = new MicroVfpTestSupport.TempDir("alias_idx_txn");
+        using var session = new VfpSession();
+        session.OpenDirectory(temp.Path);
+        CreateTable(temp, database: false);
+        // A legacy (non-compact) .idx: PRG transactions allow it for the interpreter's own snapshotting writers.
+        using (var writer = DbfWriter.Open(temp.File("customer.dbf")))
+            writer.CreateStandaloneIdx(temp.File("legacy.idx"), "k");
+        using var vfp = new VfpInterpreter(session) { EnforceReferentialIntegrity = false };
+        byte[] dbf = File.ReadAllBytes(temp.File("customer.dbf"));
+        byte[] idx = File.ReadAllBytes(temp.File("legacy.idx"));
+        vfp.Execute("BEGIN TRANSACTION\nUSE customer ALIAS cust INDEX legacy.idx");
+        var error = Assert.ThrowsAny<Exception>(() => session.Execute("UPDATE customer SET k = 'ZULU' WHERE k = 'ALPHA'"));
+        Assert.Contains("standalone indexes", error.Message);
+        vfp.Execute("ROLLBACK\nUSE");
+        Assert.Equal(dbf, File.ReadAllBytes(temp.File("customer.dbf")));
+        Assert.Equal(idx, File.ReadAllBytes(temp.File("legacy.idx")));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

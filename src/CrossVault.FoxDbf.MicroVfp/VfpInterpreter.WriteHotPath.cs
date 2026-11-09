@@ -147,6 +147,20 @@ public sealed partial class VfpInterpreter
         return paths is null ? Array.Empty<string>() : paths;
     }
 
+    /// <summary>True when any open area on the table at <paramref name="path"/> (compared copy→live, so an area
+    /// riding a transaction's private copy counts) has a standalone index open.</summary>
+    private bool HasAdditionalIndexesOnTable(string path)
+    {
+        string Live(string p) => Path.GetFullPath(Session.TxLivePath?.Invoke(p) ?? p);
+        string target = Live(path);
+        foreach (var area in Session.OpenAreas)
+            if (_meta.TryGetValue(area.Area, out var meta) && meta.ExtraIndexes is { Count: > 0 }
+                && area.Table.SourcePath is string source
+                && string.Equals(Live(source), target, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
+
     /// <summary>The column-name view of <see cref="OpenWriter"/> for <paramref name="path"/>. The EXCLUSIVE
     /// rewriters (INDEX / REINDEX / PACK / ZAP) close the areas on the file first, so they capture it before.</summary>
     private Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? ReadNamesFor(string path)

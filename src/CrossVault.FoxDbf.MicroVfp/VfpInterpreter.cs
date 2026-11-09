@@ -167,7 +167,11 @@ public sealed partial class VfpInterpreter
         Session.MemoryBridge = new MemvarBridge(this);
         Session.AdditionalIndexPaths = path =>
         {
-            RequireCompactIndexWriteContext(path);   // the same transaction / rollback limits as our own writers.
+            // A SQL-layer write takes no PRG snapshot of a standalone index, and an ADO.NET copy-on-write commit
+            // swaps only DBF/FPT/CDX: inside either transaction it refuses instead of leaving the index stale.
+            if ((_txn.Count > 0 || Session.TxBeginWritePath is not null) && HasAdditionalIndexesOnTable(path))
+                throw new MicroVfpRuntimeException("Writing with open standalone indexes is not supported in transactions or with candidate/RI rollback enforcement.");
+            RequireCompactIndexWriteContext(path);   // the same candidate / RI limits as our own writers.
             return OpenAdditionalIndexPaths(path);
         };
         Runtime = new RuntimeState();
