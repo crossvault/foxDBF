@@ -45,7 +45,7 @@ public sealed partial class VfpInterpreter
                 throw new MicroVfpRuntimeException($"Variable '{keyField}' is not found.", 12);
             if (wa.Table.Columns[keyColumn].Type != source.Table.Columns[sourceColumn].Type)
                 throw new MicroVfpRuntimeException("Data type mismatch.", 9);
-            if (wa.Table.Columns[keyColumn].Type == 'C'
+            if (wa.Table.Columns[keyColumn].Type is 'C' or 'V' or 'Q'
                 && wa.Table.Columns[keyColumn].Length != source.Table.Columns[sourceColumn].Length)
                 throw new MicroVfpRuntimeException("Data type mismatch.", 9);
             if (wa.Table.Columns[keyColumn].Type is not ('C' or 'V' or 'Q' or 'N' or 'F' or 'D' or 'T'))
@@ -103,12 +103,18 @@ public sealed partial class VfpInterpreter
                 }
                 if (match)
                 {
-                    BufferReplace(statement.Replacement, target, Session.AreaAt(target)!, Meta(target), normalize: true);
+                    try { BufferReplace(statement.Replacement, target, Session.AreaAt(target)!, Meta(target), normalize: true); }
+                    catch (MicroVfpRuntimeException error) when (buffering == 1 && error.VfpErrorNumber == 9)
+                    {
+                        // A later type mismatch retains the preceding assignments on this row.
+                        FinishRow(leavingRow: false);
+                        throw;
+                    }
                     tally++;
                 }
                 Skip(source.Area, 1);
             }
-            FinishRow();
+            FinishRow(leavingRow: false);
         }
         finally
         {
@@ -139,12 +145,12 @@ public sealed partial class VfpInterpreter
             return dot < 0 ? text : text[(dot + 1)..];
         }
 
-        void FinishRow()
+        void FinishRow(bool leavingRow = true)
         {
             var current = Meta(target);
             if (current.Buf?.Rows.TryGetValue(current.RecNo, out var edit) == true)
             {
-                ValidateBufferedRow(Session.AreaAt(target)!, current.RecNo, edit);
+                if (buffering <= 3 || leavingRow) ValidateBufferedRow(Session.AreaAt(target)!, current.RecNo, edit);
                 if (buffering == 1)
                 {
                     // Publish through the normal REPLACE writer so candidate uniqueness and RI
@@ -154,7 +160,7 @@ public sealed partial class VfpInterpreter
                         PrgExpr.Constant(VfpValue.FromClr(field.Value)), false)).ToArray();
                     current.Buf = null;
                     current.Buffering = 1;
-                    try { ExecReplace(new ReplaceStmt(clauses, null, null, null, null)); }
+                    try { ExecReplace(new ReplaceStmt(clauses, null, null, null, null), rulesValidated: true); }
                     finally { Meta(target).Buffering = 3; }
                     return;
                 }

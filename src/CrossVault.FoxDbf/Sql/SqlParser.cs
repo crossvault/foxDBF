@@ -1095,7 +1095,7 @@ public static class SqlParser
             while (!AtEnd)
             {
                 if (depth == 0 && (Current.Kind is TokKind.Comma or TokKind.RParen or TokKind.Semicolon ||
-                    stops.Any(IsKw))) break;
+                    stops.Any(stop => IsKw(stop) && (stop != "NOT" || Kw(Peek(), "NULL"))))) break;
                 if (Current.Kind == TokKind.LParen) depth++;
                 if (Current.Kind == TokKind.RParen) depth--;
                 Advance();

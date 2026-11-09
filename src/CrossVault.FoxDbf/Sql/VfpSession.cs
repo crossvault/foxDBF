@@ -140,6 +140,12 @@ public sealed class VfpSession : IDisposable
     // Bound only while microVFP executes INSERT; plain SQL retains its constant-row evaluator.
     internal Func<VfpExpression, VfpValue>? InsertValueEvaluator { get; set; }
     internal Action<string, DbfTable, Dictionary<string, object?>, bool[], int>? InsertRowValidator { get; set; }
+    // A rule-free outer INSERT can still call a nested SQL insert into a constrained table.
+    // Keep the no-rule fast path while selecting validation for the actual target.
+    internal Func<string, bool>? InsertRuleFilter { get; set; }
+    internal Action<string, DbfTable, Dictionary<string, object?>, bool[], int>? InsertValidatorFor(string table)
+        => InsertRuleFilter?.Invoke(table) == false ? null : InsertRowValidator;
+
 
     /// <summary>Evaluate CREATE CODEPAGE in the hosting interpreter's live variable scope.</summary>
     internal Func<VfpExpression, VfpValue>? DdlExpressionEvaluator { get; set; }

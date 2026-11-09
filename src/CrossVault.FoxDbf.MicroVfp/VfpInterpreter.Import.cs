@@ -52,9 +52,9 @@ public sealed partial class VfpInterpreter
                     {
                         // Supplied field rules run before VFP counts the append. Omitted-field and
                         // record constraints run afterwards, and can reject an already-counted row.
-                        DmlExecutor.ValidateImportRules(Session, area.Alias, writer.Schema.Columns, map, EvalTextLoud, suppliedFields: true);
+                        DmlExecutor.ValidateImportRules(Session, area.Alias, writer.Schema.Columns, map, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError, suppliedFields: true);
                         Memory.Set("_TALLY", VfpValue.Integer(++tally));
-                        DmlExecutor.ValidateImportRules(Session, area.Alias, writer.Schema.Columns, map, EvalTextLoud, suppliedFields: false);
+                        DmlExecutor.ValidateImportRules(Session, area.Alias, writer.Schema.Columns, map, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError, suppliedFields: false);
                         return true;
                     });
                     DmlExecutor.CheckImportKeys(keys, record, recno);
@@ -212,7 +212,7 @@ public sealed partial class VfpInterpreter
                 {
                     WithImportRow(area, EffCount(area.Area, area) + 1, map, () =>
                     {
-                        DmlExecutor.ValidateImportRules(Session, statement.Table, area.Table.Columns, map, EvalTextLoud);
+                        DmlExecutor.ValidateImportRules(Session, statement.Table, area.Table.Columns, map, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError);
                         return true;
                     });
                     string sql = $"INSERT INTO {statement.Table} ({string.Join(",", map.Keys)}) VALUES ({string.Join(",", map.Values.Select(ImportLiteral))})";
@@ -232,7 +232,7 @@ public sealed partial class VfpInterpreter
                             int recno = writer.RecordCount + 1;
                             WithImportRow(area, recno, DmlExecutor.StoredImportValues(writer.Schema, record, map), () =>
                             {
-                                DmlExecutor.ValidateImportRules(Session, statement.Table, writer.Schema.Columns, map, EvalTextLoud);
+                                DmlExecutor.ValidateImportRules(Session, statement.Table, writer.Schema.Columns, map, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError);
                                 return true;
                             });
                             DmlExecutor.CheckImportKeys(keys, record, recno);

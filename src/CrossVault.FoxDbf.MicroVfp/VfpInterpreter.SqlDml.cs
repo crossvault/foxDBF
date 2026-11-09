@@ -179,11 +179,11 @@ public sealed partial class VfpInterpreter
                 values[field] = DmlExecutor.StoredFieldValue(wa.Table, column, value.ToClr());
                 // VFP checks each SET field before evaluating the next clause, even without buffering.
                 if (rules is not null && Meta(wa.Area).Buffering <= 1)
-                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalTextLoud,
+                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
                         fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false, rules: rules);
             }
             if (rules is not null && Meta(wa.Area).Buffering <= 1)
-                DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalTextLoud,
+                DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
                     fieldsToValidate: new HashSet<string>(), validateRecord: true, rules: rules);
             return true;
         });

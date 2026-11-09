@@ -81,6 +81,21 @@ public sealed partial class DbfWriter
         return EncodeImportValues(preview, blanks);
     }
 
+    /// <summary>Keep a rule candidate's AUTOINC/count and its append in the same header-lock epoch.</summary>
+    internal IDisposable LockAppendScope()
+    {
+        bool owned = _lockMode != LockMode.Exclusive
+            && !_heldLocks.Contains((VfpLock.AppendLockPosition(_usesStructuralScheme), 1));
+        if (owned) LockHeader();
+        var scope = new LockToken(this, () => { if (owned) UnlockHeader(); });
+        try
+        {
+            _recordCount = (int)ReadOnDiskRecordCount();
+            return scope;
+        }
+        catch { scope.Dispose(); throw; }
+    }
+
     // Rule candidates use the ordinary writer's strict conversion, without publishing bytes.
     internal byte[] EncodeRuleRow(object?[] values, bool[] blanks)
     {

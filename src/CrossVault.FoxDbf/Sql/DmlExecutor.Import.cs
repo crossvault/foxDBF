@@ -83,7 +83,8 @@ internal sealed partial class DmlExecutor
 
     internal static Dictionary<string, object?> StoredImportValues(DbfTable schema, DbfRecord record, Dictionary<string, object?> map)
         => schema.Columns.Where(c => !c.IsSystem).ToDictionary(c => c.Name,
-            c => c.Type is 'M' or 'W' or 'G' ? map.GetValueOrDefault(c.Name, "") : record.GetVfpValue(c.Name), StringComparer.OrdinalIgnoreCase);
+            c => record.IsNullFlagSet(c) ? null
+                : c.Type is 'M' or 'W' or 'G' ? map.GetValueOrDefault(c.Name, "") : record.GetVfpValue(c.Name), StringComparer.OrdinalIgnoreCase);
 
     private sealed class ImportValues : Dictionary<string, object?>
     {
@@ -115,7 +116,8 @@ internal sealed partial class DmlExecutor
 
     internal static void ValidateImportRules(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
         Dictionary<string, object?> map, Func<string, VfpValue>? evaluate = null, int recno = 0, bool? suppliedFields = null,
-        ISet<string>? fieldsToValidate = null, bool validateRecord = true, DbcTableRules? rules = null)
+        ISet<string>? fieldsToValidate = null, bool validateRecord = true, DbcTableRules? rules = null,
+        Func<string, string, VfpValue>? evaluateFieldError = null)
     {
         rules ??= TableRules(session, table);
         if (rules is null) return;
@@ -132,14 +134,18 @@ internal sealed partial class DmlExecutor
             {
                 var value = Eval(rule.RuleExpression);
                 if (value.Type != VfpType.Logical || !value.AsLogical)
-                    throw new FoxDbfSqlException("Field validation rule is violated.") { VfpErrorNumber = 1582 };
+                    throw new FoxDbfSqlException(string.IsNullOrEmpty(rule.RuleText)
+                        ? $"Field {col.Name.ToUpperInvariant()} validation rule is violated."
+                        : (evaluateFieldError is not null ? evaluateFieldError(rule.RuleText, col.Name) : Eval(rule.RuleText)).AsString)
+                        { VfpErrorNumber = 1582 };
             }
         }
         if (validateRecord && suppliedFields != true && !string.IsNullOrEmpty(rules.RuleExpression))
         {
             var value = Eval(rules.RuleExpression);
             if (value.Type != VfpType.Logical || !value.AsLogical)
-                throw new FoxDbfSqlException("Table validation rule is violated.") { VfpErrorNumber = 1583 };
+                throw new FoxDbfSqlException(string.IsNullOrEmpty(rules.RuleText)
+                    ? "Record validation rule is violated." : Eval(rules.RuleText).AsString) { VfpErrorNumber = 1583 };
         }
     }
 

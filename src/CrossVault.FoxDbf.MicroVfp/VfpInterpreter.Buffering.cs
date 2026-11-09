@@ -66,12 +66,13 @@ public sealed partial class VfpInterpreter
                 edit.Old[field] = ReadFieldOnDisk(wa, field);   // capture the buffer-start (on-disk) value once.
             var v = Eval(clause.Value);
             var col = wa.Table.Columns[idx];
+            if (!normalize) CheckReplaceValueType(col, v);
             target[idx] = normalize ? NormalizeUpdateValue(col, v, col.Type == 'Q' ? wa.Table.BinaryTextEncoding : wa.Table.Encoding)
                 : DmlExecutor.StoredFieldValue(wa.Table, col,
                     v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr()));
             if (edit is not null)
             {
-                if (normalize) buf.Rows[recno] = edit;
+                if (normalize && recno <= rcTable) buf.Rows[recno] = edit;
                 edit.ValidatedFields.Remove(idx);
                 edit.RecordRuleValidated = false;
                 // VFP checks a changed field immediately; record rules wait for the row to leave.
@@ -80,7 +81,16 @@ public sealed partial class VfpInterpreter
         }
     }
 
-    private object? NormalizeUpdateValue(DbfColumn column, VfpValue value, Encoding encoding)
+    private static void CheckReplaceValueType(DbfColumn column, VfpValue value)
+    {
+        // REPLACE accepts date/empty-date conversions that UPDATE ON rejects, but it never
+        // converts a numeric/logical value into character storage implicitly.
+        if (column.Type is 'C' or 'V' or 'M' && !value.IsNull
+            && value.Type != VfpType.Character && !value.IsBinary)
+            throw new MicroVfpRuntimeException("Data type mismatch.", 9);
+    }
+
+    private static void CheckUpdateValueType(DbfColumn column, VfpValue value)
     {
         bool compatible = value.IsNull || column.Type switch
         {
@@ -94,6 +104,11 @@ public sealed partial class VfpInterpreter
             _ => true
         };
         if (!compatible) throw new MicroVfpRuntimeException("Data type mismatch.", 9);
+    }
+
+    private object? NormalizeUpdateValue(DbfColumn column, VfpValue value, Encoding encoding)
+    {
+        CheckUpdateValueType(column, value);
         if (value.IsNull) return null;
         if (column.Type is 'C' or 'V' or 'M') return FitToField(column, value.AsString);
         if (column.Type is not ('N' or 'F' or 'I' or 'B' or 'Y' or 'D' or 'T' or 'Q')) return value.ToClr();
@@ -339,7 +354,7 @@ public sealed partial class VfpInterpreter
         }
         WithImportRow(wa, recno, map, () =>
         {
-            DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, map, EvalTextLoud,
+            DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, map, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
                 fieldsToValidate: fields.Select(i => wa.Table.Columns[i].Name).ToHashSet(StringComparer.OrdinalIgnoreCase),
                 validateRecord: checkRecord, rules: rules);
             return true;

@@ -15,19 +15,31 @@ namespace CrossVault.FoxDbf.MicroVfp;
 /// <summary>microVFP DML + whole-table/record commands — REPLACE/APPEND/INSERT/DELETE/GATHER/SCATTER and PACK/COPY/TOTAL/RENAME/...</summary>
 public sealed partial class VfpInterpreter
 {
+    private Exception? _insertDefaultRuleError;
+
     /// <summary>Every route below (direct append, buffered, CANDIDATE, RI, the SQL DML fallback) fills a DBC
     /// member's omitted columns from their field DEFAULTs, as VFP9 does: the session's
     /// <see cref="VfpSession.DbcDefaultEvaluator"/> is this interpreter for the statement's duration. The
     /// previous evaluator is restored afterwards, so an INSERT inside a DEFAULT's UDF nests.</summary>
     private void ExecInsert(InsertStmt ins)
     {
+        var previousDefaultRuleError = _insertDefaultRuleError;
+        _insertDefaultRuleError = null;
         var previous = Session.DbcDefaultEvaluator;
         var previousValues = Session.InsertValueEvaluator;
         var previousValidator = Session.InsertRowValidator;
-        var rules = EnforceReferentialIntegrity && ResolveInsertStatement(ins) is { } parsed
-            ? DmlExecutor.ValidationRules(Session, parsed.Table) : null;
-        Session.InsertRowValidator = rules is null ? null
-            : (table, schema, values, blank, recno) => ValidateInsertRules(table, schema, values, blank, recno, rules);
+        var previousFilter = Session.InsertRuleFilter;
+        string? outerTable = EnforceReferentialIntegrity ? ResolveInsertStatement(ins)?.Table : null;
+        var rules = outerTable is null ? null : DmlExecutor.ValidationRules(Session, outerTable);
+        DbcTableRules? RulesFor(string table) => string.Equals(table, outerTable, StringComparison.OrdinalIgnoreCase)
+            ? rules : DmlExecutor.ValidationRules(Session, table);
+        Session.InsertRuleFilter = EnforceReferentialIntegrity ? table => RulesFor(table) is not null : null;
+        Session.InsertRowValidator = !EnforceReferentialIntegrity ? null
+            : (table, schema, values, blank, recno) =>
+            {
+                if (RulesFor(table) is { } targetRules)
+                    ValidateInsertRules(table, schema, values, blank, recno, targetRules);
+            };
         Session.DbcDefaultEvaluator = _dbcDefaultEvaluator ??= EvalDbcDefault;
         Session.InsertValueEvaluator = _insertValueEvaluator ??= expression =>
         {
@@ -53,12 +65,16 @@ public sealed partial class VfpInterpreter
                     count = Math.Max(count, writer.RecordCount);
                 PositionPointer(Meta(wa.Area), null, count);
             }
+            if (_insertDefaultRuleError is { } defaultError)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(defaultError).Throw();
         }
         finally
         {
             Session.DbcDefaultEvaluator = previous;
             Session.InsertValueEvaluator = previousValues;
             Session.InsertRowValidator = previousValidator;
+            Session.InsertRuleFilter = previousFilter;
+            _insertDefaultRuleError = previousDefaultRuleError;
         }
     }
 
@@ -82,7 +98,7 @@ public sealed partial class VfpInterpreter
         {
             WithImportRow(wa, recno, values, () =>
             {
-                DmlExecutor.ValidateImportRules(Session, wa.Alias, schema.Columns, values, EvalTextLoud, rules: rules);
+                DmlExecutor.ValidateImportRules(Session, wa.Alias, schema.Columns, values, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError, rules: rules);
                 return true;
             });
         }
@@ -91,6 +107,31 @@ public sealed partial class VfpInterpreter
             // An INSERT rejected before publication leaves VFP on its blank EOF record.
             GoRecordCore(wa.Area, recno);
             throw;
+        }
+    }
+
+    private VfpValue EvalRuleExpression(string expression)
+    {
+        bool previous = _requireDmlNames;
+        _requireDmlNames = true;
+        try { return EvalTextLoud(expression); }
+        finally { _requireDmlNames = previous; }
+    }
+
+    private VfpValue EvalFieldRuleError(string expression, string field)
+    {
+        var row = DefaultRowFor(Session.CurrentArea);
+        var area = Session.AreaAt(Session.CurrentArea);
+        if (row is null || area is null) return EvalTextLoud(expression);
+        // VFP rolls the rejected field back before evaluating its ERROR expression. A record
+        // rule's ERROR expression, in contrast, still sees the complete rejected candidate.
+        bool supplied = row.Values.TryGetValue(field, out var candidate);
+        row.Values[field] = ReadFieldOnDisk(area, field);
+        try { return EvalTextLoud(expression); }
+        finally
+        {
+            if (supplied) row.Values[field] = candidate;
+            else row.Values.Remove(field);
         }
     }
 
@@ -111,8 +152,8 @@ public sealed partial class VfpInterpreter
     /// <summary>The DBC field DEFAULTs of one row inserted into <paramref name="table"/>, evaluated in field
     /// order with the target as the current work area, as VFP9 does (probed: <c>ALIAS()</c> inside a DEFAULT
     /// UDF is the target's) — opened in a free area for the evaluation when it is not open, closed again
-    /// after. The previous current area is restored. Unlike <see cref="EvalExpression"/> an error propagates
-    /// (VFP raises it and writes no row); a UDF runs from the loaded stored procedures.</summary>
+    /// after. The previous current area is restored. Errors propagate; nested validation failures first
+    /// submit the partially defaulted outer candidate to its own rules. UDFs use the loaded procedures.</summary>
     private void EvalDbcDefault(string table, IReadOnlyList<(string Field, string Expression)> defaults,
         Dictionary<string, object?> values)
     {
@@ -138,7 +179,7 @@ public sealed partial class VfpInterpreter
             var savedPosition = (meta.RecNo, meta.Eof, meta.Bof);
             var previous = _defaultRow;
             // VFP evaluates against the new row: supplied VALUES and earlier DEFAULTs are visible,
-            // and RECCOUNT includes it. Keep that row in memory so a failed DEFAULT cannot half-append.
+            // and RECCOUNT includes it. Keep the candidate in memory until its rules accept it.
             int recno = EffCount(wa.Area, wa) + 1;
             _defaultRow = new DefaultRow(wa.Area, recno, values, previous, appendBlank);
             meta.RecNo = recno;
@@ -147,6 +188,12 @@ public sealed partial class VfpInterpreter
             {
                 foreach (var (field, expression) in defaults)
                     values[field] = ParseExpressionCached(MicroVfpExprRewrite.Normalize(expression)).Evaluate(_row, _ctx).ToClr();
+            }
+            catch (Exception error) when (!appendBlank && error is IVfpErrorCode { VfpErrorNumber: 1582 or 1583 })
+            {
+                // VFP stops the remaining DEFAULTs after a nested validation failure, but still
+                // submits the outer candidate to its own rules before reporting that failure.
+                _insertDefaultRuleError = error;
             }
             finally
             {
@@ -622,6 +669,7 @@ public sealed partial class VfpInterpreter
         }
 
         SnapshotForTxn(path);
+        MicroVfpRuntimeException? assignmentError = null;
 
         using (var lease = LeaseWriter(path))
         {
@@ -633,36 +681,47 @@ public sealed partial class VfpInterpreter
                 ? wa.Table.Columns.Where(c => !c.IsSystem).ToDictionary(c => c.Name, c => ReadField(wa, c.Name), StringComparer.OrdinalIgnoreCase)
                 : null;
 
-            foreach (var clause in rp.Clauses)
+            int assigned = 0;
+            try
             {
-                string field = StripQualifier(NameOf(clause.Field));
-                int idx = ColumnIndex(wa.Table, field);
-                if (idx < 0 || idx >= values.Length) continue;
-                // OLDVAL: capture the value at the START of THIS change (the field's CURRENT on-disk value
-                // before this REPLACE), OVERWRITING any prior entry. A second key REPLACE of the same record
-                // with no intervening pointer move must re-base OLDVAL to the value the first REPLACE
-                // committed — else the auto-fired __RI_UPDATE_* would SCAN children FOR a key that was
-                // already cascaded away (no cascade → orphans). The trigger reads OLDVAL() after the write.
-                RememberOldVal(m, field, ReadField(wa, field));
-                var v = Eval(clause.Value);
-                char type = wa.Table.Columns[idx].Type;
-                values[idx] = v.IsNull ? null : (type == 'M' && v.IsBinary ? v.ToClr()
-                    : type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
-                if (candidate is not null)
+                foreach (var clause in rp.Clauses)
                 {
-                    candidate[field] = DmlExecutor.StoredFieldValue(writer.Schema, writer.Schema.Columns[idx], values[idx]);
-                    WithImportRow(wa, m.RecNo, candidate, () =>
+                    string field = StripQualifier(NameOf(clause.Field));
+                    int idx = ColumnIndex(wa.Table, field);
+                    if (idx < 0 || idx >= values.Length) continue;
+                    // OLDVAL: capture the value at the START of THIS change (the field's CURRENT on-disk value
+                    // before this REPLACE), OVERWRITING any prior entry. A second key REPLACE of the same record
+                    // with no intervening pointer move must re-base OLDVAL to the value the first REPLACE
+                    // committed — else the auto-fired __RI_UPDATE_* would SCAN children FOR a key that was
+                    // already cascaded away (no cascade → orphans). The trigger reads OLDVAL() after the write.
+                    RememberOldVal(m, field, ReadField(wa, field));
+                    var v = Eval(clause.Value);
+                    char type = wa.Table.Columns[idx].Type;
+                    CheckReplaceValueType(wa.Table.Columns[idx], v);
+                    values[idx] = v.IsNull ? null : (type == 'M' && v.IsBinary ? v.ToClr()
+                        : type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
+                    if (candidate is not null)
                     {
-                        DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud,
-                            fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false, rules: rules);
-                        return true;
-                    });
+                        candidate[field] = DmlExecutor.StoredFieldValue(writer.Schema, writer.Schema.Columns[idx], values[idx]);
+                        WithImportRow(wa, m.RecNo, candidate, () =>
+                        {
+                            DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
+                                fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false, rules: rules);
+                            return true;
+                        });
+                    }
+                    assigned++;
                 }
+            }
+            catch (MicroVfpRuntimeException error) when (error.VfpErrorNumber == 9 && assigned > 0)
+            {
+                // Publish the accepted prefix before surfacing a later assignment's type error.
+                assignmentError = error;
             }
             if (candidate is not null)
                 WithImportRow(wa, m.RecNo, candidate, () =>
                 {
-                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud,
+                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
                         fieldsToValidate: new HashSet<string>(), validateRecord: true, rules: rules);
                     return true;
                 });
@@ -690,6 +749,7 @@ public sealed partial class VfpInterpreter
             else if (parentSnap is not null) RestoreSnapshot(parentSnap);
             throw TriggerFailed(RiEvent.Update, area, wa.Alias);
         }
+        if (assignmentError is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(assignmentError).Throw();
         }
         finally
         {

@@ -197,7 +197,7 @@ public sealed partial class VfpInterpreter
         {
             var parent = _txn[^1];
             foreach (var kv in done.Snaps)
-                if (!Snapshotted(kv.Key)) parent.Snaps[kv.Key] = kv.Value;   // hand up — the parent keeps the temp pre-image.
+                if (!parent.Snaps.ContainsKey(kv.Key)) parent.Snaps[kv.Key] = kv.Value;   // hand up — the parent keeps the temp pre-image.
                 else kv.Value.Cleanup();                                     // parent already owns this path — drop the inner temp.
         }
         else
@@ -214,20 +214,15 @@ public sealed partial class VfpInterpreter
         foreach (var snap in frame.Snaps.Values) RestoreSnapshot(snap);
     }
 
-    /// <summary>True when <paramref name="path"/> already has a snapshot in ANY active transaction frame
-    /// (so the first writer per table in the whole transaction stack captures the pre-image once).</summary>
-    private bool Snapshotted(string path)
-    {
-        foreach (var f in _txn)
-            if (f.Snaps.ContainsKey(path)) return true;
-        return false;
-    }
-
     /// <summary>Before a table WRITE inside a transaction, capture the pre-image of its <c>.dbf</c>
     /// (+ sibling <c>.cdx</c>/<c>.fpt</c>) once, into the innermost frame — so a ROLLBACK restores it.</summary>
     private void SnapshotForTxn(string? path)
     {
         if (_txn.Count == 0 || path is null) return;
+        // Each nesting level owns its DBF pre-image. An outer snapshot cannot restore
+        // the value at the inner BEGIN when that inner transaction rolls back.
+        var current = _txn[^1];
+        if (!current.Snaps.ContainsKey(path)) current.Snaps[path] = CaptureSnapshot(path);
         foreach (var frame in _txn)
         {
             if (!frame.Snaps.TryGetValue(path, out var snap)) continue;
@@ -238,9 +233,7 @@ public sealed partial class VfpInterpreter
                 if (!snap.AdditionalIndexTemps.ContainsKey(index))
                     snap.AdditionalIndexTemps[index] = CopyToTempSnapshot(index);
             }
-            return;
         }
-        _txn[^1].Snaps[path] = CaptureSnapshot(path);
     }
 
     /// <summary>Capture the pre-image of a table's <c>.dbf</c> (+ sibling <c>.cdx</c>/<c>.fpt</c>) into a
