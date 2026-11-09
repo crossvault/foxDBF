@@ -640,7 +640,16 @@ public sealed partial class VfpInterpreter
     {
         int area = rp.In is not null ? ResolveAreaRef(rp.In) : AreaOfClause(rp.Clauses[0]);
         var single = rp with { Scope = null, For = null, While = null };
-        ExecRecordScope(area, rp.Scope, rp.For, rp.While, () => ExecReplace(single));
+        int tally = 0;
+        try
+        {
+            ExecRecordScope(area, rp.Scope, rp.For, rp.While, () =>
+            {
+                ExecReplace(single);
+                tally++;
+            });
+        }
+        finally { Memory.Set("_TALLY", VfpValue.Integer(tally)); }
     }
 
     // REPLACE, DELETE and RECALL share VFP's scope order, visibility and final-pointer rules.
@@ -801,6 +810,14 @@ public sealed partial class VfpInterpreter
             Session.SelectArea(savedArea);
             try { lease?.Writer.Flush(); }
             finally { lease?.Dispose(); }
+            // A DELETE-dependent key/FOR can change index membership even though no field changed.
+            // Reopen only after the writer flushes its index pages; otherwise SEEK sees stale keys.
+            if (writePath is not null && (Session.OpenAreas.Any(w => SamePath(w.Table.SourcePath, writePath)
+                && w.Cdx is not null) || OpenAdditionalIndexPaths(writePath).Count > 0))
+            {
+                ReopenFileAreas(writePath);
+                ResetMetaCachesForPath(writePath);
+            }
             if (started) Memory.Set("_TALLY", VfpValue.Integer(tally));
         }
 

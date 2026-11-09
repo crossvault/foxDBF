@@ -668,6 +668,7 @@ public static class PrgParser
                 "ON" => BuildOn(text, line),
                 "REPLACE" => BuildReplace(text),
                 "DELETE" => BuildDelete(text),
+                "UPDATE" => new SqlDmlStmt(text.Trim()),
                 "RECALL" => BuildRecall(text),
                 "INSERT" => new InsertStmt(text.Trim(), TrySql(text)),
                 "GATHER" => BuildGather(text),
@@ -1301,6 +1302,11 @@ public static class PrgParser
         private static PrgStatement BuildDelete(string text)
         {
             string rest0 = PrgScan.AfterFirstWord(text);
+            if (PrgScan.FirstWord(rest0).Equals("FROM", StringComparison.OrdinalIgnoreCase))
+                return new SqlDmlStmt(text.Trim());
+            string afterAlias = PrgScan.AfterFirstWord(rest0);
+            if (PrgScan.FirstWord(afterAlias).Equals("FROM", StringComparison.OrdinalIgnoreCase))
+                return new SqlDmlStmt("DELETE " + afterAlias, PrgScan.FirstWord(rest0));
             if (PrgScan.FirstWord(rest0).Equals("TAG", StringComparison.OrdinalIgnoreCase))
                 return BuildDeleteTag(PrgScan.AfterFirstWord(rest0));
             var (scope, forE, whileE, inArea, error) = DeleteRecallClauses(rest0);

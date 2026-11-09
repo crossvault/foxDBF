@@ -474,6 +474,7 @@ internal sealed record FlushStmt(bool Force) : PrgStatement;
 /// <summary>A CREATE TABLE / CREATE CURSOR / CREATE DATABASE command routed verbatim to the SQL/DDL
 /// executor (<see cref="Sql"/>). CREATE TABLE additionally opens the new table in a work area (VFP).</summary>
 internal sealed record SqlPassthroughStmt(string Sql) : PrgStatement;
+internal sealed record SqlDmlStmt(string Sql, string? DeleteTarget = null) : PrgStatement;
 
 // ── P3 batch 4 (FINAL): remaining array / variable / DB-lifecycle / table items ──────────────
 

@@ -31,6 +31,8 @@ internal sealed class PrgExpr
         Parsed = parsed;
     }
 
+    internal static PrgExpr Constant(VfpValue value) => new(string.Empty, VfpExpression.Constant(value));
+
     // VFP's by-reference marker '@var' is legal only in argument position; it is a no-op for
     // PARSE-structure, so we strip it as a fallback when the raw fragment won't parse. The
     // scanner must leave @ characters in all literal forms untouched.
