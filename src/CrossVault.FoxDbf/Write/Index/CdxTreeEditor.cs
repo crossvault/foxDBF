@@ -15,8 +15,8 @@ namespace CrossVault.FoxDbf.Write;
 /// </summary>
 /// <remarks>
 /// The same row operations on the same file give the same pages as VFP9 — leaf bytes, branch entries, sibling
-/// links, page numbers (checked against VFP9 page by page); only the 0x04 attribute bit, which VFP sets by page
-/// history, and the unused tail of a branch page, where VFP leaves stale bytes, can differ.
+/// links, page numbers and history-dependent attributes (checked against VFP9 page by page).
+/// Unused branch slots can contain VFP's process-dependent scratch bytes.
 /// The reader/editor never trusts a malformed page beyond the defensive guards inherited from
 /// <see cref="IndexFile"/>. The key pad (0x20 for a MACHINE character tag, else 0x00) is supplied per operation by
 /// the caller.
@@ -220,6 +220,7 @@ internal sealed class CdxTreeEditor : IDisposable
     {
         public long Off;
         public ushort Attr;
+        public byte RecnoBits;
         public uint? Left, Right;
         public bool IsRoot;
         public List<(byte[] Key, uint Recno)> Entries = new();
@@ -274,11 +275,15 @@ internal sealed class CdxTreeEditor : IDisposable
         int d = path.Branches.Count - 1;
         if (LeafFits(s, 0, n, keyLen, pad))
         {
-            WriteLeaf(leaf.Off, s, 0, n, keyLen, pad, leaf.IsRoot, leaf.Left, leaf.Right);
+            WriteLeaf(leaf.Off, s, 0, n, keyLen, pad, leaf.IsRoot, leaf.Left, leaf.Right, leaf.RecnoBits, leaf.Attr);
             UpdateSeparators(path, d, s[^1], keyLen);
             return;
         }
 
+        // VFP widens the overflowing node before redistributing it. A smaller existing
+        // leaf gets the narrowing bit; newly allocated leaves start at eight record bits.
+        byte overflowBits = CdxIndexBuilder.LeafRecordNumberBits(keyLen, s.Max(e => e.Recno));
+        ushort overflowAttr = HistoryAttribute(overflowBits, leaf.RecnoBits, leaf.Attr);
         if (leaf.IsRoot)
         {
             // The root page stays put and becomes a branch over two new leaves (the right one on the lower page).
@@ -296,7 +301,7 @@ internal sealed class CdxTreeEditor : IDisposable
             // Rightmost leaf: keep what fits, the rest opens a new leaf to the right.
             int cut = GreedyCut(s, keyLen, pad);
             long fresh = Alloc();
-            WriteLeaf(leaf.Off, s, 0, cut, keyLen, pad, isRoot: false, leaf.Left, (uint)fresh);
+            WriteLeaf(leaf.Off, s, 0, cut, keyLen, pad, isRoot: false, leaf.Left, (uint)fresh, overflowBits, overflowAttr);
             WriteLeaf(fresh, s, cut, n - cut, keyLen, pad, isRoot: false, (uint)leaf.Off, null);
             AddChild(path, d, s[cut - 1], Sep(s[^1], fresh), keyLen);
             return;
@@ -314,8 +319,8 @@ internal sealed class CdxTreeEditor : IDisposable
             int cut = BalancedCut(pool, keyLen, pad);
             if (cut > 0)
             {
-                WriteLeaf(leaf.Off, pool, 0, cut, keyLen, pad, isRoot: false, leaf.Left, leaf.Right);
-                WriteLeaf(sibling.Off, pool, cut, pool.Count - cut, keyLen, pad, isRoot: false, sibling.Left, sibling.Right);
+                WriteLeaf(leaf.Off, pool, 0, cut, keyLen, pad, isRoot: false, leaf.Left, leaf.Right, overflowBits, overflowAttr);
+                WriteLeaf(sibling.Off, pool, cut, pool.Count - cut, keyLen, pad, isRoot: false, sibling.Left, sibling.Right, sibling.RecnoBits, sibling.Attr);
                 UpdateSeparators(path, d, pool[cut - 1], keyLen);
                 return;
             }
@@ -325,7 +330,7 @@ internal sealed class CdxTreeEditor : IDisposable
         if (split <= 0)
             throw new InvalidDataException($"CDX leaf at {leaf.Off} cannot be split into two pages.");
         long added = Alloc();
-        WriteLeaf(leaf.Off, s, 0, split, keyLen, pad, isRoot: false, leaf.Left, (uint)added);
+        WriteLeaf(leaf.Off, s, 0, split, keyLen, pad, isRoot: false, leaf.Left, (uint)added, overflowBits, overflowAttr);
         WriteLeaf(added, s, split, n - split, keyLen, pad, isRoot: false, (uint)leaf.Off, rightOff);
         PatchLeftPointer(rightOff, (uint)added);
         AddChild(path, d, s[split - 1], Sep(s[^1], added), keyLen);
@@ -428,6 +433,7 @@ internal sealed class CdxTreeEditor : IDisposable
                 leaf.Left ?? NoPtr, leaf.Right ?? NoPtr)
                 ?? throw new InvalidOperationException(
                     $"CDX leaf delete at {leaf.Off} no longer fits one page; the caller must fall back to a full rebuild.");
+            page[0] = (byte)((page[0] & ~4) | HistoryAttribute(page[20], leaf.RecnoBits, leaf.Attr));
             WritePage(leaf.Off, page);
             if (s.Count > 0)
                 UpdateSeparators(path, d, s[^1], keyLen);
@@ -436,7 +442,7 @@ internal sealed class CdxTreeEditor : IDisposable
 
         // The leaf emptied: unlink it, leave it behind as an empty leaf, drop it from its parent.
         Unlink(leaf.Left, leaf.Right);
-        WriteLeaf(leaf.Off, s, 0, 0, keyLen, pad, isRoot: false, leaf.Left, leaf.Right);
+        WriteLeaf(leaf.Off, s, 0, 0, keyLen, pad, isRoot: false, leaf.Left, leaf.Right, leaf.RecnoBits, leaf.Attr);
         RemoveChild(path, d, keyLen, pad);
     }
 
@@ -457,7 +463,9 @@ internal sealed class CdxTreeEditor : IDisposable
             WriteLeaf(p.Off, new List<(byte[] Key, uint Recno)>(), 0, 0, keyLen, pad, isRoot: true, null, null);
             return;
         }
-        Unlink(p.Left, p.Right);   // an emptied branch is only unlinked (its page is not reused)
+        // VFP leaves the unlinked page allocated, but persists its empty child list.
+        WriteBranch(p.Off, p.Kids, keyLen, p.Attr, p.Left, p.Right);
+        Unlink(p.Left, p.Right);
         RemoveChild(path, d - 1, keyLen, pad);
     }
 
@@ -515,12 +523,16 @@ internal sealed class CdxTreeEditor : IDisposable
     }
 
     private void WriteLeaf(long off, List<(byte[] Key, uint Recno)> s, int start, int count, int keyLen, byte pad,
-        bool isRoot, uint? left, uint? right)
+        bool isRoot, uint? left, uint? right, byte previousBits = 8, ushort previousAttr = 0)
     {
         var page = CdxIndexBuilder.EncodeLeafPage(s, start, count, keyLen, pad, isRoot, left ?? NoPtr, right ?? NoPtr)
             ?? throw new InvalidDataException($"CDX leaf at {off} does not fit one page.");
+        page[0] = (byte)((page[0] & ~4) | HistoryAttribute(page[20], previousBits, previousAttr));
         WritePage(off, page);
     }
+
+    private static ushort HistoryAttribute(byte bits, byte previousBits, ushort previousAttr)
+        => bits < previousBits ? (ushort)4 : bits > previousBits ? (ushort)0 : (ushort)(previousAttr & 4);
 
     private void WriteBranch(long off, List<CdxIndexBuilder.BranchChild> kids, int keyLen, ushort attr, uint? left, uint? right)
         => WritePage(off, CdxIndexBuilder.EncodeBranchPage(kids, keyLen, attr, left ?? NoPtr, right ?? NoPtr));
@@ -560,7 +572,9 @@ internal sealed class CdxTreeEditor : IDisposable
 
     private static LeafNode ToLeafNode(long off, byte[] page, IndexNodeHeader hdr, int keyLen, byte pad, bool isRoot)
     {
-        var node = new LeafNode { Off = off, Attr = hdr.Attribute, Left = hdr.LeftSibling, Right = hdr.RightSibling, IsRoot = isRoot };
+        // First insertion starts with an eight-bit record-number budget, not the wider
+        // geometry persisted by INDEX ON for an empty tag (CdxPageHistoryVfp9OracleTests).
+        var node = new LeafNode { Off = off, Attr = hdr.Attribute, RecnoBits = hdr.KeyCount == 0 ? (byte)8 : page[20], Left = hdr.LeftSibling, Right = hdr.RightSibling, IsRoot = isRoot };
         foreach (var e in CompactLeaf.Decode(page, keyLen, pad))
             node.Entries.Add((e.Key, e.RecordNumber));
         return node;

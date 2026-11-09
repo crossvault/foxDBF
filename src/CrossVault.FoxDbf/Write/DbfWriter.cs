@@ -773,7 +773,9 @@ public sealed partial class DbfWriter : IDisposable
         {
             ValidateIndexes();
             long offset = _headerLength + (long)index * _recordLength;
-            byte[]? before = _openCompactIndexes.Count > 0 ? ReadRaw(_handle, offset, _recordLength) : null;
+            byte[]? before = _cdxMaintEditor is not null || _openCompactIndexes.Count > 0
+                ? ReadRaw(_handle, offset, _recordLength) : null;
+            using var mutation = BeginIndexMutation(offset, append: false, before: before);
             _stream.Seek(offset, SeekOrigin.Begin);
             _stream.WriteByte(flag);
             _stream.Flush();
@@ -781,6 +783,9 @@ public sealed partial class DbfWriter : IDisposable
             {
                 var after = (byte[])before.Clone();
                 after[0] = flag;
+                // DELETED() can participate in either the key or its FOR expression.
+                MaintainIndexesAfterUpdate(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));
+                mutation?.Commit();
                 MaintainCompactIndexes(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));
             }
         });

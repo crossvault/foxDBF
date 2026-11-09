@@ -1122,6 +1122,9 @@ internal static class CdxIndexBuilder
         return maxPer < 1 ? 1 : maxPer;
     }
 
+    internal static byte LeafRecordNumberBits(int keyLen, uint maxRecno)
+        => LeafGeometry.For(keyLen, maxRecno).RecnoBits;
+
     /// <summary>Encode a branch (interior) page from <paramref name="kids"/> — the inverse of
     /// <see cref="IndexFile.ReadBranchEntries"/>. Sibling pointers and the attribute word are supplied by
     /// the caller (the incremental editor manages the root bit + sibling chain).</summary>
