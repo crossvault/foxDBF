@@ -287,6 +287,9 @@ public sealed partial class VfpInterpreter
         else
         {
             var order = TraversalOrder(area, wa, includeCurrent: kind != LocScope.All);
+            // A missing current key can reload the live order and discard tombstones.
+            // Pointer slots (including EOF) must refer to that refreshed cache.
+            ord = ActiveOrder(area);
             int startIdx = kind == LocScope.All ? 0 : CurrentIndex(order, m);
             if (startIdx < 0) startIdx = order.Count;   // current at EOF/BOF ⇒ REST/NEXT window is empty.
             int remaining = kind == LocScope.Next ? count : int.MaxValue;
