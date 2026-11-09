@@ -67,6 +67,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   Rules see stored field widths, omitted memo/blob/general NULLs, the pending record number/count
   and hosted UDFs. Field CHECK expressions accept an unparenthesized NOT operator. Imports retain
   accepted prefix rows on constraint failures and validate keys against the transaction's write copy.
+  A nested DEFAULT that fails validation stops the statement after the current candidate.
   VFP9 integer import overflow bytes are preserved, including with insert triggers or additional
   indexes, and exposed as overflow in expressions. VALUES retains its strict overflow errors.
 - microVFP scoped `DELETE` and `RECALL`: `ALL`, `NEXT`, `RECORD`, `REST`, `FOR`, `WHILE`,
@@ -117,51 +118,32 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
-- ADO.NET `EnforceRules` DELETE reuses an already open renamed alias, so delete triggers
-  observe the caller's work area and no extra alias is opened.
-
-- INSERT rejects recursive writes from the target's validation rule with VFP error 1887,
-  without publishing a row. A rejected unbuffered INSERT VALUES rule consumes its assigned
-  AUTOINC value as VFP9 does, including when a CANDIDATE index is present.
-  Rule callbacks run outside the append lock; concurrent changes
-  trigger at most one revalidation before an I/O conflict is reported.
-
-- Field-rule ERROR expressions now read the rejected value retained in a row/table buffer,
-  including buffered appends. Unbuffered replacements continue to report the preceding value.
-
-- `REPLACE` rejects incompatible field types before evaluating later clauses and retains the
-  accepted prefix on error 9. Error 9 in a field ERROR expression discards the candidate;
-  error 9 in CHECK evaluation retains it as in VFP9. Record rules still run on a partial replacement,
-  including `UPDATE ON`, but their failure no longer replaces the pending error 9.
-
-- `INSERT ... SELECT` stops after the current candidate when a nested DEFAULT fails validation.
-  VFP9 retains that candidate unbuffered and discards it with row/table buffering; later source
-  rows are never inserted. `INSERT FROM ARRAY` continues to leave omitted fields blank.
-
-- ADO.NET rule errors evaluate DBC ERROR expressions instead of exposing their quoted source;
-  microVFP MESSAGE()/AERROR() report the same VFP9 field/record validation text.
-  Rule evaluation errors, including missing functions/variables, preserve their VFP error number
-  in a provider DbException.
+- BREAKING: with rule enforcement enabled (`EnforceReferentialIntegrity = true` / ADO.NET
+  `EnforceRules=on`), microVFP checks DBC field and record rules for INSERT, REPLACE, UPDATE and
+  buffered appends at VFP9's validation points, and each rule runs once per validation. Buffered
+  field rules run when `REPLACE` changes the field and can reject it immediately; record rules run
+  once at commit (`TABLEUPDATE` or the row-buffer commit on a pointer move). Invalid buffered values
+  remain editable, invalid INSERT values are rejected, and TABLEUPDATE cannot publish an append that
+  violates a rule. Rules see generated AUTOINC values and numbers rounded as stored; nested INSERTs
+  use their own target's rules, and a recursive write from the target's own rule raises VFP error 1887.
+  A rejected unbuffered INSERT consumes its AUTOINC value as VFP9 does.
+- Rule errors evaluate the DBC ERROR expression for ADO.NET exceptions and microVFP
+  `MESSAGE()`/`AERROR()`, reading the rejected value retained in a row/table buffer, instead of
+  exposing the quoted source. Rule evaluation errors (missing functions/variables) keep their VFP error
+  number in a provider `DbException`.
+- ADO.NET `EnforceRules=on` reuses the target work area across INSERT/UPDATE/DELETE statements,
+  including a table opened under another alias, instead of opening another copy each time; triggers
+  see the caller's alias. Bulk INSERT with enforcement is much faster as a result.
+- `REPLACE` rejects incompatible field types before evaluating later clauses and keeps the
+  accepted prefix on error 9, as VFP9 does; record rules still run on such a partial replacement.
 - BREAKING: incompatible non-NULL comparison operands (including logical/numeric,
   logical/date and character/numeric) raise VFP error 107 for `=`, `==`, `<>`, `#`, `!=`,
   `<`, `<=`, `>`, `>=`, `INLIST`, `BETWEEN`, `MIN` and `MAX`. NULL still propagates;
   Date/DateTime comparisons remain supported. Indexed filtering and counting preserve these
   errors instead of pruning incompatible date/numeric predicates or returning zero.
   A numeric SEEK against a logical index reports VFP error 9.
-- ADO.NET `EnforceRules=on` validates generated AUTOINC and rounded numeric values as VFP9 stores them,
-  keeping append validation consistent with the stored counter when another writer appends,
-  and reuses the target work area across INSERT/UPDATE statements, including a table opened under
-  a different alias, instead of opening another copy each time.
 - microVFP `GETFLDSTATE(-1)` returns the deletion and field-state string needed by DBC record rules.
 - INSERT without a column list reports VFP9's value-count errors consistently with and without rule enforcement.
-
-- BREAKING: microVFP with rule enforcement enabled now checks DBC field and record rules for INSERT,
-  REPLACE and buffered appends at VFP9's validation points. Invalid buffered REPLACE values
-  remain editable, invalid INSERT field values are rejected, and TABLEUPDATE cannot publish
-  an append that violates a rule. Buffered INSERT FROM ARRAY/MEMVAR retains its supplied values.
-  Nested INSERTs use their own target's rules. A nested validation failure during DEFAULT evaluation
-  stops the remaining defaults; the outer candidate is retained only if its own rules accept it.
-  Updating a buffered append no longer leaves a phantom edit after TABLEUPDATE.
 - microVFP SKIP from an indexed table-buffered append resumes at its key position;
   reading fields at buffered EOF returns typed blanks.
 - BREAKING: microVFP `BEGIN TRANSACTION` now raises VFP error 1548 before opening a transaction
@@ -170,9 +152,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   remain accepted; PRG writes take snapshots of compact/legacy IDX and additional CDX files for
   byte-exact rollback, including indexes first opened inside a nested transaction.
   ADO.NET copy-on-write and candidate/RI standalone-index write restrictions remain in place.
-- BREAKING: With `EnforceReferentialIntegrity = true`, buffered field rules run when `REPLACE`
-  changes the field and can reject it immediately; record rules run once at commit (`TABLEUPDATE`
-  or the row-buffer commit on a pointer move), as in VFP9. Rule UDFs run once per validation.
 - BREAKING: microVFP reads `DELETE <word> FROM …` as DELETE-SQL, as VFP9 does. `DELETE FOR from=1`
   and `DELETE IN from` (a field or alias named `from`) now raise VFP9's errors 1 and 10 instead of
   deleting.
