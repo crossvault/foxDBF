@@ -45,7 +45,7 @@ public sealed partial class VfpInterpreter
                 throw new MicroVfpRuntimeException($"Variable '{keyField}' is not found.", 12);
             if (wa.Table.Columns[keyColumn].Type != source.Table.Columns[sourceColumn].Type)
                 throw new MicroVfpRuntimeException("Data type mismatch.", 9);
-            if (wa.Table.Columns[keyColumn].Type == 'C'
+            if (wa.Table.Columns[keyColumn].Type is 'C' or 'V' or 'Q'
                 && wa.Table.Columns[keyColumn].Length != source.Table.Columns[sourceColumn].Length)
                 throw new MicroVfpRuntimeException("Data type mismatch.", 9);
             if (wa.Table.Columns[keyColumn].Type is not ('C' or 'V' or 'Q' or 'N' or 'F' or 'D' or 'T'))
