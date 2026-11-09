@@ -119,7 +119,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   in a provider DbException.
 - REPLACE rejects incompatible field values and preserves earlier assignments when a later value has
   the wrong type, including buffered writes.
-- Logical/numeric relational comparisons raise VFP error 107 instead of coercing logical operands.
+- BREAKING: incompatible non-NULL comparison operands (including logical/numeric,
+  logical/date and character/numeric) raise VFP error 107 for `=`, `==`, `<>`, `#`, `!=`,
+  `<`, `<=`, `>`, `>=`, `INLIST`, `BETWEEN`, `MIN` and `MAX`. NULL still propagates;
+  Date/DateTime comparisons remain supported.
 - ADO.NET `EnforceRules=on` validates generated AUTOINC and rounded numeric values as VFP9 stores them,
   keeping append validation consistent with the stored counter when another writer appends,
   and reuses the target work area across INSERT/UPDATE statements, including a table opened under
