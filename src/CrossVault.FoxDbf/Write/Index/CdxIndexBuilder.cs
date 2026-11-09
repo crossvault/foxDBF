@@ -444,7 +444,9 @@ internal static class CdxIndexBuilder
     /// </summary>
     private static readonly HashSet<string> DeletionSensitiveFunctions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "DELETED", "EVALUATE", "EVAL", "RAND", "DATE", "DATETIME", "TIME", "SECONDS", "SYS", "NEWID",
+        // VFP9 only tracks the direct call in KEY/FOR. Dynamic expressions, volatile functions
+        // and UDFs retain their stored keys on a flag-only change (verified after reopening).
+        "DELETED",
     };
 
     internal static TagKeyComputer CreateKeyComputer(DbfTable schema, CdxTagDefinition def, EvaluationContext? evalContext)
