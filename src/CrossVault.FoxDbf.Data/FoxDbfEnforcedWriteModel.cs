@@ -158,7 +158,9 @@ internal sealed class FoxDbfEnforcedWriteModel
 
         // Open the target so a DEFAULT UDF that reads the table state (e.g. createid()'s RECCOUNT())
         // evaluates in the right work area; harmless when the default is a constant / DATETIME().
-        TryExecute($"USE {ins.Table} IN 0\nSELECT {ins.Table}");
+        if (_connection.Session.FindInsertArea(ins.Table) is null)
+            TryExecute($"USE {ins.Table} IN 0");
+        TryExecute($"SELECT {ins.Table}");
 
         var provided = new HashSet<string>(cols, StringComparer.OrdinalIgnoreCase);
         var candidates = new Dictionary<string, VfpValue>(StringComparer.OrdinalIgnoreCase);
@@ -187,7 +189,7 @@ internal sealed class FoxDbfEnforcedWriteModel
 
             // 2) field RULEs (set fields) + 3) record/table RULE — a failure rejects the whole INSERT,
             //    BEFORE any row lands, so the table is left byte-for-byte unchanged (atomic).
-            ValidateRules(rules, candidates);
+            // Validation belongs to the interpreter and sees the converted, stored candidate.
         }
 
         // 4) the row lands + its bound __RI_INSERT_* trigger auto-fires atomically (orphan child → rollback).
@@ -205,10 +207,9 @@ internal sealed class FoxDbfEnforcedWriteModel
 
     private int Update(UpdateStatement upd)
     {
-        var rules = _connection.Session.Database?.GetTableRules(upd.Table);
-        var changed = new HashSet<string>(upd.Assignments.Select(a => a.Column), StringComparer.OrdinalIgnoreCase);
         var recs = MatchingRecords(upd.Table, upd.Where?.Text);
-        TryExecute($"USE {upd.Table} IN 0");
+        if (_connection.Session.FindInsertArea(upd.Table) is null)
+            TryExecute($"USE {upd.Table} IN 0");
 
         foreach (int rec in recs)
         {
@@ -218,23 +219,11 @@ internal sealed class FoxDbfEnforcedWriteModel
             // side-effecting value UDF fires once, == VFP9 / mirrors Insert()).
             TryExecute($"SELECT {upd.Table}\nGO {rec}");
             var setLits = new List<string>(upd.Assignments.Count);
-            var newVals = new Dictionary<string, VfpValue>(StringComparer.OrdinalIgnoreCase);
             foreach (var a in upd.Assignments)
             {
                 var v = _interp.EvalExpression(a.Value.Text);
-                newVals[a.Column] = v;
                 setLits.Add($"{a.Column} WITH {ToVfpLiteral(v)}");
             }
-
-            // The row's current values (for the record RULE + any unchanged-field references), overlaid with
-            // the NEW assignment values so the rules see the post-update row. ReadCurrentRow is position-
-            // independent (it filters on RECNO()), so it is safe to run after the SET evaluation above.
-            var candidates = ReadCurrentRow(upd.Table, rec);
-            foreach (var kv in newVals) candidates[kv.Key] = kv.Value;
-
-            // 1) field RULEs (CHANGED fields only) + 2) record/table RULE — reject BEFORE the REPLACE lands,
-            //    so a violating row is left byte-for-byte unchanged (atomic; the loop also aborts here).
-            if (rules is not null) ValidateRules(rules, candidates, changed);
 
             // 3) the matched-row REPLACE auto-fires the bound __RI_UPDATE_* trigger (key-change cascade /
             //    restrict, atomic) — exactly the proven GO/REPLACE auto-fire path. A .F. return rolled the
@@ -266,25 +255,6 @@ internal sealed class FoxDbfEnforcedWriteModel
         return recs.Count;
     }
 
-    /// <summary>The field values of physical record <paramref name="rec"/> of <paramref name="table"/> as
-    /// candidate VfpValues keyed by column name — located through the SQL engine's <c>RECNO()</c> (same
-    /// semantics as <see cref="MatchingRecords"/>). This is the base the UPDATE overlays its SET assignments
-    /// onto, so the record RULE and any unchanged-field references resolve against the row as it will look
-    /// post-update.</summary>
-    private Dictionary<string, VfpValue> ReadCurrentRow(string table, int rec)
-    {
-        var row = new Dictionary<string, VfpValue>(StringComparer.OrdinalIgnoreCase);
-        var result = _connection.Session.Execute($"SELECT * FROM {table} WHERE RECNO() = {rec}");
-        if (result?.Columns is not null && result.Rows is not null)
-        {
-            var first = result.Rows.FirstOrDefault();
-            if (first is not null)
-                for (int i = 0; i < result.Columns.Count && i < first.Length; i++)
-                    row[result.Columns[i].Name] = VfpValue.FromClr(first[i]);
-        }
-        return row;
-    }
-
     /// <summary>The 1-based physical record numbers of <paramref name="table"/> whose live record satisfies
     /// the optional <paramref name="where"/> predicate — located through the SQL engine's <c>RECNO()</c> so
     /// the matching follows VFP's WHERE semantics EXACTLY (and stays byte-consistent with the raw DML path).
@@ -307,52 +277,6 @@ internal sealed class FoxDbfEnforcedWriteModel
 
     // ─────────────────────────── rule evaluation ───────────────────────────
 
-    /// <summary>Validate the field RULEs (for the set fields) then the record/table RULE against the candidate
-    /// row values, in a throwaway memory frame so the field names resolve to those candidates (an empty work
-    /// area is selected first so a same-named column of some open table can never shadow them). The first
-    /// <c>.F.</c> rule raises a <see cref="FoxDbfException"/> with the rule's error text.</summary>
-    /// <param name="rules">The target table's DBC field + record RULE metadata.</param>
-    /// <param name="candidates">The row's candidate field values (provided + defaulted on INSERT; current
-    /// overlaid with the SET assignments on UPDATE) that bare field names in a rule resolve against.</param>
-    /// <param name="changedFields">When non-null (UPDATE), only the field RULEs of these columns are run
-    /// (a REPLACE re-validates the CHANGED fields, not the whole row); when null (INSERT) every set field's
-    /// rule runs.</param>
-    private void ValidateRules(DbcTableRules rules, Dictionary<string, VfpValue> candidates, ISet<string>? changedFields = null)
-    {
-        _interp.Memory.PushFrame();
-        try
-        {
-            TryExecute("SELECT 0");   // an unused (table-less) area → bare field names resolve to the memvars below.
-            foreach (var kv in candidates)
-                _interp.Memory.Set(kv.Key, kv.Value);
-
-            foreach (var f in rules.Fields)
-            {
-                if (string.IsNullOrEmpty(f.RuleExpression) || !candidates.ContainsKey(f.FieldName)) continue;
-                if (changedFields is not null && !changedFields.Contains(f.FieldName)) continue;
-                if (RuleFails(f.RuleExpression!))
-                    throw new FoxDbfException(RuleError(f.RuleText, f.FieldName), 1582); // VFP err 1582 field-rule (oracle-pinned).
-            }
-
-            if (!string.IsNullOrEmpty(rules.RuleExpression) && RuleFails(rules.RuleExpression!))
-                throw new FoxDbfException(RuleError(rules.RuleText, null), 1583); // VFP err 1583 record/table-rule (oracle-pinned).
-        }
-        finally
-        {
-            _interp.Memory.PopFrame();
-        }
-    }
-
-    /// <summary>A RULE is satisfied ONLY when its expression evaluates to logical <c>.T.</c>. An eval ERROR
-    /// (an unloaded UDF, a missing field) or ANY non-logical / <c>.F.</c> result is a FAILURE — VFP9 surfaces
-    /// such a rule rather than silently admitting the row, so the fail-soft <c>EVALUATE()</c> Null must not be
-    /// treated as "passed".</summary>
-    private bool RuleFails(string expression)
-    {
-        if (!_interp.TryEvalExpression(expression, out var v)) return true;   // errored ⇒ fail.
-        return !(v.Type == VfpType.Logical && v.AsLogical);
-    }
-
     /// <summary>After a row op, raise VFP error 1539 when its bound trigger returned <c>.F.</c> (a RESTRICT
     /// abort / a propagated child-cascade restrict). The interpreter already rolled the row + its cascade
     /// back; this turns that silent rollback into the error the ADO.NET caller must see (no phantom success).</summary>
@@ -362,13 +286,6 @@ internal sealed class FoxDbfEnforcedWriteModel
         _interp.LastDmlTriggerAborted = false;
         throw new FoxDbfException($"Trigger failed in {table}. (Visual FoxPro error 1539)", 1539); // VFP err 1539 trigger-.F. (oracle-pinned).
     }
-
-    private static string RuleError(string? ruleText, string? field)
-        => !string.IsNullOrWhiteSpace(ruleText)
-            ? ruleText!
-            : field is not null
-                ? $"Field '{field}' rule violated."
-                : "Record (table) rule violated.";
 
     private void TryExecute(string prg)
     {

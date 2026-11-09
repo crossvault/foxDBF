@@ -81,6 +81,19 @@ public sealed partial class DbfWriter
         return EncodeImportValues(preview, blanks);
     }
 
+    // Rule candidates use the ordinary writer's strict conversion, without publishing bytes.
+    internal byte[] EncodeRuleRow(object?[] values, bool[] blanks)
+    {
+        var preview = (object?[])values.Clone();
+        for (int i = 0; i < _schema.Columns.Count; i++)
+        {
+            if (!_schema.Columns[i].IsAutoIncrement) continue;
+            long offset = _version.HeaderSize + (long)i * _version.DescriptorWidth;
+            preview[i] = unchecked((int)ReadU32LittleEndian(offset + 19));
+        }
+        return RecordEncoder.Encode(_schema, preview, false, blanks);
+    }
+
     private byte[] EncodeImportValues(object?[] values, bool[] blanks)
     {
         var safe = (object?[])values.Clone();

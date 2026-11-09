@@ -62,6 +62,7 @@ public sealed partial class VfpInterpreter
             var v = Eval(clause.Value);
             var col = wa.Table.Columns[idx];
             target[idx] = v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
+            target[idx] = DmlExecutor.StoredFieldValue(wa.Table, col, target[idx]);
             if (edit is not null)
             {
                 edit.ValidatedFields.Remove(idx);
@@ -168,6 +169,8 @@ public sealed partial class VfpInterpreter
         for (int i = 0; i < columns.Count; i++)
             if (!columns[i].IsSystem && !columns[i].IsAutoIncrement && !blank[i] && !ae.Fields.ContainsKey(i))
                 ae.Fields[i] = null;
+        foreach (int idx in ae.Fields.Keys.ToArray())
+            ae.Fields[idx] = DmlExecutor.StoredFieldValue(wa.Table, columns[idx], ae.Fields[idx]);
         // INSERT rejects invalid fields before keeping the append; record rules are deferred.
         try { ValidateBufferedRow(wa, EffCount(wa.Area, wa) + 1, ae, validateRecord: false); }
         catch
@@ -286,6 +289,8 @@ public sealed partial class VfpInterpreter
     {
         bool append = edit is AppendEntry;
         if (!EnforceReferentialIntegrity || (!append && edit.Fields.Count == 0) || Session.Database is null) return;
+        var rules = DmlExecutor.ValidationRules(Session, wa.Alias);
+        if (rules is null) return;
         var fields = changedField.HasValue ? new[] { changedField.Value }
             : (append ? Enumerable.Range(0, wa.Table.Columns.Count).Where(i => !wa.Table.Columns[i].IsSystem) : edit.Fields.Keys)
                 .Where(i => !edit.ValidatedFields.Contains(i)).ToArray();
@@ -303,7 +308,7 @@ public sealed partial class VfpInterpreter
         {
             DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, map, EvalTextLoud,
                 fieldsToValidate: fields.Select(i => wa.Table.Columns[i].Name).ToHashSet(StringComparer.OrdinalIgnoreCase),
-                validateRecord: checkRecord);
+                validateRecord: checkRecord, rules: rules);
             return true;
         });
         edit.ValidatedFields.UnionWith(fields);

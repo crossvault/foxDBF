@@ -24,7 +24,10 @@ public sealed partial class VfpInterpreter
         var previous = Session.DbcDefaultEvaluator;
         var previousValues = Session.InsertValueEvaluator;
         var previousValidator = Session.InsertRowValidator;
-        Session.InsertRowValidator = EnforceReferentialIntegrity ? ValidateInsertRules : null;
+        var rules = EnforceReferentialIntegrity && ResolveInsertStatement(ins) is { } parsed
+            ? DmlExecutor.ValidationRules(Session, parsed.Table) : null;
+        Session.InsertRowValidator = rules is null ? null
+            : (table, schema, values, blank, recno) => ValidateInsertRules(table, schema, values, blank, recno, rules);
         Session.DbcDefaultEvaluator = _dbcDefaultEvaluator ??= EvalDbcDefault;
         Session.InsertValueEvaluator = _insertValueEvaluator ??= expression =>
         {
@@ -59,7 +62,7 @@ public sealed partial class VfpInterpreter
         }
     }
 
-    private void ValidateInsertRules(string table, DbfTable schema, Dictionary<string, object?> supplied, bool[] blank, int recno)
+    private void ValidateInsertRules(string table, DbfTable schema, Dictionary<string, object?> supplied, bool[] blank, int recno, DbcTableRules rules)
     {
         if (Session.Database is null) return;
         var wa = Session.FindInsertArea(table);
@@ -79,7 +82,7 @@ public sealed partial class VfpInterpreter
         {
             WithImportRow(wa, recno, values, () =>
             {
-                DmlExecutor.ValidateImportRules(Session, wa.Alias, schema.Columns, values, EvalTextLoud);
+                DmlExecutor.ValidateImportRules(Session, wa.Alias, schema.Columns, values, EvalTextLoud, rules: rules);
                 return true;
             });
         }
@@ -427,7 +430,7 @@ public sealed partial class VfpInterpreter
         // the interpreter's lazy refresh — so a DEFERRED append would be invisible to them. Keep the whole
         // RI-enforced path on the durable per-row route (it already fires per-row DEFAULT/RULE/trigger, so the
         // INSERT open was never its bottleneck). This also subsumes the bound-insert-trigger enforcement.
-        if (EnforceReferentialIntegrity) return false;
+        if (EnforceReferentialIntegrity && ResolveTriggerProc(RiEvent.Insert, wa) is not null) return false;
 
         // STRUCTURAL pre-validation against the read view's columns (identical geometry to the writer's): an
         // unknown column / count mismatch must raise through the ADO.NET path verbatim, so refuse here and let
@@ -450,6 +453,7 @@ public sealed partial class VfpInterpreter
             var writer = GetOrOpenCachedWriter(sourcePath);
             DmlExecutor.AppendInsertValuesRow(Session, writer, st);
             MarkAppendPending(fullPath);
+            if (EnforceReferentialIntegrity) FlushPendingAppends();
         }
         catch
         {
@@ -627,7 +631,8 @@ public sealed partial class VfpInterpreter
             var writer = lease.Writer;
             var values = new object?[writer.Schema.Columns.Count];
             for (int i = 0; i < values.Length; i++) values[i] = DbfWriter.KeepValue;
-            var candidate = EnforceReferentialIntegrity && !rulesValidated
+            var rules = EnforceReferentialIntegrity && !rulesValidated ? DmlExecutor.ValidationRules(Session, wa.Alias) : null;
+            var candidate = rules is not null
                 ? wa.Table.Columns.Where(c => !c.IsSystem).ToDictionary(c => c.Name, c => ReadField(wa, c.Name), StringComparer.OrdinalIgnoreCase)
                 : null;
 
@@ -648,11 +653,11 @@ public sealed partial class VfpInterpreter
                     : type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
                 if (candidate is not null)
                 {
-                    candidate[field] = values[idx];
+                    candidate[field] = DmlExecutor.StoredFieldValue(writer.Schema, writer.Schema.Columns[idx], values[idx]);
                     WithImportRow(wa, m.RecNo, candidate, () =>
                     {
                         DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud,
-                            fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false);
+                            fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false, rules: rules);
                         return true;
                     });
                 }
@@ -661,7 +666,7 @@ public sealed partial class VfpInterpreter
                 WithImportRow(wa, m.RecNo, candidate, () =>
                 {
                     DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud,
-                        fieldsToValidate: new HashSet<string>(), validateRecord: true);
+                        fieldsToValidate: new HashSet<string>(), validateRecord: true, rules: rules);
                     return true;
                 });
             writer.UpdateRecord(recIndex, values);

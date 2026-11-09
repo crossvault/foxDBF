@@ -62,8 +62,7 @@ internal sealed partial class DmlExecutor
             var values = EvaluateValues(_session, st);
             if (_session.InsertRowValidator is { } validate)
             {
-                if (st.Columns is null && values.Length != columns.Count)
-                    throw new FoxDbfSqlException("INSERT value count does not match the table's columns.");
+                if (st.Columns is null) CheckInsertValueCount(columns, values);
                 var candidate = st.Columns is null
                     ? columns.Select((c, i) => (c.Name, Value: values[i])).ToDictionary(c => c.Name, c => c.Value, StringComparer.OrdinalIgnoreCase)
                     : MapValues(st, columns, values);
@@ -71,11 +70,12 @@ internal sealed partial class DmlExecutor
                 var blank = st.Columns is null ? new bool[columns.Count]
                     : OmittedColumnsBlankMask(_session, st.Table, columns, candidate, honourSetNull: true);
                 var schema = target.Writer.Schema;
+                var stored = StoredInsertValues(target.Writer, candidate, blank);
                 int recno = target.Writer.RecordCount + 1;
                 // The fallback writer temporarily owns an exclusive work area's handle.
                 // Restore that area before invoking PRG rules, as with DEFAULT evaluation.
                 target.Dispose();
-                validate(st.Table, schema, candidate, blank, recno);
+                validate(st.Table, schema, stored, blank, recno);
                 target = _session.OpenWritableTarget(st.Table);
                 target.Writer.AppendRecord(candidate, blank);
                 return SqlResult.Dml(1);
@@ -151,16 +151,22 @@ internal sealed partial class DmlExecutor
     }
 
     /// <summary>No column list: values map to the physical field order; VFP requires one per field.</summary>
-    private static void AppendAllColumns(VfpSession session, string table, DbfWriter writer, IReadOnlyList<DbfColumn> columns, object?[] values)
+    private static void CheckInsertValueCount(IReadOnlyList<DbfColumn> columns, object?[] values)
     {
         if (values.Length != columns.Count)
             throw new FoxDbfSqlException(
-                $"INSERT value count {values.Length} does not match the table's {columns.Count} column(s) (no column list given).");
+                $"INSERT value count {values.Length} does not match the table's {columns.Count} column(s) (no column list given).")
+                { VfpErrorNumber = values.Length < columns.Count ? 94 : 1230 };
+    }
+
+    private static void AppendAllColumns(VfpSession session, string table, DbfWriter writer, IReadOnlyList<DbfColumn> columns, object?[] values)
+    {
+        CheckInsertValueCount(columns, values);
         if (session.InsertRowValidator is { } validate)
         {
             var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < columns.Count; i++) map[columns[i].Name] = values[i];
-            validate(table, writer.Schema, map, new bool[columns.Count], writer.RecordCount + 1);
+            validate(table, writer.Schema, StoredInsertValues(writer, map, new bool[columns.Count]), new bool[columns.Count], writer.RecordCount + 1);
         }
         writer.AppendRecord(values);
     }
@@ -169,7 +175,8 @@ internal sealed partial class DmlExecutor
         Dictionary<string, object?> map, bool honourSetNull)
     {
         var blank = OmittedColumnsBlankMask(session, table, writer.Schema.Columns, map, honourSetNull);
-        session.InsertRowValidator?.Invoke(table, writer.Schema, map, blank, writer.RecordCount + 1);
+        if (session.InsertRowValidator is { } validate)
+            validate(table, writer.Schema, StoredInsertValues(writer, map, blank), blank, writer.RecordCount + 1);
         writer.AppendRecord(map, blank);
     }
 
@@ -238,9 +245,10 @@ internal sealed partial class DmlExecutor
         if (_session.InsertRowValidator is { } validate)
         {
             int recno = target.Writer.RecordCount + 1;
+            var stored = StoredInsertValues(target.Writer, map, blank);
             // PRG rules need the live work area restored, as on the VALUES fallback path.
             target.Dispose();
-            validate(table, schema, map, blank, recno);
+            validate(table, schema, stored, blank, recno);
             target = _session.OpenWritableTarget(table);
         }
         target.Writer.AppendRecord(map, blank);
@@ -301,12 +309,32 @@ internal sealed partial class DmlExecutor
         if (sourcePath is not null)
         {
             if (session.TxLivePath is { } toLive) sourcePath = toLive(sourcePath);
-            foreach (string member in database.TableNames)
-                if (string.Equals(database.GetTablePath(member), sourcePath, StringComparison.OrdinalIgnoreCase))
-                    return database.GetTableRules(member);
-            return null;
+            return database.RulesForPath(sourcePath);
         }
         return database.TryGetTableRules(table, out var rules) ? rules : null;
+    }
+
+    internal static DbcTableRules? ValidationRules(VfpSession session, string table)
+    {
+        var rules = TableRules(session, table);
+        return rules is not null && (!string.IsNullOrEmpty(rules.RuleExpression)
+            || rules.Fields.Any(f => !string.IsNullOrEmpty(f.RuleExpression))) ? rules : null;
+    }
+
+    internal static object? StoredFieldValue(DbfTable schema, DbfColumn column, object? value)
+    {
+        if (value is null || column.Type is not ('N' or 'F' or 'I' or 'Y' or 'B')) return value;
+        Span<byte> bytes = stackalloc byte[column.Length];
+        FieldEncoder.Encode(column, value, schema.Encoding, bytes);
+        return FieldDecoder.Decode(column, bytes, schema.Encoding);
+    }
+
+    private static Dictionary<string, object?> StoredInsertValues(DbfWriter writer,
+        Dictionary<string, object?> map, bool[] blank)
+    {
+        var values = writer.Schema.Columns.Select(c => map.GetValueOrDefault(c.Name)).ToArray();
+        var record = new DbfRecord(writer.Schema, writer.EncodeRuleRow(values, blank));
+        return StoredImportValues(writer.Schema, record, map);
     }
 
     /// <summary>The DBC Field record of <paramref name="col"/>, the <paramref name="field"/>-th non-system

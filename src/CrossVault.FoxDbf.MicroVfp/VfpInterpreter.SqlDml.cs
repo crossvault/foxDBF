@@ -154,6 +154,7 @@ public sealed partial class VfpInterpreter
 
     private void SqlUpdateRow(VfpSession.WorkArea wa, IReadOnlyList<(string Field, PrgExpr Value)> assignments)
     {
+        var rules = EnforceReferentialIntegrity ? DmlExecutor.ValidationRules(Session, wa.Alias) : null;
         var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var column in wa.Table.Columns)
             if (!column.IsSystem) values[column.Name] = ReadField(wa, column.Name);
@@ -175,15 +176,15 @@ public sealed partial class VfpInterpreter
                     _ => true
                 };
                 if (!compatible) throw new MicroVfpRuntimeException("Data type mismatch.", 9);
-                values[field] = value.ToClr();
+                values[field] = DmlExecutor.StoredFieldValue(wa.Table, column, value.ToClr());
                 // VFP checks each SET field before evaluating the next clause, even without buffering.
-                if (EnforceReferentialIntegrity && Meta(wa.Area).Buffering <= 1)
+                if (rules is not null && Meta(wa.Area).Buffering <= 1)
                     DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalTextLoud,
-                        fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false);
+                        fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false, rules: rules);
             }
-            if (EnforceReferentialIntegrity && Meta(wa.Area).Buffering <= 1)
+            if (rules is not null && Meta(wa.Area).Buffering <= 1)
                 DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalTextLoud,
-                    fieldsToValidate: new HashSet<string>(), validateRecord: true);
+                    fieldsToValidate: new HashSet<string>(), validateRecord: true, rules: rules);
             return true;
         });
         foreach (string field in assignments.Select(a => a.Field).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -200,12 +201,12 @@ public sealed partial class VfpInterpreter
             var meta = Meta(wa.Area);
             if (meta.Buf?.Rows.TryGetValue(meta.RecNo, out var edit) == true)
                 ValidateBufferedRow(wa, meta.RecNo, edit);
-            else
-                WithImportRow(wa, meta.RecNo, values, () =>
-                {
-                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalTextLoud);
-                    return true;
-                });
+            else if (meta.Buf is { } buffer)
+            {
+                int appendIndex = meta.RecNo - wa.Table.RecordCount - 1;
+                if (appendIndex >= 0 && appendIndex < buffer.Appends.Count)
+                    ValidateBufferedRow(wa, meta.RecNo, buffer.Appends[appendIndex]);
+            }
         }
     }
 }

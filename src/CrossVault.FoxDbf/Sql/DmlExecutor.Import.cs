@@ -115,9 +115,9 @@ internal sealed partial class DmlExecutor
 
     internal static void ValidateImportRules(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
         Dictionary<string, object?> map, Func<string, VfpValue>? evaluate = null, int recno = 0, bool? suppliedFields = null,
-        ISet<string>? fieldsToValidate = null, bool validateRecord = true)
+        ISet<string>? fieldsToValidate = null, bool validateRecord = true, DbcTableRules? rules = null)
     {
-        var rules = TableRules(session, table);
+        rules ??= TableRules(session, table);
         if (rules is null) return;
         VfpValue Eval(string expression) => evaluate is not null ? evaluate(expression)
             : VfpExpression.Parse(expression).Evaluate(new ImportRow(columns, map, recno), session.Context);
