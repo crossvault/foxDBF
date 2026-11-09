@@ -83,7 +83,8 @@ internal sealed partial class DmlExecutor
 
     internal static Dictionary<string, object?> StoredImportValues(DbfTable schema, DbfRecord record, Dictionary<string, object?> map)
         => schema.Columns.Where(c => !c.IsSystem).ToDictionary(c => c.Name,
-            c => c.Type is 'M' or 'W' or 'G' ? map.GetValueOrDefault(c.Name, "") : record.GetVfpValue(c.Name), StringComparer.OrdinalIgnoreCase);
+            c => record.IsNullFlagSet(c) ? null
+                : c.Type is 'M' or 'W' or 'G' ? map.GetValueOrDefault(c.Name, "") : record.GetVfpValue(c.Name), StringComparer.OrdinalIgnoreCase);
 
     private sealed class ImportValues : Dictionary<string, object?>
     {

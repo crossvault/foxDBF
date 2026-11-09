@@ -58,7 +58,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   Supplied and omitted field rules preserve VFP9's different failure `_TALLY` values.
 - `INSERT INTO ... [(fields)] SELECT ...` in SQL, microVFP and ADO.NET, including DBC
   defaults and all field rules (including omitted fields), and source materialization for self-inserts.
-  Rules see stored field widths, the pending record number/count and hosted UDFs. Imports retain
+  Rules see stored field widths, omitted memo/blob/general NULLs, the pending record number/count
+  and hosted UDFs. Field CHECK expressions accept an unparenthesized NOT operator. Imports retain
   accepted prefix rows on constraint failures and validate keys against the transaction's write copy.
   VFP9 integer import overflow bytes are preserved, including with insert triggers or additional
   indexes, and exposed as overflow in expressions. VALUES retains its strict overflow errors.
