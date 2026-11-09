@@ -339,7 +339,7 @@ public sealed partial class VfpInterpreter
         }
         WithImportRow(wa, recno, map, () =>
         {
-            DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, map, EvalTextLoud, evaluateFieldError: EvalFieldRuleError,
+            DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, map, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
                 fieldsToValidate: fields.Select(i => wa.Table.Columns[i].Name).ToHashSet(StringComparer.OrdinalIgnoreCase),
                 validateRecord: checkRecord, rules: rules);
             return true;

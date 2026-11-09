@@ -82,7 +82,7 @@ public sealed partial class VfpInterpreter
         {
             WithImportRow(wa, recno, values, () =>
             {
-                DmlExecutor.ValidateImportRules(Session, wa.Alias, schema.Columns, values, EvalTextLoud, evaluateFieldError: EvalFieldRuleError, rules: rules);
+                DmlExecutor.ValidateImportRules(Session, wa.Alias, schema.Columns, values, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError, rules: rules);
                 return true;
             });
         }
@@ -92,6 +92,14 @@ public sealed partial class VfpInterpreter
             GoRecordCore(wa.Area, recno);
             throw;
         }
+    }
+
+    private VfpValue EvalRuleExpression(string expression)
+    {
+        bool previous = _requireDmlNames;
+        _requireDmlNames = true;
+        try { return EvalTextLoud(expression); }
+        finally { _requireDmlNames = previous; }
     }
 
     private VfpValue EvalFieldRuleError(string expression, string field)
@@ -670,7 +678,7 @@ public sealed partial class VfpInterpreter
                     candidate[field] = DmlExecutor.StoredFieldValue(writer.Schema, writer.Schema.Columns[idx], values[idx]);
                     WithImportRow(wa, m.RecNo, candidate, () =>
                     {
-                        DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud, evaluateFieldError: EvalFieldRuleError,
+                        DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
                             fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false, rules: rules);
                         return true;
                     });
@@ -679,7 +687,7 @@ public sealed partial class VfpInterpreter
             if (candidate is not null)
                 WithImportRow(wa, m.RecNo, candidate, () =>
                 {
-                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud, evaluateFieldError: EvalFieldRuleError,
+                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
                         fieldsToValidate: new HashSet<string>(), validateRecord: true, rules: rules);
                     return true;
                 });
