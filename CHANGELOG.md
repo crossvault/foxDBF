@@ -32,7 +32,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 - microVFP supports xBase `UPDATE ON field FROM alias REPLACE ... [RANDOM]`, including
   sequential source matches, VFP9 record pointers and `_TALLY`, errors, buffering,
-  validation/triggers and index maintenance through the existing REPLACE writer.
+  validation/triggers and index maintenance through the existing REPLACE writer. Assignments
+  validate destination types and normalize numeric precision and Varbinary width/type before the next expression; qualified
+  fields, trailing RANDOM, key-width/type errors, FOUND() and reported buffering follow VFP9.
+  Replacing another field preserves untouched Varchar/Varbinary lengths, including empty keys.
 
 - microVFP runs UPDATE-SQL and DELETE-SQL in PRGs with VFP9-matched row expressions, `_TALLY`, work-area/record-pointer behavior, errors, validation and triggers, buffering, index maintenance, and transaction commit/rollback.
 
@@ -104,12 +107,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ### Fixed
 
 - BREAKING: microVFP `BEGIN TRANSACTION` now raises VFP error 1548 before opening a transaction
-  when any open database member has a non-structural IDX or CDX. Free tables and indexes opened
-  after BEGIN remain accepted there; existing standalone-index write safety restrictions still apply.
+  when any open database member has a non-structural IDX or CDX, even without its database current.
+  TABLEUPDATE's internal transaction remains allowed. Free tables and indexes opened after BEGIN
+  remain accepted; PRG writes with compact IDX now take index snapshots for byte-exact rollback.
+  ADO.NET copy-on-write and candidate/RI standalone-index write restrictions remain in place.
 
 - DELETE/RECALL re-key an index only when its KEY/FOR directly calls `DELETED()`, matching
   VFP9's persisted indexes. `EVALUATE`/`EVAL`, random/date/time functions, `SYS` and UDFs
-  alone no longer cause a flag-only change to replace stored keys or FOR membership.
+  alone no longer cause a flag-only change to replace stored keys or FOR membership, including
+  mixed structural/extra CDX tags and open legacy or compact IDX files.
 
 - `DELETE` / `RECALL` no longer re-key an index whose KEY/FOR reaches `DELETED()` only through a UDF
   (`INDEX ON id FOR livefn()`); VFP9 keeps such entries, and the record stays findable by `SEEK`.

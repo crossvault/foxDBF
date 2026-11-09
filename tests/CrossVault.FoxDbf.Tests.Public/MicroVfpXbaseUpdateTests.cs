@@ -98,14 +98,35 @@ public sealed class MicroVfpXbaseUpdateTests
     {
         bool random = kind.StartsWith("random_") && (kind.EndsWith('1') || kind.EndsWith('3') || kind.EndsWith('5'));
         if (random) kind = kind[7..];
-        string setup = kind.StartsWith("field") ? Setup.Replace("n I,", "n I CHECK n<250,")
-            : kind.StartsWith("record") ? Setup.Replace("k C(10))", "k C(10), CHECK n<250)") : Setup;
+        string setup = Setup;
         if (kind == "integer") setup = setup.Replace("id N(6)", "id I");
         string scenario = Scenario(kind == "integer" ? "indexed" : kind == "key_expression" ? "plain" : kind);
         if (kind == "key_expression") scenario = scenario.Replace("UPDATE ON id ", "UPDATE ON id+0 ");
         if (random) scenario = scenario.Replace("WITH TRANSFORM(n)", "WITH TRANSFORM(n) RANDOM");
-        string procedure = kind.StartsWith("trigger") ? "PROCEDURE __RI_UPDATE_t\nRETURN n<250\nENDPROC\n" : "";
-        Assert.Equal(expected, Run(setup, procedure + scenario, kind.StartsWith("field") || kind.StartsWith("record") || kind.StartsWith("trigger")));
+        string? rule = new[] { "field", "record", "trigger" }.FirstOrDefault(kind.StartsWith);
+        Assert.Equal(expected, rule is null ? Run(setup, scenario) : RunRuleFixture(rule, scenario));
+    }
+
+    internal static string RuleSetup(string rule) => Setup + "\nCLOSE TABLES ALL\nUSE t EXCLUSIVE\n" + (rule switch
+    {
+        "field" => "ALTER TABLE t ALTER COLUMN n SET CHECK n<250 NOVALIDATE",
+        "record" => "ALTER TABLE t SET CHECK n<250 NOVALIDATE",
+        _ => "CREATE TRIGGER ON t FOR UPDATE AS __RI_UPDATE_t()"
+    });
+
+    private static string RunRuleFixture(string rule, string scenario)
+    {
+        // Synthetic VFP9 files made by the same RuleSetup used by the live oracle. In particular
+        // the trigger is actually bound in the DBC, rather than inferred from a procedure name.
+        using var dir = new MicroVfpTestSupport.TempDir("update_rules");
+        string source = Path.Combine(AppContext.BaseDirectory, "Fixtures", "XbaseUpdate", rule);
+        foreach (string file in Directory.GetFiles(source)) File.Copy(file, dir.File(Path.GetFileName(file)));
+        using var session = new VfpSession();
+        session.OpenDatabase(dir.File("probe.dbc"));
+        using var vfp = new VfpInterpreter(session) { EnforceReferentialIntegrity = true };
+        vfp.LoadStoredProceduresFromDatabase();
+        vfp.Execute("PUBLIC result\nresult=''\n" + scenario);
+        return vfp.Memory.Get("result").AsString.Replace("\r", "");
     }
 
     internal const string Setup = """
@@ -152,7 +173,7 @@ public sealed class MicroVfpXbaseUpdateTests
             """;
     }
 
-    internal static string Run(string setup, string scenario, bool enforce = false)
+    internal static string Run(string setup, string scenario, bool enforce = false, string? engineDatabase = "probe")
     {
         using var dir = new MicroVfpTestSupport.TempDir("xbase_update");
         using var session = new VfpSession();
@@ -161,6 +182,17 @@ public sealed class MicroVfpXbaseUpdateTests
         session.OpenDatabase(dir.File("probe.dbc"));
         using var vfp = new VfpInterpreter(session);
         vfp.Execute(setup + "\nCLOSE TABLES ALL");
+        if (engineDatabase == "other")
+            DbfDatabaseBuilder.Create(dir.File("other.dbc"), Array.Empty<DbcTableSpec>());
+        if (engineDatabase != "probe")
+        {
+            using var alternate = new VfpSession();
+            alternate.OpenDirectory(dir.Path);
+            if (engineDatabase is not null) alternate.OpenDatabase(dir.File(engineDatabase + ".dbc"));
+            using var engine = new VfpInterpreter(alternate);
+            engine.Execute("PUBLIC result\nresult=''\n" + scenario);
+            return engine.Memory.Get("result").AsString.Replace("\r", "");
+        }
         vfp.EnforceReferentialIntegrity = enforce;
         vfp.Execute("PUBLIC result\nresult=''\n" + scenario);
         return vfp.Memory.Get("result").AsString.Replace("\r", "");

@@ -712,14 +712,14 @@ public sealed partial class DbfWriter : IDisposable
 
             if (hasKeep && existing is not null)
             {
-                // Preserve each KeepValue field's existing bytes + its _NullFlags bit.
+                // Preserve each KeepValue field's bytes and its null/variable-length bits.
                 for (int i = 0; i < columns.Count && i < positional.Length; i++)
                 {
                     if (!ReferenceEquals(positional[i], KeepValue))
                         continue;
                     var col = columns[i];
                     Array.Copy(existing, col.Offset + 1, record, col.Offset + 1, col.Length);
-                    CopyNullFlagBit(existing, record, col);
+                    CopyFieldFlagBits(existing, record, col);
                 }
             }
 
@@ -746,22 +746,25 @@ public sealed partial class DbfWriter : IDisposable
         });
     }
 
-    /// <summary>Copy a single column's <c>_NullFlags</c> bit from <paramref name="from"/> to
-    /// <paramref name="to"/> (set OR clear), so a preserved FPT field keeps its exact null state.</summary>
-    private void CopyNullFlagBit(byte[] from, byte[] to, DbfColumn col)
+    /// <summary>Keep an untouched field's null state and V/Q length interpretation, as VFP9 does.</summary>
+    private void CopyFieldFlagBits(byte[] from, byte[] to, DbfColumn col)
     {
         var nf = _schema.NullFlagsColumn;
         if (nf is null)
             return;
-        var (_, nullBit) = _schema.GetVarlenNullBits(col);
-        if (nullBit < 0)
-            return;
-        int idx = nf.Offset + 1 + (nullBit >> 3);
-        if ((uint)idx >= (uint)to.Length || (uint)idx >= (uint)from.Length)
-            return;
-        byte mask = (byte)(1 << (nullBit & 7));
-        if ((from[idx] & mask) != 0) to[idx] |= mask;
-        else to[idx] &= (byte)~mask;
+        var (varlenBit, nullBit) = _schema.GetVarlenNullBits(col);
+        CopyBit(varlenBit);
+        CopyBit(nullBit);
+
+        void CopyBit(int bit)
+        {
+            if (bit < 0) return;
+            int idx = nf.Offset + 1 + (bit >> 3);
+            if ((uint)idx >= (uint)to.Length || (uint)idx >= (uint)from.Length) return;
+            byte mask = (byte)(1 << (bit & 7));
+            if ((from[idx] & mask) != 0) to[idx] |= mask;
+            else to[idx] &= (byte)~mask;
+        }
     }
 
     private void SetDeleteFlag(int index, byte flag)
@@ -779,25 +782,31 @@ public sealed partial class DbfWriter : IDisposable
             // Only a tag whose KEY/FOR can see the deletion flag changes (VFP9 keeps every other key in place).
             bool structural = _cdxMaintEditor is not null && _cdxMaintPlans is not null
                 && _cdxMaintPlans.Exists(plan => plan.Computer.DependsOnDeletionState);
-            if (structural || (HasAdditionalIndexes && AdditionalIndexesDependOnDeletion())) _deletionRekeyed = true;
-            byte[]? before = structural || HasAdditionalIndexes
-                ? ReadRaw(_handle, offset, _recordLength) : null;
+            bool additional = HasAdditionalIndexes && AdditionalIndexesDependOnDeletion();
+            if (!structural && !additional)
+            {
+                // Ordinary tags need only the flag byte: avoid record images and mutation scopes.
+                _stream.Seek(offset, SeekOrigin.Begin);
+                _stream.WriteByte(flag);
+                _stream.Flush();
+                return;
+            }
+            _deletionRekeyed = true;
+            byte[] before = ReadRaw(_handle, offset, _recordLength);
             using var mutation = structural ? BeginIndexMutation(offset, append: false, before: before) : null;
             _stream.Seek(offset, SeekOrigin.Begin);
             _stream.WriteByte(flag);
             _stream.Flush();
-            if (before is not null)
+            var after = (byte[])before.Clone();
+            after[0] = flag;
+            // DELETED() can participate in either the key or its FOR expression.
+            if (structural)
             {
-                var after = (byte[])before.Clone();
-                after[0] = flag;
-                // DELETED() can participate in either the key or its FOR expression.
-                if (structural)
-                {
-                    MaintainIndexesAfterUpdate(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));
-                    mutation?.Commit();
-                }
-                MaintainCompactIndexes(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));
+                MaintainIndexesAfterUpdate(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after), deletionOnly: true);
+                mutation?.Commit();
             }
+            if (additional)
+                MaintainCompactIndexes(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after), deletionOnly: true);
         });
     }
 

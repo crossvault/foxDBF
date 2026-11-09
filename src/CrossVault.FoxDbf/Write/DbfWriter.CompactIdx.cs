@@ -112,13 +112,14 @@ public sealed partial class DbfWriter
             if (!SkipUnavailableCompactIndex(path, context)) ReadCompactIndexPlan(path, context);
     }
 
-    private void MaintainCompactIndexes(int recNo, DbfRecord? before, DbfRecord after)
+    private void MaintainCompactIndexes(int recNo, DbfRecord? before, DbfRecord after, bool deletionOnly = false)
     {
-        MaintainAdditionalIndexes(recNo, before, after);
+        MaintainAdditionalIndexes(recNo, before, after, deletionOnly);
         foreach (var (path, context) in _openCompactIndexes)
         {
             if (SkipUnavailableCompactIndex(path, context)) continue;
             var (_, computer) = ReadCompactIndexPlan(path, context);
+            if (deletionOnly && !computer.DependsOnDeletionState) continue;
             byte[] oldKey = [];
             bool had = before is { } old && computer.TryComputeKey(old, recNo, _recordCount, out oldKey);
             bool has = computer.TryComputeKey(after, recNo, _recordCount, out var newKey);

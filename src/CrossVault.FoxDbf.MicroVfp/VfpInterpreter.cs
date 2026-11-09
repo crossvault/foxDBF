@@ -593,7 +593,7 @@ public sealed partial class VfpInterpreter
             case RecallStmt rc: ExecRecall(rc); break;
             case SumStmt sum: ExecSum(sum); break;
             case UnlockStmt ul: ExecUnlock(ul); break;       // release our REAL byte-range locks (finding 5.13).
-            case BeginTxnStmt: BeginTransaction(); break;
+            case BeginTxnStmt: BeginTransaction(userCommand: true); break;
             case EndTxnStmt: EndTransaction(); break;
             case RollbackStmt: RollbackTransaction(); break;
             case DirectiveStmt d: ProcessDefine(d.Text); break;

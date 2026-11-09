@@ -70,7 +70,7 @@ public sealed partial class DbfWriter
                 computer.ValidateHost?.Invoke();
     }
 
-    private void MaintainAdditionalIndexes(int recNo, DbfRecord? before, DbfRecord after)
+    private void MaintainAdditionalIndexes(int recNo, DbfRecord? before, DbfRecord after, bool deletionOnly = false)
     {
         foreach (var (path, context) in _openAdditionalIndexes)
         {
@@ -103,6 +103,7 @@ public sealed partial class DbfWriter
         void Change(CdxIndexBuilder.TagKeyComputer computer, Action<byte[], uint> delete,
             Action<byte[], uint> insert, Func<byte[], bool> contains)
         {
+            if (deletionOnly && !computer.DependsOnDeletionState) return;
             byte[] oldKey = [];
             bool had = before is { } old && computer.TryComputeKey(old, recNo, _recordCount, out oldKey);
             bool has = computer.TryComputeKey(after, recNo, _recordCount, out var newKey);

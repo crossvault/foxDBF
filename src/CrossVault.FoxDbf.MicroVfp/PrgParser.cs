@@ -1200,14 +1200,25 @@ public static class PrgParser
             int from = PrgScan.IndexOfKeyword(rest, "FROM");
             int replace = PrgScan.IndexOfKeyword(rest, "REPLACE");
             if (from <= 0 || replace <= from + 4)
-                return new UnknownCommand("UPDATE", PrgScan.AfterFirstWord(text));
+                return Unparsed("UPDATE", PrgScan.AfterFirstWord(text));
             string replacement = rest[replace..].Trim();
-            int random = PrgScan.IndexOfKeyword(replacement, "RANDOM");
-            bool isRandom = random >= 0 && replacement[(random + 6)..].Trim().Length == 0;
-            if (isRandom) replacement = replacement[..random].Trim();
-            if (BuildReplace(replacement) is not ReplaceStmt rp || rp.Clauses.Count == 0
+            var parsed = BuildReplace(replacement) as ReplaceStmt;
+            bool isRandom = false;
+            // RANDOM is also a legal field/memvar name. Peel only a trailing top-level
+            // keyword after a complete assignment expression.
+            var last = PrgScan.TopWords(replacement).LastOrDefault();
+            if (last.Upper == "RANDOM" && last.Start + last.Len == replacement.Length
+                && last.Start > 0 && char.IsWhiteSpace(replacement[last.Start - 1])
+                && parsed?.Clauses.LastOrDefault()?.Value.IsParsed != true)
+            {
+                replacement = replacement[..last.Start].Trim();
+                parsed = BuildReplace(replacement) as ReplaceStmt;
+                isRandom = true;
+            }
+            if (parsed is not { } rp || rp.Clauses.Count == 0
+                || rp.Clauses.Any(c => !c.Value.IsParsed)
                 || rp.Scope is not null || rp.For is not null || rp.While is not null || rp.In is not null)
-                return new UnknownCommand("UPDATE", PrgScan.AfterFirstWord(text));
+                return Unparsed("UPDATE", PrgScan.AfterFirstWord(text));
             return new XbaseUpdateStmt(PrgExpr.Parse(rest[..from].Trim()),
                 ToNameRef(rest[(from + 4)..replace].Trim()), rp, isRandom);
         }

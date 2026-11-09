@@ -292,7 +292,7 @@ public sealed partial class DbfWriter
     }
 
     /// <summary>Replace changed keys and FOR membership after an in-place update.</summary>
-    private void MaintainIndexesAfterUpdate(int recNo, DbfRecord oldRecord, DbfRecord newRecord)
+    private void MaintainIndexesAfterUpdate(int recNo, DbfRecord oldRecord, DbfRecord newRecord, bool deletionOnly = false)
     {
         if (_cdxMaintEditor is null) return;   // prepared by this mutation's ValidateIndexes
         try
@@ -301,6 +301,7 @@ public sealed partial class DbfWriter
             var editor = _cdxMaintEditor!;
             foreach (var (tag, computer) in _cdxMaintPlans!)
             {
+                if (deletionOnly && !computer.DependsOnDeletionState) continue;
                 // A bare, non-nullable fixed-field key without FOR cannot change if its bytes
                 // did not change. Avoid decoding/allocating two keys for ordinary non-key updates.
                 if (computer.UnfilteredFixedField is { } field &&
