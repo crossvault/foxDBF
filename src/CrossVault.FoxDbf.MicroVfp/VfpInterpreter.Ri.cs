@@ -54,10 +54,9 @@ public sealed partial class VfpInterpreter
     /// P3b (ADO.NET enforced write-model) — set to <see langword="true"/> when the OUTERMOST auto-fired RI
     /// trigger of a DML op returns <c>.F.</c> (a RESTRICT abort, or a child-cascade restrict that propagated
     /// up to the top-level trigger). The plain <c>ExecInsert</c>/<c>ExecReplace</c>/<c>ExecDelete</c> path
-    /// rolls the row back but returns NORMALLY (the trigger result is not raised), so the enforced ADO.NET
-    /// write path inspects this flag after each row op to raise VFP error 1539 instead of reporting a phantom
-    /// success with a wrong affected-record count. The caller resets it to <see langword="false"/> before each
-    /// row op; it is never set on a successful (allowed) DML.
+    /// rolls the row back; unbuffered DELETE/INSERT then raise VFP error 1539. The enforced ADO.NET
+    /// write path also inspects this flag for paths that return normally. The caller resets it to
+    /// <see langword="false"/> before each row op; it is never set on a successful (allowed) DML.
     /// </summary>
     public bool LastDmlTriggerAborted { get; set; }
 
@@ -70,6 +69,18 @@ public sealed partial class VfpInterpreter
 
     // P3b RI events a bound trigger fires for (delete current/scoped record, key-changing replace, append).
     private enum RiEvent { Delete, Update, Insert }
+
+    private static MicroVfpRuntimeException TriggerFailed(RiEvent ev, int area, string alias)
+    {
+        // VFP9 uses the failing alias, with only its first character capitalized, in both columns 2/3.
+        string detail = alias.Length == 0 ? alias : char.ToUpperInvariant(alias[0]) + alias[1..].ToLowerInvariant();
+        return new($"Trigger failed in {detail}.", 1539)
+        {
+            Details = detail,
+            TriggerArea = area,
+            TriggerType = ev switch { RiEvent.Insert => 1, RiEvent.Update => 2, _ => 3 },
+        };
+    }
 
     /// <summary>
     /// P3b auto-fire seam — fire the table's bound RI trigger for <paramref name="ev"/> on work area

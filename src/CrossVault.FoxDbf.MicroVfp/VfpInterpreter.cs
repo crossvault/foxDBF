@@ -460,8 +460,9 @@ public sealed partial class VfpInterpreter
         Runtime.LastErrorNumber = no;
         Runtime.LastErrorMessage = msg;
         Runtime.LastErrorDetail = ex is MicroVfpRuntimeException { Details: { } d } ? d : null;
-        Runtime.LastErrorArea = Session.CurrentArea;
-        Runtime.LastErrorTrigger = 0;
+        Runtime.LastErrorArea = ex is MicroVfpRuntimeException { TriggerType: > 0 } trigger
+            ? trigger.TriggerArea : Session.CurrentArea;
+        Runtime.LastErrorTrigger = ex is MicroVfpRuntimeException ri ? ri.TriggerType : 0;
         Runtime.LastErrorField = 0;
     }
 

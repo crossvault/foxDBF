@@ -292,6 +292,8 @@ public sealed partial class VfpInterpreter
         // the inserted row back here so VFP's "blocked INSERT" is matched and no orphan child survives.
         if (!ok && snap is not null) RestoreSnapshot(snap);
         if (openedHere && Session.AreaAt(area) is not null) { Session.CloseArea(area); _meta.Remove(area); }
+        // VFP9 reports the rejected INSERT only after removing the orphan row.
+        if (!ok) throw TriggerFailed(RiEvent.Insert, area, wa.Alias);
         }
         finally { snap?.Cleanup(); }
     }
@@ -694,7 +696,8 @@ public sealed partial class VfpInterpreter
         var mdel = Meta(area);
         if (mdel.Buffering > 1 && Session.AreaAt(area) is { } wdel) { BufferDeleteFlag(area, wdel, mdel, deleted: true); return; }
         // P3b: a bound delete trigger fires BEFORE the mark; a RESTRICT rule returning .F. ABORTS it.
-        if (EnforceReferentialIntegrity && !FireDmlTrigger(RiEvent.Delete, area)) return;
+        if (EnforceReferentialIntegrity && !FireDmlTrigger(RiEvent.Delete, area))
+            throw TriggerFailed(RiEvent.Delete, area, Session.AreaAt(area)?.Alias ?? string.Empty);
         WriteFlag(area, recall: false);
     }
 

@@ -25,6 +25,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- **BREAKING:** With `EnforceReferentialIntegrity = true`, microVFP now raises VFP error 1539
+  when a DELETE or unbuffered INSERT trigger rejects a row, instead of silently returning.
+  Rejected rows remain unchanged or rolled back. TRY/CATCH and ON ERROR retain the trigger type
+  in `AERROR()`; enforced ADO.NET writes continue to report `FoxDbfException` with error 1539.
+
 - BREAKING: microVFP INSERT positions the target on the appended record and keeps a previously closed target
   open. Row buffering reports a positive record number; table buffering reports a provisional negative number.
   An explicit navigation command after INSERT can therefore commit a row buffer, as it does in VFP9.

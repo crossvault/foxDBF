@@ -39,6 +39,16 @@ internal sealed class FoxDbfEnforcedWriteModel
     /// Returns the affected-record count (best effort; -1 when not tracked).</summary>
     internal int Execute(string sql)
     {
+        try { return ExecuteCore(sql); }
+        catch (MicroVfpRuntimeException ex) when (ex.VfpErrorNumber == 1539)
+        {
+            // Unbuffered RI failures now originate in microVFP; keep the provider's DbException contract.
+            throw new FoxDbfException(ex.Message, 1539, ex);
+        }
+    }
+
+    private int ExecuteCore(string sql)
+    {
         var stmt = SqlParser.Parse(sql);
         // INSERT … FROM ARRAY | MEMVAR: expand into concrete per-row VALUES inserts (reading the active
         // session's memvar store) so each row flows through the SAME DEFAULT/RULE/TRIGGER enforcement below.

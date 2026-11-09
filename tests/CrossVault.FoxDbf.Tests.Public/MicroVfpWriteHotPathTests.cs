@@ -277,7 +277,8 @@ public sealed class MicroVfpWriteHotPathTests
             interp.EnforceReferentialIntegrity = true;
             // Deleting a customer that still has orders is a RESTRICT — the auto-fired __RI_DELETE_customer
             // returns .F. and the parent DELETE must be ROLLED BACK (parent stays live, children untouched).
-            interp.Execute($"USE tastrade!customer IN 0\nSELECT customer\nGO {recno}\nDELETE");
+            Assert.Equal(1539, Assert.Throws<MicroVfpRuntimeException>(() =>
+                interp.Execute($"USE tastrade!customer IN 0\nSELECT customer\nGO {recno}\nDELETE")).VfpErrorNumber);
         }
         string tempDbc = Path.Combine(dir.Path, "tastrade.dbc");
         Assert.False(CustomerDeleted(tempDbc, recno),

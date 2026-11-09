@@ -235,8 +235,9 @@ public sealed partial class VfpInterpreter
             Runtime.LastErrorMessage = obj.Message;
             Runtime.LastErrorDetail = obj.Details.Length > 0 ? obj.Details : null;
         }
-        Runtime.LastErrorArea = 0;
-        Runtime.LastErrorTrigger = 0;
+        Runtime.LastErrorArea = caught is MicroVfpRuntimeException { TriggerType: > 0 } trigger
+            ? trigger.TriggerArea : 0;
+        Runtime.LastErrorTrigger = caught is MicroVfpRuntimeException ri ? ri.TriggerType : 0;
         Runtime.LastErrorField = 0;
         _errNo = 0;
         _errMsg = Runtime.LastErrorMessage ?? string.Empty;
