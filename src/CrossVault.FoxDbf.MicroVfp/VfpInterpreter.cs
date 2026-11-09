@@ -1429,6 +1429,10 @@ public sealed partial class VfpInterpreter
         int dot = t.LastIndexOf('.');
         if (dot > 0 && t.IndexOfAny(new[] { '(', '[' }) < 0)
         {
+            // An open alias does not make an object assignment a field write in VFP9.
+            string head = t[..dot];
+            if (!head.Contains('.') && !IsDefinedName(head))
+                throw new MicroVfpRuntimeException($"Object {head} is not found.", 1923) { Details = head };
             if (!TryGetObject(EvalTextLoud(t[..dot]), out var obj))
                 throw new MicroVfpRuntimeException($"{t[..dot]} is not an object.", 1924);
             obj.Set(t[(dot + 1)..], value);

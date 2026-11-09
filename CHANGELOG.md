@@ -60,6 +60,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP `REPLACE` preserves fields named `all`, `rest`, `next` or `record` in values and
+  predicates instead of misreading them as trailing record scopes.
+- **BREAKING:** with RI enforcement enabled, unbuffered `APPEND BLANK` fires the insert trigger
+  after DEFAULTs and removes the new row on rejection; rejected `REPLACE` updates now raise
+  VFP error 1539 after restoring the original row, matching VFP9.
+- **BREAKING:** dotted assignments to a missing object now raise VFP error 1923 instead of 1924.
+  An open table alias does not turn an object assignment into a field update, matching VFP9.
+
 - BREAKING: Bulk CDX/compact IDX creation now reproduces VFP9's blank-head compression at leaf
   boundaries, including NORDAN/ICELAND NBSP keys. Weighted `SEEK` follows VFP9's tree descent and
   trailing blank-weight comparisons, including TAB. This also reproduces native misses on those

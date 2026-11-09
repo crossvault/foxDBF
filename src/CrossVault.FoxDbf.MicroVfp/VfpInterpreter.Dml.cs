@@ -454,14 +454,41 @@ public sealed partial class VfpInterpreter
         {
             path = BeginTxWrite(path);
             SnapshotForTxn(path);
-            using var lease = LeaseWriter(path);
-            var writer = lease.Writer;
-            writer.AppendRecord(values, DmlExecutor.OmittedColumnsBlankMask(Session, wa.Alias,
-                writer.Schema.Columns, values, honourSetNull: false));
-            recno = writer.RecordCount;
-            writer.Flush();
-            ReopenFileAreas(path);
-            meta = Meta(area);
+            bool fireInsert = EnforceReferentialIntegrity && ResolveTriggerProc(RiEvent.Insert, wa) is not null;
+            FileSnapshot? snapshot = fireInsert ? CaptureSnapshot(path) : null;
+            try
+            {
+                using (var lease = LeaseWriter(path))
+                {
+                    var writer = lease.Writer;
+                    writer.AppendRecord(values, DmlExecutor.OmittedColumnsBlankMask(Session, wa.Alias,
+                        writer.Schema.Columns, values, honourSetNull: false));
+                    recno = writer.RecordCount;
+                    writer.Flush();
+                }
+                ReopenFileAreas(path);
+                meta = Meta(area);
+                PositionPointer(meta, null, recno);
+                if (fireInsert)
+                {
+                    int savedArea = Session.CurrentArea;
+                    bool allowed;
+                    try
+                    {
+                        Session.SelectArea(area);
+                        allowed = FireDmlTrigger(RiEvent.Insert, area);
+                    }
+                    finally { Session.SelectArea(savedArea); }
+                    if (!allowed)
+                    {
+                        RestoreSnapshot(snapshot!);
+                        // VFP removes the rejected append and leaves the pointer at EOF.
+                        GoRecord(area, recno);
+                        throw TriggerFailed(RiEvent.Insert, area, wa.Alias);
+                    }
+                }
+            }
+            finally { snapshot?.Cleanup(); }
         }
         PositionPointer(meta, null, recno);
         meta.Ordered = null;
@@ -588,6 +615,7 @@ public sealed partial class VfpInterpreter
         {
             if (parentImg is { } pRevert) RestoreRecordImage(pRevert);
             else if (parentSnap is not null) RestoreSnapshot(parentSnap);
+            throw TriggerFailed(RiEvent.Update, area, wa.Alias);
         }
         }
         finally

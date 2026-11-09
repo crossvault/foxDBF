@@ -54,7 +54,7 @@ public sealed partial class VfpInterpreter
     /// P3b (ADO.NET enforced write-model) — set to <see langword="true"/> when the OUTERMOST auto-fired RI
     /// trigger of a DML op returns <c>.F.</c> (a RESTRICT abort, or a child-cascade restrict that propagated
     /// up to the top-level trigger). The plain <c>ExecInsert</c>/<c>ExecReplace</c>/<c>ExecDelete</c> path
-    /// rolls the row back; unbuffered DELETE/INSERT then raise VFP error 1539. The enforced ADO.NET
+    /// rolls the row back; unbuffered DELETE/INSERT/APPEND BLANK/REPLACE then raise VFP error 1539. The enforced ADO.NET
     /// write path also inspects this flag for paths that return normally. The caller resets it to
     /// <see langword="false"/> before each row op; it is never set on a successful (allowed) DML.
     /// </summary>
