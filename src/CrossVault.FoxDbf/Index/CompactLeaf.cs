@@ -181,6 +181,16 @@ public static class CompactLeaf
         return entries;
     }
 
+    internal static int DuplicatePrefix(ReadOnlySpan<byte> page, LeafInfo info, int slot)
+    {
+        if (slot == 0) return 0;
+        int offset = LeafInfo.EntryArrayOffset + slot * info.BytesPerEntry;
+        if (info.BytesPerEntry is < 1 or > 8 || offset + info.BytesPerEntry > page.Length) return 0;
+        ulong bits = 0;
+        for (int b = 0; b < info.BytesPerEntry; b++) bits |= (ulong)page[offset + b] << (b * 8);
+        return (int)((bits >> info.RecnoBits) & info.DupCountMask);
+    }
+
     /// <summary>Caps a declared leaf key count to the physical entry-info capacity of one page.</summary>
     internal static int CapKeyCount(int declaredKeyCount, int bytesPerEntry)
     {

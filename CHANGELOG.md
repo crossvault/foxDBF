@@ -60,6 +60,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: CDX and compact IDX bulk builds reproduce DUTCH blank-head compression with secondary
+  weights and preserve VFP9's UNIQWT/10000 entry order. Weighted incremental insertion and exact SEEK
+  follow VFP9's directional blank comparison and branch search. Exact SEEK also retains compressed-prefix
+  comparison state, including native hits and misses on displaced keys.
+- CDX and compact IDX build statistics count changes in the current unpadded key prefix, matching VFP9
+  for MACHINE NUL/TAB/blank keys. Append and update retain those corrected build statistics until REINDEX.
+
 - BREAKING: Bulk CDX/compact IDX creation now reproduces VFP9's blank-head compression at leaf
   boundaries, including NORDAN/ICELAND NBSP keys. Weighted `SEEK` follows VFP9's tree descent and
   trailing blank-weight comparisons, including TAB. This also reproduces native misses on those

@@ -86,7 +86,7 @@ public sealed partial class DbfWriter
                     continue;   // FOR filter excludes this record from the tag
                 if (computer.Unique && editor.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
                     continue;   // UNIQUE tag already holds the key (keep the first record — VFP semantics)
-                editor.Insert(tag.HeaderOffset, key, (uint)recNo, computer.KeyLen, computer.Pad);
+                editor.Insert(tag.HeaderOffset, key, (uint)recNo, computer.KeyLen, computer.Pad, computer.IsChar && computer.Collation is GeneralCollation { BlankHead: 0x11 });
             }
             // Flush after every append so on-disk visibility is byte-for-byte what the per-append
             // open/insert/flush/close path produced — only the redundant re-open/re-parse is removed.
@@ -213,7 +213,7 @@ public sealed partial class DbfWriter
                         continue;
                     if (computer.Unique && editor.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
                         continue;
-                    editor.Insert(tag.HeaderOffset, key, (uint)recNo, computer.KeyLen, computer.Pad);
+                    editor.Insert(tag.HeaderOffset, key, (uint)recNo, computer.KeyLen, computer.Pad, computer.IsChar && computer.Collation is GeneralCollation { BlankHead: 0x11 });
                 }
             }
             editor.Flush();
@@ -323,7 +323,7 @@ public sealed partial class DbfWriter
                 if (oldIn)
                     editor.Delete(tag.HeaderOffset, oldKey, (uint)recNo, computer.KeyLen, computer.Pad);
                 if (newIn && !(computer.Unique && editor.ContainsKey(tag.HeaderOffset, newKey, computer.KeyLen, computer.Pad)))
-                    editor.Insert(tag.HeaderOffset, newKey, (uint)recNo, computer.KeyLen, computer.Pad);
+                    editor.Insert(tag.HeaderOffset, newKey, (uint)recNo, computer.KeyLen, computer.Pad, computer.IsChar && computer.Collation is GeneralCollation { BlankHead: 0x11 });
             }
             // Flush after every update so on-disk visibility is byte-for-byte what the per-update
             // open/edit/flush/close path produced — only the redundant re-open/re-parse is removed.

@@ -83,7 +83,7 @@ public sealed partial class DbfWriter
             // A compact IDX is one CDX-format tag whose header is at offset zero.
             if (had) editor.Delete(0, oldKey, (uint)recNo, computer.KeyLen, computer.Pad);
             if (has && (!computer.Unique || !editor.ContainsKey(0, newKey, computer.KeyLen, computer.Pad)))
-                editor.Insert(0, newKey, (uint)recNo, computer.KeyLen, computer.Pad);
+                editor.Insert(0, newKey, (uint)recNo, computer.KeyLen, computer.Pad, computer.IsChar && computer.Collation is GeneralCollation { BlankHead: 0x11 });
             editor.Flush();
         }
     }

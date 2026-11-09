@@ -71,13 +71,18 @@ internal sealed class CdxTreeEditor : IDisposable
 
     /// <summary>Insert <paramref name="key"/> → <paramref name="recno"/> into the tag rooted at the header
     /// at <paramref name="headerOffset"/>, splitting / rebalancing nodes as VFP9 does.</summary>
-    public void Insert(long headerOffset, byte[] key, uint recno, int keyLen, byte pad)
+    public void Insert(long headerOffset, byte[] key, uint recno, int keyLen, byte pad, bool weighted = false)
     {
         var path = Descend(ReadTagRoot(headerOffset), key, recno, keyLen, pad);
         var leaf = path.Leaf;
         int pos = leaf.Entries.Count;
         for (int i = 0; i < leaf.Entries.Count; i++)
-            if (CompareEntry(leaf.Entries[i].Key, leaf.Entries[i].Recno, key, recno) > 0) { pos = i; break; }
+        {
+            int compare = weighted
+                ? WeightedKeyComparison.CompareIncoming(key, leaf.Entries[i].Key)
+                : CompareBytes(key, leaf.Entries[i].Key);
+            if (compare < 0 || (compare == 0 && recno < leaf.Entries[i].Recno)) { pos = i; break; }
+        }
         leaf.Entries.Insert(pos, (key, recno));
         InsertIntoLeaf(path, keyLen, pad);
     }
@@ -598,14 +603,21 @@ internal sealed class CdxTreeEditor : IDisposable
         return -1;
     }
 
-    /// <summary>Choose the child that (by subtree MAX separator) covers <c>(key, recno)</c>: the first
-    /// child whose (sepKey, sepRecno) ≥ (key, recno); the right-most when the entry sorts after all.</summary>
+    /// <summary>VFP searches the closed interval of child separators, retaining the middle
+    /// candidate on a left turn. Blank-head insertion can make separators non-monotonic:
+    /// a linear search, or a half-open binary search, then chooses a different leaf.</summary>
     private static int ChooseChild(List<CdxIndexBuilder.BranchChild> kids, byte[] key, uint recno)
     {
-        for (int i = 0; i < kids.Count; i++)
-            if (CompareEntry(key, recno, kids[i].SepKey, kids[i].SepRecno) <= 0)
-                return i;
-        return kids.Count - 1;
+        int low = 0, high = kids.Count - 1;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (CompareEntry(key, recno, kids[middle].SepKey, kids[middle].SepRecno) <= 0)
+                high = middle;
+            else
+                low = middle + 1;
+        }
+        return low;
     }
 
     private static int CompareEntry(byte[] k1, uint r1, byte[] k2, uint r2)
