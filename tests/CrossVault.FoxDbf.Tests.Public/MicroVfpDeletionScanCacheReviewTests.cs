@@ -9,6 +9,28 @@ namespace CrossVault.FoxDbf.Tests;
 public sealed class MicroVfpDeletionScanCacheReviewTests
 {
     [Fact]
+    public void NonAdjacentGoBuildsSlotsOnce()
+    {
+        using var dir = new MicroVfpTestSupport.TempDir("random_order_cache");
+        using (var writer = DbfWriter.Create(dir.File("t.dbf"), [new DbfColumnDef("id", 'I')]))
+            writer.AppendRecords(Enumerable.Range(1, 2000).Select(i => new object?[] { i }));
+        using var session = new VfpSession();
+        session.OpenDirectory(dir.Path);
+        using var vfp = new VfpInterpreter(session);
+        vfp.Execute("USE t EXCLUSIVE\nINDEX ON -id TAG reverse\nSET ORDER TO reverse\nGO TOP");
+        var metas = (IDictionary)typeof(VfpInterpreter).GetField("_meta", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(vfp)!;
+        var meta = metas[session.CurrentArea]!;
+        var slots = meta.GetType().GetField("OrderSlots")!;
+        Assert.Null(slots.GetValue(meta));
+        vfp.Execute("GO 1");
+        var dictionary = Assert.IsAssignableFrom<IDictionary>(slots.GetValue(meta));
+        Assert.Equal(2000, dictionary.Count);
+        vfp.Execute("FOR walk=1 TO 2000\nGO walk\nENDFOR\nSKIP\nlastid=id");
+        Assert.Same(dictionary, slots.GetValue(meta));
+        Assert.Equal(1999, vfp.Memory.Get("lastid").AsInteger);
+    }
+
+    [Fact]
     public void OrderedScanDoesNotRetainKeysOrSlots()
     {
         using var dir = new MicroVfpTestSupport.TempDir("order_cache");

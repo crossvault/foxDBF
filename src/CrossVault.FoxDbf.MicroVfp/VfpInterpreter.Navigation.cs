@@ -176,9 +176,8 @@ public sealed partial class VfpInterpreter
         if (pos >= 0 && pos < order.Count && Math.Abs(order[pos]) == rec) return pos;
         // Scope walkers normally advance one entry; keep COUNT/SUM linear without a dictionary.
         if (pos + 1 >= 0 && pos + 1 < order.Count && Math.Abs(order[pos + 1]) == rec) return pos + 1;
-        if (m.OrderSlots is not null) return m.OrderSlots.GetValueOrDefault(rec, -1);
-        int slot = order.IndexOf(rec);
-        return slot >= 0 ? slot : order.IndexOf(-rec);
+        EnsureOrderSlots(m);
+        return m.OrderSlots!.GetValueOrDefault(rec, -1);
     }
 
     private static void EnsureOrderSlots(AreaMeta m)
