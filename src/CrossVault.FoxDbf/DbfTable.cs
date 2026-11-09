@@ -788,6 +788,10 @@ public sealed partial class DbfTable : IDisposable
     /// no columns (§A10).
     /// </summary>
     public DbfRecord? GetRecord(int index)
+        => GetRecord(index, includeDeleted: false);
+
+    // Direct work-area reads (GO/REPLACE) can access a deleted record; visibility belongs to navigation.
+    internal DbfRecord? GetRecord(int index, bool includeDeleted)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (Columns.Count == 0)
@@ -804,7 +808,7 @@ public sealed partial class DbfTable : IDisposable
         if (read < _recordLength)
             return null;
 
-        if (buffer[0] == 0x2A)
+        if (!includeDeleted && buffer[0] == 0x2A)
             return null; // deleted record.
 
         return new DbfRecord(this, buffer);

@@ -323,8 +323,11 @@ public sealed partial class VfpInterpreter
         if (wa is null) return 0;
         var m = Meta(area);
         // A DEFAULT sees VFP's provisional negative record number for a buffered append.
-        if (m.Buffering > 1 && DefaultRowFor(area) is { } pending && m.RecNo == pending.RecNo)
+        if (DefaultRowFor(area) is { AppendBlank: true }) return m.RecNo;
+        if (m.Buffering >= 4 && DefaultRowFor(area) is { } pending && m.RecNo == pending.RecNo)
             return wa.Table.RecordCount - pending.RecNo;
+        if (m.Buffering >= 4 && !m.Eof && m.RecNo > wa.Table.RecordCount)
+            return wa.Table.RecordCount - m.RecNo;
         return m.Eof ? EffCount(area, wa) + 1 : m.RecNo;
     }
 

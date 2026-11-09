@@ -152,6 +152,8 @@ public sealed partial class VfpInterpreter
     /// real .NULL.; VFP BLANK never does (not exercised — the corpus/tests use non-nullable columns).</summary>
     private void ExecBlank(BlankStmt b)
     {
+        if (b.Scope is not null || b.For is not null || b.While is not null)
+            throw new MicroVfpRuntimeException("BLANK: record scope/FOR/WHILE clauses are not supported.");
         int area = b.In is not null ? ResolveAreaRef(b.In) : Session.CurrentArea;
         var wa = Session.AreaAt(area);
         if (wa is null) return;

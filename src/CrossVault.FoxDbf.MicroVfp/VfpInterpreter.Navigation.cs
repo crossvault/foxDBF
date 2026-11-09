@@ -511,6 +511,12 @@ public sealed partial class VfpInterpreter
             return set;
         }
 
+        return KeyVisibleFromEntries(m, src, OrderedEntries(src));
+    }
+
+    private HashSet<int> KeyVisibleFromEntries(AreaMeta m, OrderSource src, IEnumerable<(byte[] Key, int Recno)> entries)
+    {
+        var set = new HashSet<int>();
         if (src.IsCharacterKey)
         {
             if (!m.KeyRange)
@@ -519,7 +525,7 @@ public sealed partial class VfpInterpreter
                 // EXACT and the order's collation (see ScopeCharacterKey).
                 if (m.KeyLow is not { } single) return set;   // no bound value ⇒ nothing matches (never fail-open).
                 byte[] bound = ScopeCharacterKey(src, single, _ctx.Exact, out bool equality);
-                foreach (var (key, recno) in OrderedEntries(src))
+                foreach (var (key, recno) in entries)
                 {
                     if (equality ? CompareBytesUnsigned(key, bound) == 0 : IsBytePrefix(bound, key))
                         set.Add(recno);
@@ -531,7 +537,7 @@ public sealed partial class VfpInterpreter
             // IDX code-page bytes), padded to the key length. Raw comparison mirrors on-disk order.
             byte[]? loBytes = m.KeyLow is { } lo ? PaddedCharacterKey(src, lo) : null;
             byte[]? hiBytes = m.KeyHigh is { } hi ? PaddedCharacterKey(src, hi) : null;
-            foreach (var (key, recno) in OrderedEntries(src))
+            foreach (var (key, recno) in entries)
             {
                 if (loBytes is not null && CompareBytesUnsigned(key, loBytes) < 0) continue;
                 if (hiBytes is not null && CompareBytesUnsigned(key, hiBytes) > 0) continue;
@@ -540,7 +546,7 @@ public sealed partial class VfpInterpreter
             return set;
         }
 
-        foreach (var (keyBytes, recno) in OrderedEntries(src))
+        foreach (var (keyBytes, recno) in entries)
         {
             var key = src.DecodeKey(keyBytes);
             if (KeyInRange(m, key)) set.Add(recno);
@@ -817,7 +823,7 @@ public sealed partial class VfpInterpreter
     {
         int rc = wa.Table.RecordCount;
         if (_meta.TryGetValue(area, out var m) && m.Buffering > 1 && m.Buf is { } buf) rc += buf.Appends.Count;
-        if (DefaultRowFor(area) is { } pending) rc = Math.Max(rc, pending.RecNo);
+        if (DefaultRowFor(area) is { AppendBlank: false } pending) rc = Math.Max(rc, pending.RecNo);
         return rc;
     }
 
@@ -830,26 +836,28 @@ public sealed partial class VfpInterpreter
         return m;
     }
 
-    private bool Visible(VfpSession.WorkArea wa, int rec)
+    private bool Visible(VfpSession.WorkArea wa, int rec, HashSet<int>? keyVisible = null)
     {
-        // Buffered appended rows live past the physical count: visible unless buffered-deleted; SET KEY /
-        // the on-disk deleted-flag do not apply (the row is not on disk yet).
+        bool deleted;
         if (rec > wa.Table.RecordCount)
         {
-            if (_meta.TryGetValue(wa.Area, out var am) && am.Buffering > 1 && am.Buf is { } ab)
-            {
-                int ai = rec - wa.Table.RecordCount - 1;
-                if (ai >= 0 && ai < ab.Appends.Count)
-                    return !(_ctx.Deleted && ab.Appends[ai].Deleted);
-            }
-            return false;
+            if (!_meta.TryGetValue(wa.Area, out var am) || am.Buf is not { } ab) return false;
+            int ai = rec - wa.Table.RecordCount - 1;
+            if (ai < 0 || ai >= ab.Appends.Count) return false;
+            deleted = ab.Appends[ai].Deleted;
         }
-        if (_ctx.Deleted && wa.Table.IsRecordDeleted(rec - 1))
-            return false;
+        else
+        {
+            deleted = _meta.TryGetValue(wa.Area, out var bufferedMeta)
+                && bufferedMeta.Buf?.Rows.TryGetValue(rec, out var edit) == true
+                && edit.DeletedOverride is bool bufferedDeleted
+                    ? bufferedDeleted : wa.Table.IsRecordDeleted(rec - 1);
+        }
+        if (_ctx.Deleted && deleted) return false;
         // SET KEY / SET FILTER: per-area visibility gates layered on top of SET DELETED, composing by AND
         // (a record shows only when NOT deleted-hidden AND in the SET KEY range AND the filter passes). Use
         // TryGetValue — never Meta() — to avoid re-entering GoTop while a navigation loop is already inside
-        // Visible(). Both gates apply to ON-DISK records only; buffered appended rows returned above.
+        // Visible(). Buffered appends must pass the same visibility gates.
         if (_meta.TryGetValue(wa.Area, out var m))
         {
             // SET KEY: only records whose MASTER-index key falls in the active key range are visible. The
@@ -857,8 +865,8 @@ public sealed partial class VfpInterpreter
             // data change / order change / SET KEY change).
             if (m.KeySet)
             {
-                m.KeyVisible ??= BuildKeyVisible(wa, m);
-                if (!m.KeyVisible.Contains(rec))
+                keyVisible ??= m.KeyVisible ??= BuildKeyVisible(wa, m);
+                if (!keyVisible.Contains(rec))
                     return false;
             }
             // SET FILTER: the area's filter predicate is the FINAL visibility gate — evaluated against this
