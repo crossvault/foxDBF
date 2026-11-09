@@ -110,10 +110,10 @@ internal static class IdxIndexBuilder
         if (type == IndexKeyType.Character)
         {
             var buf = new byte[keyLen];
-            for (int i = 0; i < keyLen; i++) buf[i] = 0x20;
+            if (!value.IsBinary) Array.Fill(buf, (byte)0x20);
             if (!value.IsNull)
             {
-                byte[] raw = characterEncoding.GetBytes(value.AsString);
+                byte[] raw = (value.IsBinary ? Encoding.Latin1 : characterEncoding).GetBytes(value.AsString);
                 raw.AsSpan(0, Math.Min(raw.Length, keyLen)).CopyTo(buf);
             }
             return buf;

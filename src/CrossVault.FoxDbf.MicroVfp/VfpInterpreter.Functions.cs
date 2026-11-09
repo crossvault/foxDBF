@@ -144,7 +144,10 @@ public sealed partial class VfpInterpreter
             case "SOUNDEX": r = VfpValue.Character(FnSoundex(a)); return true;
             case "DIFFERENCE": r = VfpValue.Integer(FnDifference(a)); return true;
             case "STRCONV": r = VfpValue.Character(FnStrConv(a)); return true;
-            case "CPCONVERT": r = VfpValue.Character(FnCpConvert(a)); return true;
+            case "CPCONVERT":
+                string converted = FnCpConvert(a);
+                r = a.Length > 2 && a[2].IsBinary ? VfpValue.Varbinary(Encoding.Latin1.GetBytes(converted)) : VfpValue.Character(converted);
+                return true;
             case "CPCURRENT": r = VfpValue.Integer(FnCpCurrent(a)); return true;
             case "CPDBF": r = VfpValue.Integer(FnCpDbf(a)); return true;
             case "TEXTMERGE": r = VfpValue.Character(FnTextMerge(a)); return true;
@@ -513,6 +516,13 @@ public sealed partial class VfpInterpreter
             // (s4g266) — microVFP uppercases the whole expression (no re-tokenizer), matching non-quoted FORs.
             case 2021: return VfpValue.Character(a.Length < 2 ? string.Empty : (ResolveSlot(a.Skip(1).ToArray())?.ForExpr.ToUpperInvariant() ?? string.Empty));
             case 2007: return VfpValue.Character(Crc16Ccitt(a.Length > 1 ? a[1].AsString : string.Empty).ToString(CultureInfo.InvariantCulture));
+            case 2335:
+                if (a.Length > 1)
+                {
+                    _unattendedMode = a[1].AsNumber == 0;
+                    _ctx.SkipUnavailableIndexExpression = _unattendedMode ? HasUnavailableIndexFunction : null;
+                }
+                return VfpValue.Character(_unattendedMode ? "0" : "1");
             case 2015: return VfpValue.Character("_" + Guid.NewGuid().ToString("N")[..9].ToUpperInvariant());
             // SYS(2029 [, area]) — the DBF header's first (version/type) byte as a decimal string; "0" when
             // no table is open in the addressed area. A VFP table is "48" (0x30) — oracle-pinned vs the VFP9 runtime.

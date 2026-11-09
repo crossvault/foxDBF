@@ -80,7 +80,7 @@ internal static partial class VfpRuntime
 
         switch (op)
         {
-            case BinOp.Add: return Add(l, r);
+            case BinOp.Add: return Add(l, r, ctx);
             case BinOp.Sub: return Sub(l, r);
             case BinOp.Mul: return VfpValue.Number(l.AsDouble * r.AsDouble);
             case BinOp.Div:
@@ -126,10 +126,18 @@ internal static partial class VfpRuntime
         return VfpValue.Logical(false);
     }
 
-    private static VfpValue Add(VfpValue l, VfpValue r)
+    private static VfpValue Add(VfpValue l, VfpValue r, EvaluationContext context)
     {
         if (l.Type == VfpType.Character || r.Type == VfpType.Character)
+        {
+            // VFP takes the result type from the LEFT operand and concatenates the original bytes.
+            if (l.IsBinary || r.IsBinary)
+            {
+                byte[] bytes = [.. EncodeByteString(l, context), .. EncodeByteString(r, context)];
+                return l.IsBinary ? VfpValue.Varbinary(bytes) : VfpValue.Character(DecodeByteString(bytes, context));
+            }
             return VfpValue.Character(l.AsString + r.AsString);
+        }
         if (l.Type == VfpType.Date && IsNumeric(r))
         {
             if (l.IsEmptyDate) return VfpValue.Date(default);
@@ -204,6 +212,7 @@ internal static partial class VfpRuntime
     {
         if (l.Type == VfpType.Character && r.Type == VfpType.Character)
         {
+            if (l.IsBinary || r.IsBinary) return CompareBinaryStrings(l, r, ctx, exact) == 0;
             if (exact) return StrEqExact(l.AsString, r.AsString, ctx);
             return CompareStrings(l.AsString, r.AsString, OperatorMode(ctx), ctx) == 0;
         }
@@ -215,6 +224,18 @@ internal static partial class VfpRuntime
             return l.IsEmptyDate == r.IsEmptyDate && l.AsDateTime == r.AsDateTime;
         return false;
     }
+
+    // Q values compare raw bytes, never linguistic weights or space padding (VFP9).
+    private static int CompareBinaryStrings(VfpValue left, VfpValue right, EvaluationContext context, bool exact)
+    {
+        var l = EncodeByteString(left, context).AsSpan();
+        var r = EncodeByteString(right, context).AsSpan();
+        if (!exact && !context.Exact && l.Length > r.Length) l = l[..r.Length];
+        return l.SequenceCompareTo(r);
+    }
+
+    private static VfpValue StringResult(VfpValue source, string text) => source.IsBinary
+        ? VfpValue.Varbinary(Encoding.Latin1.GetBytes(text)) : VfpValue.Character(text);
 
     /// <summary>True when the active collation is plain ordinal (MACHINE) — the fast path.</summary>
     private static bool IsMachine(EvaluationContext ctx)
@@ -320,7 +341,8 @@ internal static partial class VfpRuntime
     internal static int CompareOperands(VfpValue l, VfpValue r, EvaluationContext ctx)
     {
         if (l.Type == VfpType.Character && r.Type == VfpType.Character)
-            return CompareStrings(l.AsString, r.AsString, OperatorMode(ctx), ctx);
+            return l.IsBinary || r.IsBinary ? CompareBinaryStrings(l, r, ctx, false)
+                : CompareStrings(l.AsString, r.AsString, OperatorMode(ctx), ctx);
         return Compare(l, r, ctx);
     }
 
@@ -328,7 +350,8 @@ internal static partial class VfpRuntime
     internal static int Compare(VfpValue l, VfpValue r, EvaluationContext ctx)
     {
         if (l.Type == VfpType.Character && r.Type == VfpType.Character)
-            return ctx.Collation.Compare(l.AsString.AsSpan(), r.AsString.AsSpan());
+            return l.IsBinary || r.IsBinary ? CompareBinaryStrings(l, r, ctx, true)
+                : ctx.Collation.Compare(l.AsString.AsSpan(), r.AsString.AsSpan());
         if (IsNumeric(l) && IsNumeric(r)) return l.AsDouble.CompareTo(r.AsDouble);
         if ((l.Type is VfpType.Date or VfpType.DateTime) &&
             (r.Type is VfpType.Date or VfpType.DateTime))
@@ -620,14 +643,14 @@ internal static partial class VfpRuntime
     {
         var s = Arg(a, 0).AsString;
         int n = Math.Clamp(IntArg(a, 1), 0, s.Length);
-        return VfpValue.Character(s.Substring(0, n));
+        return StringResult(Arg(a, 0), s.Substring(0, n));
     }
 
     private static VfpValue Right(VfpValue[] a)
     {
         var s = Arg(a, 0).AsString;
         int n = Math.Clamp(IntArg(a, 1), 0, s.Length);
-        return VfpValue.Character(s.Substring(s.Length - n));
+        return StringResult(Arg(a, 0), s.Substring(s.Length - n));
     }
 
     private static VfpValue Substr(VfpValue[] a)
@@ -636,11 +659,11 @@ internal static partial class VfpRuntime
         int start = IntArg(a, 1);
         if (start < 1) start = 1;
         int i = start - 1;
-        if (i >= s.Length) return VfpValue.Character(string.Empty);
+        if (i >= s.Length) return StringResult(Arg(a, 0), string.Empty);
         int len = a.Length > 2 ? IntArg(a, 2) : s.Length - i;
         if (len < 0) len = 0;
         if (i + len > s.Length) len = s.Length - i;
-        return VfpValue.Character(s.Substring(i, len));
+        return StringResult(Arg(a, 0), s.Substring(i, len));
     }
 
     private static VfpValue Str(VfpValue[] a)

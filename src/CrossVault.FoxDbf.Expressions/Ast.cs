@@ -58,7 +58,7 @@ internal sealed partial class LiteralNode : AstNode
 
     public override VfpTypeInfo Infer(ISchema schema) => _value.Type switch
     {
-        VfpType.Character => new VfpTypeInfo(VfpType.Character, _value.AsString.Length),
+        VfpType.Character => new VfpTypeInfo(VfpType.Character, _value.AsString.Length) { IsBinary = _value.IsBinary },
         VfpType.Logical => new VfpTypeInfo(VfpType.Logical, 1),
         VfpType.Date => new VfpTypeInfo(VfpType.Date, 8),
         VfpType.DateTime => new VfpTypeInfo(VfpType.DateTime, 8),
@@ -104,7 +104,7 @@ internal sealed partial class FieldNode : AstNode
             // target creation, whereas direct SELECT evaluation can still return the actual value.
             if (char.ToUpperInvariant(type) == 'M')
                 return new VfpTypeInfo(VfpType.Character, int.MaxValue, decimals);
-            return new VfpTypeInfo(MapColumnType(type), length, decimals);
+            return new VfpTypeInfo(MapColumnType(type), length, decimals) { IsBinary = char.ToUpperInvariant(type) == 'Q' };
         }
         return new VfpTypeInfo(VfpType.Unknown);
     }
@@ -113,7 +113,7 @@ internal sealed partial class FieldNode : AstNode
 
     private static VfpType MapColumnType(char t) => char.ToUpperInvariant(t) switch
     {
-        'C' or 'M' or 'V' => VfpType.Character,
+        'C' or 'M' or 'V' or 'Q' => VfpType.Character,
         'N' or 'F' or 'B' => VfpType.Numeric,
         'I' => VfpType.Integer,
         'Y' => VfpType.Currency,
@@ -223,7 +223,7 @@ internal sealed partial class BinaryNode : AstNode
         if (_op == BinOp.Add)
         {
             if (l.Type == VfpType.Character || r.Type == VfpType.Character)
-                return new VfpTypeInfo(VfpType.Character, SaturatingLengthAdd(l.Length, r.Length));
+                return new VfpTypeInfo(VfpType.Character, SaturatingLengthAdd(l.Length, r.Length)) { IsBinary = l.IsBinary };
             if (l.Type is VfpType.Date or VfpType.DateTime) return l;
             if (r.Type is VfpType.Date or VfpType.DateTime) return r;
             return new VfpTypeInfo(VfpType.Numeric);
@@ -380,13 +380,13 @@ internal sealed partial class FunctionNode : AstNode
             case "UPPER": case "LOWER": case "ALLTRIM":
             case "TRIM": case "RTRIM": case "LTRIM":
                 return ArgInfer(schema, 0) is var a0 && a0.Type == VfpType.Character
-                    ? a0 : new VfpTypeInfo(VfpType.Character, a0.Length);
+                    ? a0 with { IsBinary = false } : new VfpTypeInfo(VfpType.Character, a0.Length);
             case "LEFT": case "RIGHT":
                 // LEFT/RIGHT length is argument index 1 (LEFT(str, n)).
-                return new VfpTypeInfo(VfpType.Character, LiteralLen(1, ArgInfer(schema, 0).Length));
+                return new VfpTypeInfo(VfpType.Character, LiteralLen(1, ArgInfer(schema, 0).Length)) { IsBinary = ArgInfer(schema, 0).IsBinary };
             case "SUBSTR":
                 // SUBSTR length is argument index 2 (SUBSTR(str, start, n)).
-                return new VfpTypeInfo(VfpType.Character, LiteralLen(2, ArgInfer(schema, 0).Length));
+                return new VfpTypeInfo(VfpType.Character, LiteralLen(2, ArgInfer(schema, 0).Length)) { IsBinary = ArgInfer(schema, 0).IsBinary };
             case "STR": return new VfpTypeInfo(VfpType.Character, ExpansionLength(1, 10));
             case "STRZERO": return new VfpTypeInfo(VfpType.Character, ExpansionLength(1, 10));
             case "PADL": case "PADR": case "PADC":
@@ -394,7 +394,7 @@ internal sealed partial class FunctionNode : AstNode
                     ExpansionLength(1, ArgInfer(schema, 0).Length));
             case "SPACE": return new VfpTypeInfo(VfpType.Character, ExpansionLength(0, 0));
             case "REPLICATE": return InferReplicate(schema);
-            case "CHRTRAN": return ArgInfer(schema, 0);
+            case "CHRTRAN": return ArgInfer(schema, 0) with { IsBinary = false };
             case "STUFF": return InferStuff(schema);
             case "STRTRAN": return InferStrtran(schema);
             case "DTOC": return new VfpTypeInfo(VfpType.Character, 10);
@@ -411,8 +411,8 @@ internal sealed partial class FunctionNode : AstNode
                 return new VfpTypeInfo(VfpType.Character, flags.Contains('8') || flags.Contains('B') ? 8
                     : flags.Contains('F') ? 4 : flags.Contains('2') ? 2 : flags.Contains('1') ? 1 : 4);
             }
-            case "ANSITOOEM": case "OEMTOANSI": return ArgInfer(schema, 0);
-            case "CREATEBINARY": return new VfpTypeInfo(VfpType.Binary, ArgInfer(schema, 0).Length);
+            case "ANSITOOEM": case "OEMTOANSI": return ArgInfer(schema, 0) with { IsBinary = false };
+            case "CREATEBINARY": return new VfpTypeInfo(VfpType.Character, ArgInfer(schema, 0).Length) { IsBinary = true };
             case "DMY": case "MDY": case "ADDBS": case "DEFAULTEXT": case "FORCEEXT": case "FORCEPATH":
             case "JUSTDRIVE": case "JUSTEXT": case "JUSTFNAME": case "JUSTPATH": case "JUSTSTEM":
                 return new VfpTypeInfo(VfpType.Character);

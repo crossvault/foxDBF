@@ -68,6 +68,9 @@ public sealed partial class DbfWriter
             CloseCdxMaint(flush: true);
             return false;
         }
+        // In unattended VFP, a released array suppresses this tag's maintenance without
+        // aborting the DBF/FPT write. Re-evaluate availability on each write in that mode.
+        if (IndexContext?.SkipUnavailableIndexExpression is not null) CloseCdxMaint(flush: true);
         EnsureCdxMaint(mode);
         if (_hostIndexValidators is { } validators)
             foreach (var validate in validators) validate();
@@ -348,6 +351,8 @@ public sealed partial class DbfWriter
         var plans = new List<(CdxTreeEditor.TagHandle, CdxIndexBuilder.TagKeyComputer)>();
         foreach (var tag in editor.ReadTags())
         {
+            if (IndexContext?.SkipUnavailableIndexExpression is { } skip
+                && (skip(tag.Header.KeyExpression) || skip(tag.Header.ForExpression))) continue;
             var computer = GetComputer(tag);
             if (computer is null)
             {

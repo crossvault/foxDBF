@@ -167,6 +167,8 @@ public sealed class EvaluationContext
     internal Func<VfpExpression, IRowContext, EvaluationContext, VfpValue>? IndexEvaluator { get; set; }
     internal Func<string, string>? NormalizeIndexExpression { get; set; }
     internal Action<string>? ValidateIndexFunction { get; set; }
+    // VFP runtime SYS(2335,0) suppresses missing index functions while committing the row.
+    internal Func<string?, bool>? SkipUnavailableIndexExpression { get; set; }
     internal VfpRandom Random { get; set; } = new();
 
     /// <summary>A fresh context with VFP defaults (EXACT OFF, MACHINE collation).</summary>

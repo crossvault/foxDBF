@@ -12,6 +12,8 @@ public readonly struct VfpTypeInfo : IEquatable<VfpTypeInfo>
     public int Decimals { get; }
     // F and B share Numeric in the expression runtime but remain distinct SQL cursor types.
     internal char SqlStorageType { get; }
+    // Q remains Character in the public type model; index storage still needs its zero pad.
+    internal bool IsBinary { get; init; }
 
     public VfpTypeInfo(VfpType type, int length = 0, int decimals = 0)
     {

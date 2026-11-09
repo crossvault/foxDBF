@@ -35,7 +35,6 @@ public sealed partial class VfpInterpreter
         string code = v.Type switch
         {
             VfpType.Character => "C",
-            VfpType.Binary => "Q",
             VfpType.Numeric or VfpType.Integer => "N",
             VfpType.Currency => "Y",
             VfpType.Date => "D",
@@ -90,8 +89,7 @@ public sealed partial class VfpInterpreter
     /// <summary>The default (format-less) TRANSFORM/TEXTMERGE stringification of a value.</summary>
     private static string TransformNoFormat(VfpValue v) => v.Type switch
     {
-        VfpType.Character => v.AsString,
-        VfpType.Binary => Convert.ToHexString(Encoding.Latin1.GetBytes(v.AsString)),
+        VfpType.Character => v.IsBinary ? Convert.ToHexString(Encoding.Latin1.GetBytes(v.AsString)) : v.AsString,
         // VFP9 (runtime-verified): the format-less TRANSFORM of a logical is the ".T."/".F." literal, NOT "T"/"F".
         VfpType.Logical => v.AsLogical ? ".T." : ".F.",
         VfpType.Null => ".NULL.",
@@ -293,8 +291,8 @@ public sealed partial class VfpInterpreter
     }
 
     /// <summary>STRCONV(cExpr, nConversion [, ...]): the common, runtime-verified conversion codes. A VFP
-    /// character value is a byte string; the connection stores those bytes as Latin1 chars (byte==char code).
-    /// The codepage is the connection's Windows-ANSI codepage (== CPCURRENT()). Verified byte-for-byte against
+    /// character value is decoded in the expression context's encoding; Q values retain raw Latin1 bytes.
+    /// The codepage defaults to the connection's Windows-ANSI codepage (== CPCURRENT()). Verified byte-for-byte against
     /// the VFP9 runtime for input "Ab"+CHR(233):
     ///   5 = codepage → double-byte Unicode (UTF-16LE)   ["Ab é" → 41 00 62 00 E9 00]
     ///   6 = double-byte Unicode (UTF-16LE) → codepage   (inverse of 5)
@@ -310,24 +308,25 @@ public sealed partial class VfpInterpreter
         string s = a[0].AsString;
         int mode = (int)a[1].AsNumber;
         var l1 = Encoding.Latin1;
-        var cp = ConnectionEncoding();
-        byte[] bytes = l1.GetBytes(s);   // the connection's byte string.
+        var cp = _ctx.Encoding ?? ConnectionEncoding();
+        byte[] bytes = (a[0].IsBinary ? l1 : cp).GetBytes(s);
         try
         {
             switch (mode)
             {
+                case 15: return Convert.ToHexString(bytes);
                 case 5:   // codepage bytes → UTF-16LE bytes
-                    return l1.GetString(Encoding.Unicode.GetBytes(cp.GetString(bytes)));
+                    return cp.GetString(Encoding.Unicode.GetBytes(cp.GetString(bytes)));
                 case 6:   // UTF-16LE bytes → codepage bytes
-                    return l1.GetString(cp.GetBytes(Encoding.Unicode.GetString(bytes)));
+                    return cp.GetString(cp.GetBytes(Encoding.Unicode.GetString(bytes)));
                 case 7:   // lower-case (locale)
-                    return l1.GetString(cp.GetBytes(cp.GetString(bytes).ToLower(CultureInfo.CurrentCulture)));
+                    return cp.GetString(cp.GetBytes(cp.GetString(bytes).ToLower(CultureInfo.CurrentCulture)));
                 case 8:   // upper-case (locale)
-                    return l1.GetString(cp.GetBytes(cp.GetString(bytes).ToUpper(CultureInfo.CurrentCulture)));
+                    return cp.GetString(cp.GetBytes(cp.GetString(bytes).ToUpper(CultureInfo.CurrentCulture)));
                 case 9:   // codepage → UTF-8
-                    return l1.GetString(Encoding.UTF8.GetBytes(cp.GetString(bytes)));
+                    return cp.GetString(Encoding.UTF8.GetBytes(cp.GetString(bytes)));
                 case 10:  // UTF-8 → codepage
-                    return l1.GetString(cp.GetBytes(Encoding.UTF8.GetString(bytes)));
+                    return cp.GetString(cp.GetBytes(Encoding.UTF8.GetString(bytes)));
                 default:  // FLAG: DBCS single↔double-byte locale modes / exotic codes — pass through.
                     return s;
             }
@@ -348,7 +347,7 @@ public sealed partial class VfpInterpreter
 
     /// <summary>CPCONVERT(nCurrentCP, nNewCP, cExpr): transcode cExpr between code pages. Same CP ⇒ identity;
     /// otherwise best-effort via the registered code-page provider, degrading to the input on any failure.</summary>
-    private static string FnCpConvert(VfpValue[] a)
+    private string FnCpConvert(VfpValue[] a)
     {
         if (a.Length < 3) return a.Length > 2 ? a[2].AsString : string.Empty;
         int from = (int)a[0].AsNumber, to = (int)a[1].AsNumber;
@@ -358,9 +357,32 @@ public sealed partial class VfpInterpreter
         {
             var srcEnc = Encoding.GetEncoding(from);
             var dstEnc = Encoding.GetEncoding(to);
-            byte[] raw = Encoding.Latin1.GetBytes(s);   // the connection stores single-byte text as Latin1.
+            var valueEncoding = a[2].IsBinary ? Encoding.Latin1 : _ctx.Encoding ?? ConnectionEncoding();
+            byte[] raw = valueEncoding.GetBytes(s);
             byte[] converted = Encoding.Convert(srcEnc, dstEnc, raw);
-            return Encoding.Latin1.GetString(converted);
+            // VFP's legacy translation tables predate Unicode best-fit mappings. These deviations
+            // are pinned over all 256 bytes for 1252->850, 850->1252 and 1252->437 by the VFP9 oracle.
+            for (int i = 0; i < raw.Length && i < converted.Length; i++)
+                converted[i] = (from, to, raw[i]) switch
+                {
+                    (1252, 850, 0x80 or 0x81 or 0x88 or 0x8d or 0x8e or 0x8f or 0x90 or 0x98 or 0x99) => raw[i],
+                    (1252, 850, 0x82 or 0x84) => 0x2c,
+                    (1252, 850, 0x85 or 0x97) => 0x5f,
+                    (1252, 850, 0x86) => 0xfd,
+                    (1252, 850, 0x87) => 0xba,
+                    (1252, 850, 0x91) => 0x60,
+                    (1252, 850, 0x95) => 0xcc,
+                    (1252, 850, 0x9d) => 0xbe,
+                    (1252, 850, 0x9e) => 0xf2,
+                    (1252, 437, 0x80 or 0x81 or 0x88 or 0x8d or 0x8e or 0x8f or 0x90 or 0x98 or 0x99 or 0x9d or 0x9e) => raw[i],
+                    (1252, 437, 0x85 or 0x97) => 0x5f,
+                    (1252, 437, 0x86) => 0xfd,
+                    (1252, 437, 0x87) => 0xfc,
+                    (1252, 437, 0x95) => 0xf9,
+                    (850, 1252, 0xb0 or 0xb1 or 0xb2 or 0xdb or 0xdf or 0xf2 or 0xfe) => 0x5f,
+                    _ => converted[i],
+                };
+            return valueEncoding.GetString(converted);
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
         {

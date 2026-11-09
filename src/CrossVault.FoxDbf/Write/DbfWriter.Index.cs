@@ -347,6 +347,7 @@ public sealed partial class DbfWriter
         // sidecar instead of early-returning and leaving it stale.
         EnsureStructuralCdxAdvertised();
         _tagComputers = null;
+        _additionalIndexPlans.Clear();
         File.Delete(IndexFailurePath);
         ReindexNeeded = false;
     }
@@ -389,6 +390,7 @@ public sealed partial class DbfWriter
         // TryFastUnlinkTags, do not route through Flush()). It re-resolves on the next append/update.
         CloseCdxMaint(flush: true);
         _tagComputers = null;
+        _additionalIndexPlans.Clear();
     }
 
     /// <summary>

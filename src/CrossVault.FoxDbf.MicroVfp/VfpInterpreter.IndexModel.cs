@@ -403,6 +403,7 @@ public sealed partial class VfpInterpreter
         public IdxFile? Idx;
         public IndexKeyType IdxKeyType;
         public Encoding IdxCharacterEncoding = Encoding.Latin1;
+        public byte IdxKeyPad = 0x20;
         public bool Descending;
         public string Name = "";
         private readonly IDisposable? _owner;
@@ -414,6 +415,7 @@ public sealed partial class VfpInterpreter
         // master-tag callers work regardless of which open index the controlling order was sourced from. ──
         public bool IsCharacterKey => CdxTag?.IsCharacterKey ?? (IdxKeyType == IndexKeyType.Character);
         public IndexKeyType KeyType => CdxTag?.KeyType ?? IdxKeyType;
+        public byte KeyPad => CdxTag?.KeyPad ?? IdxKeyPad;
         public int KeyLength => CdxTag?.KeyLength ?? (Idx?.KeyLength ?? 0);
         public string CollationName =>
             CdxTag is { } t && !string.IsNullOrEmpty(t.Collation) ? t.Collation : "MACHINE";
@@ -458,6 +460,7 @@ public sealed partial class VfpInterpreter
                         IdxKeyType = VfpRuntime.UnsupportedIndexFunction(idx.Header.KeyExpression) is not null
                             ? CdxIndexBuilder.ResolveKey(wa.Table, idx.Header.KeyExpression, _ctx).Type
                             : IndexKey.ResolveType(idx.Header.KeyExpression.Trim(), wa.Table),
+                        IdxKeyPad = IndexKey.IsBinaryExpression(idx.Header.KeyExpression, wa.Table) ? (byte)0 : (byte)0x20,
                         IdxCharacterEncoding = IdxIndexBuilder.ResolveCharacterEncoding(
                             wa.Table, idx.Header.KeyExpression.Trim()),
                     };

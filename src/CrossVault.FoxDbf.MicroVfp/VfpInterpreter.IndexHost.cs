@@ -5,6 +5,11 @@ namespace CrossVault.FoxDbf.MicroVfp;
 public sealed partial class VfpInterpreter
 {
     private IRowContext? _indexRow;
+    private bool _unattendedMode;
+
+    private bool HasUnavailableIndexFunction(string? expression)
+        => !string.IsNullOrWhiteSpace(expression) && VfpExpression.Parse(expression).ContainsFunction((name, _) =>
+            !VfpFunctionNames.IsBuiltin(name) && !_procs.ContainsKey(name) && Memory.FindArray(name) is null);
 
     private void ValidateIndexFunction(string name)
     {

@@ -517,11 +517,19 @@ internal static class CdxIndexBuilder
         };
 
         var (keyType, baseLen, isChar) = ResolveKey(schema, def.KeyExpression, ctx);
-        int keyLen = CollatedKeyLength(baseLen, isChar, collation);
-        // VFP9 pads a MACHINE character key with blanks and a weighted (GENERAL / SPANISH) one with 0x00.
-        byte pad = isChar ? IndexKey.CharacterKeyPad(def.Collation) : (byte)0x00;
-
         var keyFn = CompileIndex(def.KeyExpression, ctx);
+        bool isBinary = isChar && IndexKey.IsBinaryExpression(def.KeyExpression, schema);
+        if (isChar && !IsIdentityCollation(collation))
+        {
+            var sample = (schema.RecordCount > 0 ? schema.GetRecord(0) : null)
+                ?? new DbfRecord(schema, new byte[schema.RecordLength]);
+            isBinary |= keyFn(new RowContext(sample, 1, schema.RecordCount)).IsBinary;
+        }
+        // Q keys use raw bytes, a zero pad and MACHINE metadata even under SET COLLATE GENERAL.
+        if (isBinary) collation = VfpCollations.Machine;
+        int keyLen = CollatedKeyLength(baseLen, isChar, collation);
+        byte pad = isChar && !isBinary ? IndexKey.CharacterKeyPad(collation.Name) : (byte)0x00;
+
         Func<IRowContext, VfpValue>? forFn = !string.IsNullOrWhiteSpace(def.ForExpression)
             ? CompileIndex(def.ForExpression!, ctx)
             : null;
@@ -1069,6 +1077,7 @@ internal static class CdxIndexBuilder
             // width so it rarely is truncated; when heads+tails still overflow, the key is cut at keyLen.
             var natural = value.IsNull
                 ? Array.Empty<byte>()
+                : value.IsBinary ? Encoding.Latin1.GetBytes(value.AsString)
                 : IndexKey.EncodeCharacterKey(value.AsString.AsSpan(), collation, characterEncoding, keyLen);
             var key = new byte[keyLen];
             for (int i = 0; i < keyLen; i++) key[i] = pad;

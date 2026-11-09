@@ -23,8 +23,6 @@ public enum VfpType
     DateTime,
     /// <summary>Logical (VFP type L).</summary>
     Logical,
-    /// <summary>VFP Varbinary (Q).</summary>
-    Binary,
 }
 
 /// <summary>
@@ -65,9 +63,6 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     /// <summary>The VFP <c>.NULL.</c> value.</summary>
     public static readonly VfpValue Null =
         new(VfpType.Null, 0d, 0m, false, null, false, default);
-
-    public static VfpValue Binary(byte[] bytes) =>
-        new(VfpType.Binary, 0d, 0m, false, System.Text.Encoding.Latin1.GetString(bytes), false, default);
 
     public static VfpValue Character(string? s) =>
         new(VfpType.Character, 0d, 0m, false, s ?? string.Empty, false, default);
@@ -194,7 +189,7 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         return _type switch
         {
             VfpType.Null => true,
-            VfpType.Character or VfpType.Binary => string.Equals(_str, other._str, StringComparison.Ordinal),
+            VfpType.Character => string.Equals(_str, other._str, StringComparison.Ordinal),
             VfpType.Logical => _bool == other._bool,
             VfpType.Date or VfpType.DateTime => _date == other._date && IsEmptyDate == other.IsEmptyDate,
             VfpType.Numeric or VfpType.Currency or VfpType.Integer => AsDouble == other.AsDouble,
@@ -206,7 +201,7 @@ public readonly struct VfpValue : IEquatable<VfpValue>
 
     public override int GetHashCode() => _type switch
     {
-        VfpType.Character or VfpType.Binary => _str?.GetHashCode(StringComparison.Ordinal) ?? 0,
+        VfpType.Character => _str?.GetHashCode(StringComparison.Ordinal) ?? 0,
         VfpType.Logical => _bool.GetHashCode(),
         VfpType.Date or VfpType.DateTime => HashCode.Combine(_date, IsEmptyDate),
         VfpType.Numeric or VfpType.Currency or VfpType.Integer => AsDouble.GetHashCode(),

@@ -108,6 +108,7 @@ public sealed partial class VfpInterpreter
         LoadActiveInterpState(id);         // re-point the live runtime fields at the target session's state.
         _ctx = Session.Context;
         _ctx.IndexEvaluator = EvaluateIndex;
+        _ctx.SkipUnavailableIndexExpression = _unattendedMode ? HasUnavailableIndexFunction : null;
         _ctx.NormalizeIndexExpression = MicroVfpExprRewrite.Normalize;
         _ctx.ValidateIndexFunction = ValidateIndexFunction;            // mirror the now-active session's SET DELETED/EXACT/… context.
     }

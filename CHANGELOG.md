@@ -43,13 +43,24 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ### Fixed
 
 - microVFP builds and maintains index KEY/FOR expressions that call loaded UDFs, arrays or interpreter
-  functions, including existing VFP9-created tags. Missing functions are rejected before writes; plain
+  functions, including existing VFP9-created tags. Missing functions are rejected before writes by default; plain
   library access remains readable and refuses unsupported maintenance. Native scalar keys retain their
-  compiled path. Open nonstructural CDX and legacy IDX files are now maintained alongside compact IDX files.
+  compiled path. Open nonstructural CDX and legacy IDX files are maintained incrementally alongside compact
+  IDX files, without rebuilding the whole index per row. UNIQUE maintenance no longer resurrects previously
+  suppressed duplicates after REPLACE.
+- microVFP `SYS(2335,0)` enables VFP9's unattended index-error behavior: after an array used by an
+  open index is released, row and memo writes proceed without a catchable error and the unavailable
+  index retains its old entries. `SYS(2335,1)` restores normal missing-function rejection.
 - Missing scalar built-ins, including `CEILING`, `FLOOR`, trigonometric/financial/bit functions, date/time
   conversions, binary conversions and lexical path functions, now execute in expressions, filters, SQL
   and index maintenance; `ASCAN` supports array searches through the interpreter. The legacy `UNPACK`
   compatibility function returns VFP9's `.F.`, including for NULL. `NVL`/`EVL` now handle NULL/empty values before generic NULL propagation.
+- **BREAKING:** The duplicate `VfpType.Binary` and `VfpValue.Binary` APIs are removed. Binary values from
+  `CREATEBINARY`, Q fields and record objects consistently use `VfpValue.Varbinary`
+  (`VfpType.Character` with `IsBinary`); `TYPE`/`VARTYPE` report Q and `TRANSFORM` returns hexadecimal.
+  Byte comparisons, concatenation, substrings, code-page conversions and binary index keys preserve VFP9
+  semantics, including raw MACHINE keys under a linguistic `SET COLLATE` setting. SQL writes retain
+  Q bytes, and variable binary keys use zero padding for CDX/IDX maintenance and SEEK.
 - Index expressions preserve a real `0001-01-01` separately from an empty date, including `DTOS(d)`,
   `DTOC(d)+x`, `TTOC(t)`, date arithmetic and literals. Logical index expressions store VFP9's F/T keys.
 - BREAKING: `DTOC` of an empty date returns VFP9's date separators (`"  /  /    "`) instead of ten spaces;

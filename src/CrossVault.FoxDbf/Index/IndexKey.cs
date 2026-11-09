@@ -271,7 +271,7 @@ public readonly struct IndexKey
     }
 
     private static byte[]? EncodeCharacter(object value)
-        => value is string s ? Encoding.Latin1.GetBytes(s) : null;
+        => value is byte[] bytes ? bytes : value is string s ? Encoding.Latin1.GetBytes(s) : null;
 
     /// <summary>
     /// The byte encoding a CHARACTER index key over <paramref name="keyExpr"/> stores and compares in
@@ -517,10 +517,21 @@ public readonly struct IndexKey
         return width == keyLength ? inferred : IndexKeyType.Unknown;
     }
 
+    internal static bool IsBinaryExpression(string expression, DbfTable? table)
+    {
+        if (table is null) return false;
+        // Bare fields dominate reopened indexes on the write hot path; avoid reparsing them.
+        string field = expression.Trim();
+        foreach (var column in table.Columns)
+            if (string.Equals(column.Name, field, StringComparison.OrdinalIgnoreCase)) return column.Type == 'Q';
+        try { return VfpExpression.Parse(expression).InferType(new Write.CdxIndexBuilder.TableSchema(table)).IsBinary; }
+        catch { return false; }
+    }
+
     /// <summary>Maps a DBF column type to the logical index key type (plan §C5).</summary>
     internal static IndexKeyType FromColumnType(char dbfType) => dbfType switch
     {
-        'C' or 'V' => IndexKeyType.Character,
+        'C' or 'V' or 'Q' => IndexKeyType.Character,
         'I' => IndexKeyType.Integer,
         'N' or 'F' or 'Y' or 'B' => IndexKeyType.Numeric,
         'L' => IndexKeyType.Logical,

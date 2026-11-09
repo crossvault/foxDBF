@@ -113,7 +113,8 @@ public sealed class CdxTag
         IndexKeyType keyType,
         bool isUnique = false,
         System.Text.Encoding? characterEncoding = null,
-        int tableCodePage = 1252)
+        int tableCodePage = 1252,
+        bool isBinaryKey = false)
     {
         _index = index;
         Name = name;
@@ -125,9 +126,9 @@ public sealed class CdxTag
         Collation = collation;
         RootPageOffset = rootPageOffset;
         IsCharacterKey = isCharacterKey;
-        KeyPad = isCharacterKey ? IndexKey.CharacterKeyPad(collation) : (byte)0x00;
+        KeyPad = isCharacterKey && !isBinaryKey ? IndexKey.CharacterKeyPad(collation) : (byte)0x00;
         KeyType = keyType;
-        CharacterEncoding = characterEncoding ?? IndexKey.ResolveCharacterEncoding(null, null);
+        CharacterEncoding = isBinaryKey ? System.Text.Encoding.Latin1 : characterEncoding ?? IndexKey.ResolveCharacterEncoding(null, null);
         _collationSupport = VfpCollations.Resolve(collation, tableCodePage, out _collation);
         _unsupportedKeyFunction = VfpRuntime.UnsupportedIndexFunction(keyExpression);
     }

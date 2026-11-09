@@ -2352,7 +2352,7 @@ internal sealed class SelectExecutor
     internal static object? ToClr(VfpValue v) => v.Type switch
     {
         VfpType.Null => null,
-        VfpType.Character => v.AsString,
+        VfpType.Character => v.IsBinary ? v.ToClr() : v.AsString,
         VfpType.Logical => v.AsLogical,
         VfpType.Date => v.AsDate,
         VfpType.DateTime => v.AsDateTime,

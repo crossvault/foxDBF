@@ -72,7 +72,7 @@ internal static partial class VfpRuntime
                     (DayOfWeek)(Math.Max(1, day) - 1)));
             }
             case "DMY": case "MDY": return VfpValue.Character(Arg(args, 0).IsEmptyDate ? "" : Arg(args, 0).AsDateTime.ToString(name == "DMY" ? "dd MMMM yyyy" : "MMMM dd, yyyy", Inv));
-            case "CREATEBINARY": return VfpValue.Binary(EncodeByteString(Arg(args, 0).AsString, ctx));
+            case "CREATEBINARY": return VfpValue.Varbinary(EncodeByteString(Arg(args, 0), ctx));
             case "BINTOC": return BinaryToCharacter(args, ctx);
             case "CTOBIN": return CharacterToBinary(args, ctx);
             case "ANSITOOEM": case "OEMTOANSI":
@@ -118,8 +118,8 @@ internal static partial class VfpRuntime
     private static string DecodeByteString(byte[] bytes, EvaluationContext ctx)
         => (ctx.Encoding ?? CodePagesEncodingProvider.Instance.GetEncoding(1252)!).GetString(bytes);
 
-    private static byte[] EncodeByteString(string text, EvaluationContext ctx)
-        => (ctx.Encoding ?? CodePagesEncodingProvider.Instance.GetEncoding(1252)!).GetBytes(text);
+    private static byte[] EncodeByteString(VfpValue value, EvaluationContext ctx)
+        => (value.IsBinary ? Encoding.Latin1 : ctx.Encoding ?? CodePagesEncodingProvider.Instance.GetEncoding(1252)!).GetBytes(value.AsString);
 
     private static string BinaryFlags(VfpValue[] args, string fallback)
         => args.Length < 2 ? fallback : args[1].Type == VfpType.Character
@@ -165,7 +165,7 @@ internal static partial class VfpRuntime
 
     private static VfpValue CharacterToBinary(VfpValue[] args, EvaluationContext ctx)
     {
-        byte[] bytes = EncodeByteString(Arg(args, 0).AsString, ctx);
+        byte[] bytes = EncodeByteString(Arg(args, 0), ctx);
         string flags = BinaryFlags(args, bytes.Length == 8 ? "B" : bytes.Length.ToString(Inv));
         if (bytes.Length is not (1 or 2 or 4 or 8)) return VfpValue.Null;
         if (flags.Contains('R')) Array.Reverse(bytes);

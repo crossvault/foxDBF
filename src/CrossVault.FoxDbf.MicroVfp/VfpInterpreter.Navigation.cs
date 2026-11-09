@@ -617,7 +617,7 @@ public sealed partial class VfpInterpreter
     {
         var natural = NaturalCharacterKey(src, bound);
         var key = new byte[src.KeyLength];
-        Array.Fill(key, src.CdxTag?.KeyPad ?? (byte)0x20);
+        Array.Fill(key, src.KeyPad);
         int copy = Math.Min(natural.Length, src.KeyLength);
         natural.AsSpan(0, copy).CopyTo(key);
         return key;
@@ -652,6 +652,7 @@ public sealed partial class VfpInterpreter
     /// code-page bytes, GENERAL: collation weights).</summary>
     private static byte[] NaturalCharacterKey(OrderSource src, VfpValue value)
     {
+        if (value.IsBinary) return System.Text.Encoding.Latin1.GetBytes(value.AsString);
         string text = value.AsString ?? string.Empty;
         if (src.Idx is not null)
             return src.IdxCharacterEncoding.GetBytes(text);
@@ -664,8 +665,9 @@ public sealed partial class VfpInterpreter
     /// the key equal to them plus blanks).</summary>
     private static CharacterSeekNeedle SeekCharacterNeedle(OrderSource src, VfpValue key, bool exact)
     {
+        if (key.IsBinary) return new CharacterSeekNeedle(System.Text.Encoding.Latin1.GetBytes(key.AsString), exact, src.KeyPad);
         if (src.Idx is not null)
-            return new CharacterSeekNeedle(NaturalCharacterKey(src, key), exact, (byte)0x20);
+            return new CharacterSeekNeedle(NaturalCharacterKey(src, key), exact, src.KeyPad);
         try
         {
             return src.CdxTag!.CreateCharacterSeekNeedle(key.AsString ?? string.Empty, exact);

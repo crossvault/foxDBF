@@ -27,9 +27,14 @@ public sealed partial class DbfWriter
 
     internal void SetOpenAdditionalIndexes(IEnumerable<string> paths, EvaluationContext context)
     {
+        if (paths is ICollection<string> { Count: 0 } && !HasAdditionalIndexes) return;
+        var wanted = paths.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (string old in _additionalIndexPlans.Keys.ToArray())
+            if (!wanted.Contains(old) || !_openAdditionalIndexes.TryGetValue(old, out var prior) || !ReferenceEquals(prior, context))
+                _additionalIndexPlans.Remove(old);
         _openCompactIndexes.Clear();
-        _openRebuiltIndexes.Clear();
-        foreach (string path in paths)
+        _openAdditionalIndexes.Clear();
+        foreach (string path in wanted)
         {
             if (Path.GetExtension(path).Equals(".idx", StringComparison.OrdinalIgnoreCase))
             {
@@ -40,7 +45,7 @@ public sealed partial class DbfWriter
                     continue;
                 }
             }
-            _openRebuiltIndexes[Path.GetFullPath(path)] = context;
+            _openAdditionalIndexes[Path.GetFullPath(path)] = context;
         }
     }
 
@@ -71,18 +76,26 @@ public sealed partial class DbfWriter
         return (def, computer);
     }
 
+    private bool SkipUnavailableCompactIndex(string path, EvaluationContext? context)
+    {
+        if (context?.SkipUnavailableIndexExpression is not { } skip) return false;
+        using var index = IdxFile.Open(path, _schema);
+        return skip(index.Header.KeyExpression) || skip(index.Header.ForExpression);
+    }
+
     private void ValidateCompactIndexes()
     {
-        ValidateRebuiltIndexes();
+        ValidateAdditionalIndexes();
         foreach (var (path, context) in _openCompactIndexes)
-            ReadCompactIndexPlan(path, context);
+            if (!SkipUnavailableCompactIndex(path, context)) ReadCompactIndexPlan(path, context);
     }
 
     private void MaintainCompactIndexes(int recNo, DbfRecord? before, DbfRecord after)
     {
-        RebuildAdditionalIndexes();
+        MaintainAdditionalIndexes(recNo, before, after);
         foreach (var (path, context) in _openCompactIndexes)
         {
+            if (SkipUnavailableCompactIndex(path, context)) continue;
             var (_, computer) = ReadCompactIndexPlan(path, context);
             byte[] oldKey = [];
             bool had = before is { } old && computer.TryComputeKey(old, recNo, _recordCount, out oldKey);
