@@ -16,6 +16,7 @@ namespace CrossVault.FoxDbf.MicroVfp;
 public sealed partial class VfpInterpreter
 {
     private Exception? _insertDefaultRuleError;
+    private HashSet<string>? _activeRulePaths;
 
     /// <summary>Every route below (direct append, buffered, CANDIDATE, RI, the SQL DML fallback) fills a DBC
     /// member's omitted columns from their field DEFAULTs, as VFP9 does: the session's
@@ -23,6 +24,11 @@ public sealed partial class VfpInterpreter
     /// previous evaluator is restored afterwards, so an INSERT inside a DEFAULT's UDF nests.</summary>
     private void ExecInsert(InsertStmt ins)
     {
+        // VFP9 forbids inserting into the table whose validation rule is currently running.
+        // Reject before DEFAULTs or writer callbacks can consume an AUTOINC value.
+        if (_activeRulePaths is { Count: > 0 } && ResolveInsertStatement(ins) is { } nested
+            && ResolveInsertTablePath(nested.Table) is { } rulePath && _activeRulePaths.Contains(Path.GetFullPath(rulePath)))
+            throw new MicroVfpRuntimeException("Cannot modify a table while its rule is being evaluated.", 1887);
         var previousDefaultRuleError = _insertDefaultRuleError;
         _insertDefaultRuleError = null;
         var previous = Session.DbcDefaultEvaluator;
@@ -118,9 +124,18 @@ public sealed partial class VfpInterpreter
     private VfpValue EvalRuleExpression(string expression)
     {
         bool previous = _requireDmlNames;
+        string? path = Session.AreaAt(Session.CurrentArea)?.Table.SourcePath;
+        path = path is null ? null : Path.GetFullPath(path);
+        var active = _activeRulePaths ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (path is not null && !active.Add(path))
+            throw new MicroVfpRuntimeException("Cannot modify a table while its rule is being evaluated.", 1887);
         _requireDmlNames = true;
         try { return EvalTextLoud(expression); }
-        finally { _requireDmlNames = previous; }
+        finally
+        {
+            _requireDmlNames = previous;
+            if (path is not null) active.Remove(path);
+        }
     }
 
     private VfpValue EvalFieldRuleError(string expression, string field)

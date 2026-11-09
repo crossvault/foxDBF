@@ -1,3 +1,5 @@
+using CrossVault.FoxDbf.Sql;
+using CrossVault.FoxDbf.Write;
 namespace CrossVault.FoxDbf.Tests;
 public sealed class MicroVfpSqlDmlH45ReviewTests
 {
@@ -14,4 +16,40 @@ public sealed class MicroVfpSqlDmlH45ReviewTests
     [InlineData(5, true)]
     public void H4_PreviousFieldValue(int buffering, bool append) => Assert.Equal(buffering == 1 ? "1582|Rejected 5|Rejected 5|5" : "1582|Rejected -1|Rejected -1|-1",
         MicroVfpSqlDmlFinalReviewTests.Run(MessageSetup, MessageScenario(buffering, append)));
+    internal const string ReentrantSetup = "PUBLIC calls,seen\ncalls=0\nseen=''\nCREATE TABLE t (id I AUTOINC NEXTVALUE 1 STEP 1, n I, CHECK nest())";
+    internal const string ReentrantProcedure = "FUNCTION nest\ncalls=calls+1\nseen=seen+TRANSFORM(id)+','\nIF calls>8\nRETURN .F.\nENDIF\nIF n=1\nINSERT INTO t (n) VALUES (2)\nENDIF\nRETURN .T.\nENDFUNC";
+    internal static string ReentrantScenario(bool slow) => "USE t EXCLUSIVE\n" + (slow ? "INDEX ON n TAG n CANDIDATE\n" : "") +
+        MicroVfpSqlDmlTests.Catch("INSERT INTO t (n) VALUES (1)") + "\nSELECT t\nresult=result+TRANSFORM(calls)+'|'+seen+'|'+TRANSFORM(RECCOUNT())\nSCAN\nresult=result+'|'+TRANSFORM(id)+','+TRANSFORM(n)\nENDSCAN";
+    [Theory(Timeout = 30000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task H5_ReentrantRuleTerminates(bool slow) => Assert.Equal("ERR:1887|1|1,|0",
+        await Task.Run(() => MicroVfpSqlDmlFinalReviewTests.Run(ReentrantSetup, ReentrantScenario(slow), ReentrantProcedure)));
+    [Theory(Timeout = 30000)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task H5_ContentionRevalidatesAtMostOnce(bool fallback) => await Task.Run(() =>
+    {
+        using var dir = new MicroVfpTestSupport.TempDir("h5_contention");
+        using var session = new VfpSession();
+        session.OpenDirectory(dir.Path);
+        session.Execute("CREATE TABLE t (id I AUTOINC, n I)");
+        using var writer = fallback ? null : DbfWriter.Open(dir.File("t.dbf"));
+        int calls = 0;
+        session.InsertRowValidator = (_, _, _, _, _) =>
+        {
+            if (++calls > 2) throw new InvalidOperationException("Unbounded revalidation");
+            if (writer is not null) Assert.False(writer.HasHeldLocks);
+            using var other = DbfWriter.Open(dir.File("t.dbf"));
+            other.AppendRecord(new object?[] { 0, 99 });
+        };
+        Assert.Throws<IOException>(() =>
+        {
+            if (fallback) session.Execute("INSERT INTO t (n) VALUES (1)");
+            else DmlExecutor.AppendInsertValuesRow(session, writer!, (InsertStatement)SqlParser.Parse("INSERT INTO t (n) VALUES (1)"));
+        });
+        Assert.Equal(2, calls);
+        Assert.Equal(2, session.Execute("SELECT * FROM t")!.Rows!.Count());
+    });
+
 }

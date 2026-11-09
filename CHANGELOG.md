@@ -113,6 +113,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- INSERT rejects recursive writes from the target's validation rule with VFP error 1887,
+  preserving AUTOINC values. Rule callbacks run outside the append lock; concurrent changes
+  trigger at most one revalidation before an I/O conflict is reported.
+
 - Field-rule ERROR expressions now read the rejected value retained in a row/table buffer,
   including buffered appends. Unbuffered replacements continue to report the preceding value.
 
