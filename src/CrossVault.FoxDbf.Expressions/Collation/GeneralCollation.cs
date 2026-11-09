@@ -1,12 +1,11 @@
 using System;
 using System.Buffers;
-using System.Linq;
 
 namespace CrossVault.FoxDbf.Expressions;
 
 /// <summary>
-/// VFP's table-driven collations: <c>GENERAL</c> (the VFP9 Western and Central European code pages) and <c>SPANISH</c> (1252
-/// and 850). The two-pass key is built from a per-code-page weight table (<see cref="GeneralWeights1252"/> and the
+/// VFP's table-driven collations: <c>GENERAL</c> (the VFP9 Western and Central European code pages), <c>SPANISH</c> (1252
+/// and 850) and <c>GERMAN</c> (1252, 437, 10000). The two-pass key is built from a per-code-page weight table (<see cref="GeneralWeights1252"/> and the
 /// CP850 / CP437 tables, ported from CodeBase <c>COLL4ARR.C</c>, the CP1250 table derived from VFP9's keys, plus
 /// their VFP9-verified variants):
 /// </summary>
@@ -81,10 +80,23 @@ public sealed class GeneralCollation : IVfpCollation
     /// <summary>SPANISH over CP850 table bytes.</summary>
     internal static readonly GeneralCollation Spanish850 = new("SPANISH", CollationTable.Spanish850);
 
+    internal static readonly GeneralCollation German1252 = new("GERMAN", CollationTable.German1252);
+    internal static readonly GeneralCollation German437 = new("GERMAN", CollationTable.German437);
+    internal static readonly GeneralCollation German10000 = new("GERMAN", CollationTable.German10000);
+
+    internal static readonly GeneralCollation Turkish1254 = new("TURKISH", CollationTable.Turkish1254);
+    internal static readonly GeneralCollation Turkish857 = new("TURKISH", CollationTable.Turkish857);
+    internal static readonly GeneralCollation Russian1251 = new("RUSSIAN", CollationTable.Russian1251);
+    internal static readonly GeneralCollation Russian866 = new("RUSSIAN", CollationTable.Russian866);
+    internal static readonly GeneralCollation Russian10007 = new("RUSSIAN", CollationTable.Russian10007);
+    internal static readonly GeneralCollation Greek1253 = new("GREEK", CollationTable.Greek1253);
+    internal static readonly GeneralCollation Greek737 = new("GREEK", CollationTable.Greek737);
+    internal static readonly GeneralCollation Greek10006 = new("GREEK", CollationTable.Greek10006);
+
     private readonly string _name;
     private readonly CollationTable _table;
 
-    private GeneralCollation(string name, CollationTable table)
+    internal GeneralCollation(string name, CollationTable table)
     {
         _name = name;
         _table = table;
@@ -104,8 +116,8 @@ public sealed class GeneralCollation : IVfpCollation
     /// </summary>
     public byte[] GetCollatedKey(ReadOnlySpan<char> s)
     {
-        // Worst case: every char expands to 2 heads + 2 tails.
-        int cap = s.Length * 2;
+        // Capacity comes from the longest expansion in this table.
+        int cap = s.Length * _table.MaxWeights;
         Span<byte> heads = cap <= StackCap ? stackalloc byte[StackCap] : new byte[cap];
         Span<byte> tails = cap <= StackCap ? stackalloc byte[StackCap] : new byte[cap];
 
@@ -117,10 +129,8 @@ public sealed class GeneralCollation : IVfpCollation
         return key;
     }
 
-    /// <summary>The second letters of this collation's contractions (SPANISH: <c>h</c> of <c>ch</c>, <c>l</c> of
-    /// <c>ll</c>; none for GENERAL), lower case: appended to a value, they can merge its last letter into one head.</summary>
-    internal string ContractionTrailers
-        => new(_table.Contractions.Select(c => (char)c.Second).Distinct().ToArray());
+    /// <summary>Suffixes that can complete a contraction across a prefix boundary.</summary>
+    internal string[] ContractionSuffixes => _table.ContractionSuffixes;
 
     /// <summary>
     /// The head (primary) weights of <paramref name="s"/> alone — the leading part of <see cref="GetCollatedKey"/>
@@ -128,7 +138,7 @@ public sealed class GeneralCollation : IVfpCollation
     /// </summary>
     internal byte[] GetHeadKey(ReadOnlySpan<char> s)
     {
-        int cap = s.Length * 2;
+        int cap = s.Length * _table.MaxWeights;
         Span<byte> heads = cap <= StackCap ? stackalloc byte[StackCap] : new byte[cap];
         Span<byte> tails = cap <= StackCap ? stackalloc byte[StackCap] : new byte[cap];
 
@@ -148,8 +158,8 @@ public sealed class GeneralCollation : IVfpCollation
         // Zero-allocation: build both keys into stack (or pooled) head/tail buffers and
         // compare the logical heads-then-tails sequences byte-by-byte. No byte[] per call,
         // which matters on the per-record hot path ($/=/<=/>= for Character operands).
-        int capL = left.Length * 2;
-        int capR = right.Length * 2;
+        int capL = left.Length * _table.MaxWeights;
+        int capR = right.Length * _table.MaxWeights;
 
         byte[]? rhL = null, rtL = null, rhR = null, rtR = null;
         Span<byte> hL = capL <= StackCap ? stackalloc byte[capL] : (rhL = ArrayPool<byte>.Shared.Rent(capL));
@@ -185,8 +195,8 @@ public sealed class GeneralCollation : IVfpCollation
         // 'ch' is one head, while 'ch' = 'C' does not (VFP9). For GENERAL the weighted path gives the same answer.
         if (left.StartsWith(right) || (mode == StringCompareMode.Shorter && right.StartsWith(left))) return 0;
 
-        int capL = left.Length * 2;
-        int capR = right.Length * 2;
+        int capL = left.Length * _table.MaxWeights;
+        int capR = right.Length * _table.MaxWeights;
         byte[]? rhL = null, rtL = null, rhR = null, rtR = null;
         Span<byte> hL = capL <= StackCap ? stackalloc byte[capL] : (rhL = ArrayPool<byte>.Shared.Rent(capL));
         Span<byte> tL = capL <= StackCap ? stackalloc byte[capL] : (rtL = ArrayPool<byte>.Shared.Rent(capL));
@@ -205,7 +215,16 @@ public sealed class GeneralCollation : IVfpCollation
             var a = tL[..tcL];
             var b = tR[..tcR];
             if (a.StartsWith(b)) return 0;
+            // VFP9 SWEFIN gives Æ one zero tail but AE two and ignores that difference.
+            // This is sequence-specific: SPANISH Æ < AE with EXACT OFF (golden oracle).
+            if (_name == "SWEFIN" && b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
+            // VFP9 TURKISH equates dotted capital I (no tail) with i (zero tail).
+            // An absent secondary weight compares as zero, including with EXACT OFF.
+            if (_name == "TURKISH" && b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
             if (mode == StringCompareMode.Shorter && b.StartsWith(a)) return 0;
+            // HUNGARY H suppresses a tail that h retains as zero. VFP9 still compares CH = ch.
+            // This is sequence-specific: SPANISH's suppressed ligature tails compare differently.
+            if (_name == "HUNGARY" && b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
             d = a.SequenceCompareTo(b);
             return d < 0 ? -1 : 1;
         }
@@ -218,7 +237,7 @@ public sealed class GeneralCollation : IVfpCollation
         }
     }
 
-    /// <summary>Stack-buffer threshold (bytes). Inputs whose worst-case key (len*2) fits are
+    /// <summary>Stack-buffer threshold (bytes). Inputs whose worst-case head/tail buffer fits are
     /// keyed with no heap traffic at all; longer ones fall back to an <see cref="ArrayPool{T}"/>
     /// rent (Compare) or a plain array (GetCollatedKey, which must allocate the result anyway).</summary>
     private const int StackCap = 256;
@@ -228,7 +247,7 @@ public sealed class GeneralCollation : IVfpCollation
     /// <paramref name="heads"/> and the diacritic (tail) weights into <paramref name="tails"/>,
     /// expanding ligatures (Œ→OE, Æ→AE, Þ→TH, ß→SS), folding SPANISH contractions (ch, ll) into one
     /// head, trimming (unless <paramref name="trim"/> is off) trailing source spaces and trailing 0x00 tail bytes. Buffers must each hold at
-    /// least <c>s.Length * 2</c> bytes. The logical key is <c>heads[..hc]</c> followed by <c>tails[..tc]</c>.
+    /// least <c>s.Length * _table.MaxWeights</c> bytes. The logical key is <c>heads[..hc]</c> followed by <c>tails[..tc]</c>.
     /// </summary>
     private void BuildKey(ReadOnlySpan<char> s, Span<byte> heads, Span<byte> tails, out int hc, out int tc, bool trim = true)
     {
@@ -245,11 +264,15 @@ public sealed class GeneralCollation : IVfpCollation
         for (int i = 0; i < len; i++)
         {
             byte idx = toByte[s[i]];
-            if (contractions.Length != 0 && i + 1 < len
-                && TryContract(contractions, idx, toByte[s[i + 1]], out byte contracted))
+            if (contractions.Length != 0 && table.ContractionStarts[idx] && i + 1 < len
+                && TryContract(contractions, s.Slice(i, len - i), toByte, out var contracted))
             {
-                heads[hc++] = contracted;   // one letter, no diacritic tail
-                i++;
+                var weights = contracted!.Weights;
+                weights.Heads.CopyTo(heads[hc..]);
+                weights.Tails.CopyTo(tails[tc..]);
+                hc += weights.Heads.Length;
+                tc += weights.Tails.Length;
+                i += contracted.Input.Length - 1;
                 continue;
             }
 
@@ -262,36 +285,37 @@ public sealed class GeneralCollation : IVfpCollation
             }
             else
             {
-                byte[] pair = table.Expansions[tail[idx]];
-                for (int j = 0; j < pair.Length; j++)
-                {
-                    byte cc = pair[j];
-                    heads[hc++] = head[cc];
-                    if (!table.ExpansionTails) continue;
-                    byte t = tail[cc];
-                    if (t != GeneralWeights1252.NoTail) tails[tc++] = t;
-                }
+                var weights = table.Expansions[tail[idx]];
+                weights.Heads.CopyTo(heads[hc..]);
+                weights.Tails.CopyTo(tails[tc..]);
+                hc += weights.Heads.Length;
+                tc += weights.Tails.Length;
             }
         }
 
         while (trim && tc > 0 && tails[tc - 1] == 0) tc--;
     }
 
-    /// <summary>Matches the byte pair (<paramref name="a"/>, <paramref name="b"/>) against the lower-case
-    /// ASCII contractions, folding the case of ASCII letters only.</summary>
-    private static bool TryContract((byte First, byte Second, byte Head)[] contractions, byte a, byte b, out byte head)
+    private static bool TryContract(CollationContraction[] contractions, ReadOnlySpan<char> input,
+        byte[] toByte, out CollationContraction? matched)
     {
-        byte la = a is >= (byte)'A' and <= (byte)'Z' ? (byte)(a | 0x20) : a;
-        byte lb = b is >= (byte)'A' and <= (byte)'Z' ? (byte)(b | 0x20) : b;
-        foreach (var (first, second, h) in contractions)
+        foreach (var rule in contractions)
         {
-            if (la == first && lb == second)
+            if (input.Length < rule.Input.Length) continue;
+            int i = 0;
+            for (; i < rule.Input.Length; i++)
             {
-                head = h;
+                byte b = toByte[input[i]];
+                if (rule.FoldAsciiCase && b is >= (byte)'A' and <= (byte)'Z') b |= 0x20;
+                if (b != rule.Input[i]) break;
+            }
+            if (i == rule.Input.Length)
+            {
+                matched = rule;
                 return true;
             }
         }
-        head = 0;
+        matched = null;
         return false;
     }
 

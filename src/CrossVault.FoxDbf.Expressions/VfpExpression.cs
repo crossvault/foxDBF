@@ -66,7 +66,7 @@ public sealed class VfpExpression
         return new VfpExpression(text, root);
     }
 
-    /// <summary>Tree-walking interpreter. Never throws on bad/null data.</summary>
+    /// <summary>Tree-walking interpreter. Invalid function arguments raise VFP runtime errors.</summary>
     public VfpValue Evaluate(IRowContext row, EvaluationContext? context = null)
         => _root.Eval(row, context ?? EvaluationContext.Default);
 
@@ -122,10 +122,12 @@ public sealed class VfpExpression
     /// in a given physical schema — e.g. the write-path index maintenance rejects a tag whose expression
     /// names a field absent from the raw <c>.dbf</c> (a DBC long name) rather than derive wrong key bytes.
     /// </summary>
-    public IReadOnlyCollection<string> ReferencedFields()
+    public IReadOnlyCollection<string> ReferencedFields() => ReferencedFields(null);
+
+    internal IReadOnlyCollection<string> ReferencedFields(Func<string, int, bool>? skipFunction)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        _root.CollectFields(set);
+        _root.CollectFields(set, skipFunction);
         return set;
     }
 }

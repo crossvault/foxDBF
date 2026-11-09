@@ -22,4 +22,7 @@ public sealed class FoxDbfException : DbException, IVfpErrorCode
 
     public FoxDbfException(string? message, int vfpErrorNumber) : base(message)
         => VfpErrorNumber = vfpErrorNumber;
+
+    internal FoxDbfException(string message, int vfpErrorNumber, Exception innerException)
+        : base(message, innerException) => VfpErrorNumber = vfpErrorNumber;
 }

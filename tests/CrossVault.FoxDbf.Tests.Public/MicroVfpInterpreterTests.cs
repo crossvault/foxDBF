@@ -269,7 +269,7 @@ PROCEDURE repl_one
     [InlineData("REPLACE value WITH 'XX' FOR .T.")]
     [InlineData("REPLACE value WITH 'XX' WHILE .T.")]
     [InlineData("BLANK ALL")]
-    public void Replace_RecordScopeOrFilter_IsRejectedWithoutChangingTable(string command)
+    public void Replace_RecordScopeOrFilter_UpdatesTable(string command)
     {
         using var dir = new MicroVfpTestSupport.TempDir("repl_scope");
         var interp = MicroVfpTestSupport.NewTastrade(dir, out var s);
@@ -290,10 +290,18 @@ PROCEDURE snapshot_setup_values
             string before = interp.Call("snapshot_setup_values").AsString;
             interp.Execute("SELECT setup\nGO TOP");
 
-            var ex = Assert.Throws<MicroVfpRuntimeException>(() => interp.Execute(command));
-
-            Assert.Equal("REPLACE: record scope/FOR/WHILE clauses are not supported.", ex.Message);
-            Assert.Equal(before, interp.Call("snapshot_setup_values").AsString);
+            if (command == "BLANK ALL")
+            {
+                Assert.Throws<MicroVfpRuntimeException>(() => interp.Execute(command));
+                Assert.Equal(before, interp.Call("snapshot_setup_values").AsString);
+            }
+            else
+            {
+                // All scopes and their final pointers are pinned by MicroVfpDataCommandsVfp9OracleTests.
+                interp.Execute(command);
+                Assert.NotEqual(before, interp.Call("snapshot_setup_values").AsString);
+                Assert.Contains("XX|", interp.Call("snapshot_setup_values").AsString);
+            }
         }
     }
 

@@ -524,7 +524,7 @@ public static class QueryOptimizer
     {
         int st = i, n = s.Length;
         bool dot = false;
-        while (i < n && (char.IsDigit(s[i]) || (s[i] == '.' && !dot)))
+        while (i < n && (char.IsDigit(s[i]) || (s[i] == '.' && !dot && !ExpressionLexer.IsDottedOperatorAhead(s, i))))
         {
             if (s[i] == '.') dot = true;
             i++;
@@ -1624,17 +1624,18 @@ public static class QueryOptimizer
             // head count before its tails are compared, so 'Ab' < 'Á' holds although its key 60 61.. sorts after
             // 60 01 — every key carrying the literal's head run can sort below the literal.
             byte[]? eqUpper = op is CmpOp.Eq or CmpOp.Lt or CmpOp.Le ? HeadRunUpperBound(tag, literal, lit) : null;
+            byte[] eqLower = op is CmpOp.Eq or CmpOp.Gt or CmpOp.Ge ? HeadRunLowerBound(tag, literal, lit) : lit;
 
             // The contiguous collated-byte WINDOW [lo, hi) that is a SUPERSET of the matches,
             // proven per op so the predicate's true-set is entirely contained in [lo, hi):
-            //   Eq      → [lit, eqUpper)  (eqUpper, else {lit[0]+1}, else open: key[0]==lit[0])
+            //   Eq      → [eqLower, eqUpper) (eqUpper, else {lit[0]+1}, else open)
             //   Lt/Le   → [open, eqUpper)           (every key below or carrying the literal's head run; open when null)
-            //   Gt/Ge   → [lit, open)               (every prefix-or-above key sorts at/after it)
+            //   Gt/Ge   → [eqLower, open)           (including contractions below the literal)
             byte[]? lo, hi;
             switch (op)
             {
                 case CmpOp.Eq:
-                    lo = lit;
+                    lo = eqLower;
                     hi = eqUpper ?? (lit[0] != 0xFF ? new[] { (byte)(lit[0] + 1) } : null);
                     break;
                 case CmpOp.Lt:
@@ -1644,27 +1645,27 @@ public static class QueryOptimizer
                     break;
                 case CmpOp.Gt:
                 case CmpOp.Ge:
-                    lo = lit;
+                    lo = eqLower;
                     hi = null;
                     break;
                 default:
                     return null;
             }
 
-            // The per-entry confirmation: BYTE-FOR-BYTE the historical full-scan take, so the
-            // seek-built candidate is provably the SAME set (the window is only a superset).
+            // Per-entry confirmation uses the same widened bounds as the seek window.
+            // The expression residual removes false positives from this candidate superset.
             Func<byte[], bool> pred = key =>
             {
                 if (key.Length == 0) return false;
                 return op switch
                 {
-                    // Prefix/exact SUPERSET: key >= literal AND (when a selective upper bound was
+                    // Prefix/exact SUPERSET: key >= widened lower bound AND (when an upper bound was
                     // derived) key < nextPrefix(heads); otherwise the open first-byte fallback.
-                    CmpOp.Eq => CompareBytes(key, lit) >= 0
-                        && (eqUpper is null ? key[0] == lit[0] : CompareBytes(key, eqUpper) < 0),
+                    CmpOp.Eq => CompareBytes(key, eqLower) >= 0
+                        && (hi is null || CompareBytes(key, hi) < 0),
                     // One-sided: widened prefix-byte bound (residual confirms strictness/EXACT).
                     CmpOp.Lt or CmpOp.Le => eqUpper is null || CompareBytes(key, eqUpper) < 0,
-                    CmpOp.Gt or CmpOp.Ge => ComparePrefixBytes(key, lit) >= 0,
+                    CmpOp.Gt or CmpOp.Ge => ComparePrefixBytes(key, eqLower) >= 0,
                     _ => false,
                 };
             };
@@ -1840,9 +1841,9 @@ public static class QueryOptimizer
         private static byte[]? HeadRunUpperBound(CdxTag tag, string literal, byte[] lit)
         {
             byte[]? upper = CharEqUpperBound(tag, literal, lit);
-            if (upper is null || tag.KeyCollation is not GeneralCollation { ContractionTrailers: { Length: > 0 } trailers })
+            if (upper is null || tag.KeyCollation is not GeneralCollation { ContractionSuffixes: { Length: > 0 } trailers })
                 return upper;
-            foreach (char z in trailers)
+            foreach (string z in trailers)
             {
                 string extended = literal + z;
                 byte[] key;
@@ -1855,6 +1856,21 @@ public static class QueryOptimizer
             return upper;
         }
 
+        // A contraction can also move a prefix DOWN: VFP9 HUNGARY ozs has the dzs head,
+        // below o. EXACT OFF still matches ozs = o, so widening only the upper bound loses rows.
+        private static byte[] HeadRunLowerBound(CdxTag tag, string literal, byte[] lit)
+        {
+            if (tag.KeyCollation is not GeneralCollation { ContractionSuffixes: { Length: > 0 } trailers } collation)
+                return lit;
+            byte[] lower = lit;
+            foreach (string suffix in trailers)
+            {
+                byte[] key = collation.GetHeadKey((literal + suffix).AsSpan());
+                if (CompareBytes(key, lower) < 0) lower = key;
+            }
+            return lower;
+        }
+
         /// <summary>
         /// Derives the SELECTIVE upper bound for a CHARACTER equality candidate: the literal's
         /// PRIMARY (head) weight run, byte-incremented to the next prefix. Returns <c>null</c> to
@@ -1865,29 +1881,35 @@ public static class QueryOptimizer
         /// heads(literal)++heads(rest)++tails(...). For BOTH collations the leading bytes are the
         /// literal's head run H; the GENERAL diacritic tail of the literal is pushed AFTER the
         /// match's extra heads, so it never appears in the shared prefix. Thus every match key
-        /// begins with H and so sorts strictly below byteIncrement(H). The head boundary is found
-        /// collation-agnostically: append two probe chars with distinct primary weights — their
-        /// collated keys share EXACTLY the literal's head run, then diverge at the next head.
+        /// begins with H and so sorts strictly below byteIncrement(H). Table-driven collations expose
+        /// the head boundary directly. For other collations, two appended probe characters with
+        /// distinct primary weights identify it by their common key prefix.
         /// </para>
         /// </summary>
         private static byte[]? CharEqUpperBound(CdxTag tag, string literal, byte[] lit)
         {
-            byte[] a, b;
-            try
+            int hc;
+            if (tag.KeyCollation is GeneralCollation weighted)
             {
-                a = tag.EncodeCharacterKey(literal + "A");
-                b = tag.EncodeCharacterKey(literal + "B");
+                // NORDAN 'a' + 'A' contracts to aa. Probing with A/B would lose the
+                // shared head run and incorrectly exclude aa-prefixed matches.
+                hc = weighted.GetHeadKey(literal).Length;
             }
-            catch { return null; }                       // uncertain → widen
-
-            // Length of the shared head run (the literal's primary weights). The two probes share
-            // every head byte of the literal, then diverge at the appended char's head weight.
-            int max = Math.Min(Math.Min(a.Length, b.Length), lit.Length);
-            int hc = 0;
-            while (hc < max && a[hc] == b[hc]) hc++;
-            if (hc == 0) return null;                                          // no shared run → widen
-            if (hc >= a.Length || hc >= b.Length || a[hc] == b[hc]) return null; // probes never diverged → widen
-            if (hc > lit.Length) return null;                                 // defensive → widen
+            else
+            {
+                byte[] a, b;
+                try
+                {
+                    a = tag.EncodeCharacterKey(literal + "A");
+                    b = tag.EncodeCharacterKey(literal + "B");
+                }
+                catch { return null; }
+                int max = Math.Min(Math.Min(a.Length, b.Length), lit.Length);
+                hc = 0;
+                while (hc < max && a[hc] == b[hc]) hc++;
+                if (hc >= a.Length || hc >= b.Length || a[hc] == b[hc]) return null;
+            }
+            if (hc == 0 || hc > lit.Length) return null;
 
             // Byte-increment the head run (next prefix). Drop any trailing 0xFF that cannot carry;
             // if NOTHING can be incremented the bound would overflow the value space → widen.

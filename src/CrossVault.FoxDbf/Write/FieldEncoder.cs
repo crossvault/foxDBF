@@ -195,6 +195,11 @@ public static class FieldEncoder
 
     private static bool TryWriteNumberRightJustified(object value, int decimals, Span<byte> dest)
     {
+        if (value is double d && !double.IsFinite(d) || value is float f && !float.IsFinite(f))
+        {
+            dest.Fill((byte)'*');
+            return true;
+        }
         char[]? rented = null;
         Span<char> chars = dest.Length <= MaxStackNumberChars
             ? stackalloc char[MaxStackNumberChars]

@@ -37,7 +37,7 @@ internal abstract class AstNode
     /// field references count — function names, literals and operators contribute nothing. Used by the
     /// write-path index maintenance to decide whether a tag's KEY/FOR expression resolves against a table's
     /// physical schema before it edits that tag's on-disk tree.</summary>
-    public virtual void CollectFields(ICollection<string> into) { }
+    public virtual void CollectFields(ICollection<string> into, Func<string, int, bool>? skipFunction = null) { }
 
     /// <summary>If this node is a numeric literal, returns its integer value.</summary>
     public virtual bool TryConstInt(out int value) { value = 0; return false; }
@@ -109,7 +109,7 @@ internal sealed partial class FieldNode : AstNode
         return new VfpTypeInfo(VfpType.Unknown);
     }
 
-    public override void CollectFields(ICollection<string> into) => into.Add(_name);
+    public override void CollectFields(ICollection<string> into, Func<string, int, bool>? skipFunction = null) => into.Add(_name);
 
     private static VfpType MapColumnType(char t) => char.ToUpperInvariant(t) switch
     {
@@ -159,7 +159,7 @@ internal sealed partial class UnaryNode : AstNode
         return true;
     }
 
-    public override void CollectFields(ICollection<string> into) => _operand.CollectFields(into);
+    public override void CollectFields(ICollection<string> into, Func<string, int, bool>? skipFunction = null) => _operand.CollectFields(into, skipFunction);
 }
 
 internal sealed partial class BinaryNode : AstNode
@@ -249,10 +249,10 @@ internal sealed partial class BinaryNode : AstNode
         return (int)sum;
     }
 
-    public override void CollectFields(ICollection<string> into)
+    public override void CollectFields(ICollection<string> into, Func<string, int, bool>? skipFunction = null)
     {
-        _left.CollectFields(into);
-        _right.CollectFields(into);
+        _left.CollectFields(into, skipFunction);
+        _right.CollectFields(into, skipFunction);
     }
 }
 
@@ -444,9 +444,10 @@ internal sealed partial class FunctionNode : AstNode
         }
     }
 
-    public override void CollectFields(ICollection<string> into)
+    public override void CollectFields(ICollection<string> into, Func<string, int, bool>? skipFunction = null)
     {
-        foreach (var a in _args) a.CollectFields(into);
+        if (skipFunction?.Invoke(_upper, _args.Length) == true) return;
+        foreach (var a in _args) a.CollectFields(into, skipFunction);
     }
 
     private VfpTypeInfo ArgInfer(ISchema schema, int i)

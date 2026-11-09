@@ -54,10 +54,9 @@ public sealed partial class VfpInterpreter
     /// P3b (ADO.NET enforced write-model) — set to <see langword="true"/> when the OUTERMOST auto-fired RI
     /// trigger of a DML op returns <c>.F.</c> (a RESTRICT abort, or a child-cascade restrict that propagated
     /// up to the top-level trigger). The plain <c>ExecInsert</c>/<c>ExecReplace</c>/<c>ExecDelete</c> path
-    /// rolls the row back but returns NORMALLY (the trigger result is not raised), so the enforced ADO.NET
-    /// write path inspects this flag after each row op to raise VFP error 1539 instead of reporting a phantom
-    /// success with a wrong affected-record count. The caller resets it to <see langword="false"/> before each
-    /// row op; it is never set on a successful (allowed) DML.
+    /// rolls the row back; unbuffered DELETE/INSERT then raise VFP error 1539. The enforced ADO.NET
+    /// write path also inspects this flag for paths that return normally. The caller resets it to
+    /// <see langword="false"/> before each row op; it is never set on a successful (allowed) DML.
     /// </summary>
     public bool LastDmlTriggerAborted { get; set; }
 
@@ -70,6 +69,18 @@ public sealed partial class VfpInterpreter
 
     // P3b RI events a bound trigger fires for (delete current/scoped record, key-changing replace, append).
     private enum RiEvent { Delete, Update, Insert }
+
+    private static MicroVfpRuntimeException TriggerFailed(RiEvent ev, int area, string alias)
+    {
+        // VFP9 uses the failing alias, with only its first character capitalized, in both columns 2/3.
+        string detail = alias.Length == 0 ? alias : char.ToUpperInvariant(alias[0]) + alias[1..].ToLowerInvariant();
+        return new($"Trigger failed in {detail}.", 1539)
+        {
+            Details = detail,
+            TriggerArea = area,
+            TriggerType = ev switch { RiEvent.Insert => 1, RiEvent.Update => 2, _ => 3 },
+        };
+    }
 
     /// <summary>
     /// P3b auto-fire seam — fire the table's bound RI trigger for <paramref name="ev"/> on work area
@@ -113,8 +124,8 @@ public sealed partial class VfpInterpreter
 
     /// <summary>Resolve the bound RI trigger proc for <paramref name="ev"/> on <paramref name="wa"/> via the
     /// RI Builder NAMING CONVENTION <c>__RI_&lt;event&gt;_&lt;table&gt;</c> (the binding expression is not
-    /// decodable from this codebase's DBC reader — see <see cref="EnforceReferentialIntegrity"/>). Tries the
-    /// work-area alias then the .dbf base name; null when no such proc is loaded.</summary>
+    /// decodable from this codebase's DBC reader — see <see cref="EnforceReferentialIntegrity"/>). Uses the
+    /// DBC member name when available, otherwise the alias then the .dbf base name; null when no such proc is loaded.</summary>
     private string? ResolveTriggerProc(RiEvent ev, VfpSession.WorkArea wa)
     {
         string evName = ev switch { RiEvent.Delete => "DELETE", RiEvent.Update => "UPDATE", _ => "INSERT" };
@@ -126,10 +137,22 @@ public sealed partial class VfpInterpreter
         return null;
     }
 
-    private static IEnumerable<string> TableNameCandidates(VfpSession.WorkArea wa)
+    private IEnumerable<string> TableNameCandidates(VfpSession.WorkArea wa)
     {
-        yield return wa.Alias;
         var path = wa.Table.SourcePath;
+        if (!string.IsNullOrEmpty(path) && Session.Database is { } db)
+        {
+            // VFP binds the trigger to the DBC member, not its USE alias or physical file name:
+            // order_line_items lives in orditems.dbf. Resolve COW copies back to their live identity.
+            string livePath = Session.TxLivePath is { } toLive ? toLive(path) : path;
+            foreach (var member in db.TableNames)
+            {
+                if (!SamePath(db.GetTablePath(member), livePath)) continue;
+                yield return member;
+                yield break;
+            }
+        }
+        yield return wa.Alias;
         if (!string.IsNullOrEmpty(path))
         {
             string fn = Path.GetFileNameWithoutExtension(path);
@@ -343,7 +366,7 @@ public sealed partial class VfpInterpreter
     /// caller falls back to a whole-file <see cref="CaptureSnapshot"/>) when the row cannot be represented
     /// record-level:
     /// <list type="bullet">
-    ///   <item>a deleted/unreadable current record (<see cref="DbfTable.GetRecord"/> returns null); or</item>
+    ///   <item>a deleted/unreadable current record (<see cref="DbfTable.GetRecord(int)"/> returns null); or</item>
     ///   <item>the statement TOUCHES a General/Picture (<c>G</c>/<c>P</c>) field — those decode to a raw
     ///     4-byte FPT block POINTER, not content, so feeding the read-back value back through
     ///     <see cref="DbfWriter.UpdateRecord(int, object?[])"/> would write the pointer bytes AS block data

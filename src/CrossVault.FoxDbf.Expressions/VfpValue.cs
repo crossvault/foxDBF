@@ -38,14 +38,16 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     private readonly decimal _dec;    // numeric/currency/integer, exact
     private readonly bool _isExact;   // numeric uses _dec when true
     private readonly string? _str;
+    private readonly bool _isBinary;
     private readonly bool _bool;
     private readonly System.DateTime _date; // date + datetime payload
 
     private VfpValue(VfpType type, double num, decimal dec, bool isExact,
-                     string? str, bool b, System.DateTime date)
+                     string? str, bool b, System.DateTime date, bool isBinary = false)
     {
         _type = type; _num = num; _dec = dec; _isExact = isExact;
         _str = str; _bool = b; _date = date;
+        _isBinary = isBinary;
     }
 
     /// <summary>The value's VFP type tag.</summary>
@@ -53,6 +55,12 @@ public readonly struct VfpValue : IEquatable<VfpValue>
 
     /// <summary>True for VFP <c>.NULL.</c>.</summary>
     public bool IsNull => _type == VfpType.Null;
+
+    /// <summary>A byte-preserving VFP varbinary value (TYPE/VARTYPE Q).</summary>
+    public bool IsBinary => _isBinary;
+
+    public static VfpValue Varbinary(byte[] bytes) =>
+        new(VfpType.Character, 0d, 0m, false, System.Text.Encoding.Latin1.GetString(bytes), false, default, isBinary: true);
 
     /// <summary>The VFP <c>.NULL.</c> value.</summary>
     public static readonly VfpValue Null =
@@ -101,7 +109,7 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     {
         null => Null,
         VfpValue v => v,
-        byte[] bytes => Binary(bytes),
+        byte[] bytes => Varbinary(bytes),
         string s => Character(s),
         bool b => Logical(b),
         char c => Character(c.ToString()),
@@ -171,8 +179,7 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     public object? ToClr() => _type switch
     {
         VfpType.Null => null,
-        VfpType.Character => _str ?? string.Empty,
-        VfpType.Binary => System.Text.Encoding.Latin1.GetBytes(AsString),
+        VfpType.Character => _isBinary ? System.Text.Encoding.Latin1.GetBytes(_str ?? string.Empty) : _str ?? string.Empty,
         VfpType.Logical => _bool,
         VfpType.Date => _date == default && _bool ? this : AsDate,
         VfpType.DateTime => _date == default && _bool ? this : _date,

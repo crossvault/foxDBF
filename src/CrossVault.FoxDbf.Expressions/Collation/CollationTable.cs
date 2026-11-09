@@ -1,10 +1,11 @@
 using System;
+using System.Linq;
 
 namespace CrossVault.FoxDbf.Expressions;
 
 /// <summary>
 /// One VFP weight-table collation for ONE code page: the per-byte head/tail weights, the ligature expansions,
-/// the optional two-letter contractions and the char → code-page byte map that feeds them. Consumed by
+/// the optional byte-sequence contractions and the char → code-page byte map that feeds them. Consumed by
 /// <see cref="GeneralCollation"/>, which runs the shared two-pass (heads, then tails) key algorithm.
 /// </summary>
 /// <remarks>
@@ -22,16 +23,21 @@ internal sealed class CollationTable
     /// expansion slot the index into <see cref="Expansions"/>.</summary>
     public byte[] Tail { get; }
 
-    /// <summary>Ligature expansions: byte pairs whose own head/tail entries are emitted in place of the ligature.</summary>
-    public byte[][] Expansions { get; }
+    /// <summary>Expansion weights, including each rule's explicit secondary weights.</summary>
+    public CollationWeights[] Expansions { get; }
 
-    /// <summary>When <see langword="false"/> an expansion emits only the two heads (VFP9 SPANISH: <c>Æ</c> is
-    /// <c>A E</c> with no tail bytes); GENERAL also emits the letters' tails.</summary>
-    public bool ExpansionTails { get; }
+    /// <summary>Longest-first sequences, matched without allocating on the key-building path.</summary>
+    public CollationContraction[] Contractions { get; }
 
-    /// <summary>Two-letter contractions (lower-case ASCII pair → one head, no tail), matched case-insensitively —
-    /// SPANISH <c>ch</c> and <c>ll</c>. Empty for GENERAL.</summary>
-    public (byte First, byte Second, byte Head)[] Contractions { get; }
+    /// <summary>Reject ordinary characters before entering the sequence matcher.</summary>
+    public bool[] ContractionStarts { get; }
+
+    /// <summary>All nonempty suffixes, including two-letter completions of three-letter contractions.
+    /// Rushmore uses these to include keys that contract across a literal's right boundary.</summary>
+    public string[] ContractionSuffixes { get; }
+
+    /// <summary>Capacity per input character for either the head or tail buffer.</summary>
+    public int MaxWeights { get; }
 
     /// <summary>The code page whose bytes index <see cref="Head"/>/<see cref="Tail"/>.</summary>
     public int CodePage { get; }
@@ -40,16 +46,38 @@ internal sealed class CollationTable
     public byte[] CharToByte { get; }
 
     private CollationTable(int codePage, byte[] head, byte[] tail, byte[][] expansions, bool expansionTails,
-        (byte, byte, byte)[] contractions, byte[] charToByte)
+        CollationContraction[] contractions, byte[] charToByte)
+        : this(codePage, head, tail, ExpandWeights(head, tail, expansions, expansionTails), contractions, charToByte)
+    {
+    }
+
+    internal CollationTable(int codePage, byte[] head, byte[] tail, CollationWeights[] expansions,
+        CollationContraction[] contractions, byte[] charToByte)
     {
         CodePage = codePage;
         Head = head;
         Tail = tail;
         Expansions = expansions;
-        ExpansionTails = expansionTails;
-        Contractions = contractions;
+        Contractions = contractions.OrderByDescending(c => c.Input.Length).ToArray();
+        ContractionStarts = contractions.Length == 0 ? Array.Empty<bool>() : new bool[256];
+        foreach (var rule in contractions)
+        {
+            byte first = rule.Input[0];
+            ContractionStarts[first] = true;
+            if (rule.FoldAsciiCase && first is >= (byte)'a' and <= (byte)'z')
+                ContractionStarts[first - 0x20] = true;
+        }
+        ContractionSuffixes = contractions.SelectMany(c => Enumerable.Range(1, c.Input.Length - 1)
+            .Select(i => new string(c.Input.Skip(i).Select(b => (char)b).ToArray()))).Distinct().ToArray();
+        MaxWeights = Math.Max(1, expansions.Concat(contractions.Select(c => c.Weights))
+            .Select(w => Math.Max(w.Heads.Length, w.Tails.Length)).DefaultIfEmpty(1).Max());
         CharToByte = charToByte;
     }
+
+    // Convert the established GENERAL/SPANISH byte-expansion tables once, never per input character.
+    private static CollationWeights[] ExpandWeights(byte[] head, byte[] tail, byte[][] expansions, bool tails)
+        => expansions.Select(bytes => new CollationWeights(bytes.Select(b => head[b]).ToArray(),
+            tails ? bytes.Select(b => tail[b]).Where(t => t != GeneralWeights1252.NoTail).ToArray() : Array.Empty<byte>())).ToArray();
 
     private static readonly Lazy<byte[]> Map1252 = new(() =>
     {
@@ -75,10 +103,21 @@ internal sealed class CollationTable
         return map;
     }
 
-    private static readonly (byte, byte, byte)[] NoContractions = Array.Empty<(byte, byte, byte)>();
+    private static readonly CollationContraction[] NoContractions = Array.Empty<CollationContraction>();
 
     /// <summary>SPANISH treats <c>ch</c> and <c>ll</c> as letters between c/d (head 99) and l/m (head 110).</summary>
-    private static readonly (byte, byte, byte)[] SpanishContractions = { ((byte)'c', (byte)'h', 99), ((byte)'l', (byte)'l', 110) };
+    private static readonly CollationContraction[] SpanishContractions =
+    {
+        new([(byte)'c', (byte)'h'], new([99], [])),
+        new([(byte)'l', (byte)'l'], new([110], [])),
+    };
+
+    public static CollationTable German1252 { get; } = new(1252, GermanWeights.Head1252, GermanWeights.Tail1252,
+        GermanWeights.Expansions1252, NoContractions, Map1252.Value);
+    public static CollationTable German437 { get; } = new(437, GermanWeights.Head437, GermanWeights.Tail437,
+        GermanWeights.Expansions437, NoContractions, Map437.Value);
+    public static CollationTable German10000 { get; } = new(10000, GermanWeights.Head10000, GermanWeights.Tail10000,
+        GermanWeights.Expansions10000, NoContractions, HighCharMap(GermanWeights.HighChars10000));
 
     /// <summary>GENERAL, CP1252 — the verbatim <see cref="GeneralWeights1252"/> table.</summary>
     public static CollationTable General1252 { get; } = new(1252, GeneralWeights1252.Head, GeneralWeights1252.Tail,
@@ -149,6 +188,30 @@ internal sealed class CollationTable
     /// (0xF7/0xF8) expanding to <c>TH</c>, the contractions and tail-less expansions — exactly as VFP9 stores it.
     /// </summary>
     public static CollationTable Spanish850 { get; } = BuildSpanish850();
+
+    public static CollationTable Turkish1254 { get; } = new(1254, TurkishWeights.Head1254, TurkishWeights.Tail1254,
+        TurkishWeights.Expansions1254, NoContractions, HighCharMap(TurkishWeights.HighChars1254));
+
+    public static CollationTable Turkish857 { get; } = new(857, TurkishWeights.Head857, TurkishWeights.Tail857,
+        TurkishWeights.Expansions857, NoContractions, HighCharMap(TurkishWeights.HighChars857));
+
+    public static CollationTable Russian1251 { get; } = new(1251, RussianWeights.Head1251, RussianWeights.Tail1251,
+        RussianWeights.Expansions1251, NoContractions, HighCharMap(RussianWeights.HighChars1251));
+
+    public static CollationTable Russian866 { get; } = new(866, RussianWeights.Head866, RussianWeights.Tail866,
+        RussianWeights.Expansions866, NoContractions, HighCharMap(RussianWeights.HighChars866));
+
+    public static CollationTable Russian10007 { get; } = new(10007, RussianWeights.Head10007, RussianWeights.Tail10007,
+        RussianWeights.Expansions10007, NoContractions, HighCharMap(RussianWeights.HighChars10007));
+
+    public static CollationTable Greek1253 { get; } = new(1253, GreekWeights.Head1253, GreekWeights.Tail1253,
+        GreekWeights.Expansions1253, NoContractions, HighCharMap(GreekWeights.HighChars1253));
+
+    public static CollationTable Greek737 { get; } = new(737, GreekWeights.Head737, GreekWeights.Tail737,
+        GreekWeights.Expansions737, NoContractions, HighCharMap(GreekWeights.HighChars737));
+
+    public static CollationTable Greek10006 { get; } = new(10006, GreekWeights.Head10006, GreekWeights.Tail10006,
+        GreekWeights.Expansions10006, NoContractions, HighCharMap(GreekWeights.HighChars10006));
 
     private static CollationTable BuildGeneral850()
     {

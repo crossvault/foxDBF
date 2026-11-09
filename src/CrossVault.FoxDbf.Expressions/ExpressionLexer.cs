@@ -281,7 +281,7 @@ internal sealed class ExpressionLexer
     /// (.AND. .OR. .NOT. .T. .F. .Y. .N. .NULL.) rather than a field qualifier. Such
     /// tokens are a recognised word closed by a trailing '.'.
     /// </summary>
-    private static bool IsDottedOperatorAhead(ReadOnlySpan<char> s, int dot)
+    internal static bool IsDottedOperatorAhead(ReadOnlySpan<char> s, int dot)
     {
         int j = dot + 1;
         int wordStart = j;

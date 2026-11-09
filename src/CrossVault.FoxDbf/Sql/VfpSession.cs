@@ -126,6 +126,12 @@ public sealed class VfpSession : IDisposable
     /// </summary>
     internal Action<string, IReadOnlyList<(string Field, string Expression)>, Dictionary<string, object?>>? DbcDefaultEvaluator { get; set; }
 
+    // Bound only while microVFP executes INSERT; plain SQL retains its constant-row evaluator.
+    internal Func<VfpExpression, VfpValue>? InsertValueEvaluator { get; set; }
+
+    // EnforceRules expands each array row to VALUES for validation; retain its blank-tail semantics.
+    internal bool InsertArrayRow { get; set; }
+
     /// <summary>
     /// The optional query ACCELERATOR (e.g. the Highlike engine) that SELECT / DML candidate-set
     /// discovery routes through instead of the plain <see cref="QueryOptimizer"/>. When <see langword="null"/>
