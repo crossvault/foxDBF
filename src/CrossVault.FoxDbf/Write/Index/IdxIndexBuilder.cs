@@ -60,6 +60,7 @@ internal static class IdxIndexBuilder
             Ansi = evalContext?.Ansi ?? false,
             Culture = evalContext?.Culture,
             Encoding = schema.Encoding,
+            SessionCodePage = evalContext?.SessionCodePage ?? schema.IndexSessionCodePage ?? schema.Encoding.CodePage,
         };
 
         var (keyType, keyLen, _) = CdxIndexBuilder.ResolveKey(schema, keyExpr);

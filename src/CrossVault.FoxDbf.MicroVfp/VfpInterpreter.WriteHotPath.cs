@@ -99,7 +99,7 @@ public sealed partial class VfpInterpreter
     private DbfWriter OpenWriter(string path)
     {
         RequireCompactIndexWriteContext(path);
-        var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared }, ReadNamesFor(path));
+        var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared, SessionCodePage = SessionCodePage }, ReadNamesFor(path));
         try
         {
             writer.SetOpenCompactIndexes(OpenCompactIdxPaths(path), _ctx);
@@ -166,8 +166,8 @@ public sealed partial class VfpInterpreter
     /// <see cref="ReadNamesFor"/>, taken while the areas were still open): a tag built, rebuilt or kept by the
     /// rewrite derives its KEY / FOR from the names the session reads the table under — a DBC member's long
     /// names, which VFP9 writes into the tag KEY text.</summary>
-    private static DbfWriter OpenExclusiveWriter(string path, Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? names)
-        => DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive }, names);
+    private DbfWriter OpenExclusiveWriter(string path, Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? names)
+        => DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive, SessionCodePage = SessionCodePage }, names);
 
     /// <summary>The columns <paramref name="path"/> is read under: those of a work area open on the file, else
     /// those of the open database's member stored there; empty (physical names) for a free table.</summary>

@@ -6,8 +6,23 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** microVFP `SET COLLATE` now raises VFP error 1915 when the sequence is unavailable in
+  `CPCURRENT()`. `INDEX ON` separately rejects unsupported table-code-page combinations with 1915.
+  Maintenance of existing language tags remains independent of SET COLLATE availability.
+- **BREAKING:** unsupported GENERAL/SPANISH code-page combinations are classified as Unsupported,
+  rather than approximated using CP1252 weights. Index casing now follows the selected session's
+  VFP byte table; writer defaults use the table's own session, including OEM/Mac case tables.
+- microVFP character SEEK converts session values into the table code page using VFP9's
+  measured single-byte conversion maps, including its lossy accent/best-fit substitutions.
+
 ### Added
 
+- Per-interpreter `sessionCodePage` / `CPCURRENT()` and writer `SessionCodePage` options for VFP9
+  session-dependent `UPPER()`/`LOWER()` in CDX and IDX expressions, including rebuilds and maintenance.
+- VFP9-exact CZECH, SLOVAK and POLISH index weights on Macintosh Central European code page 10029.
+- Complete non-deferred collation matrix tests and VFP9 session availability oracles.
 - VFP9-derived SPANISH index weights on code pages 437 and 10000, and UNIQWT and DUTCH weights on
   1252, 437, 850 and 10000. These combinations support index creation, maintenance of VFP-made tags,
   SEEK, Rushmore and microVFP `SET COLLATE TO` / `INDEX ON`. UNIQWT preserves case and accent distinctions.
@@ -19,8 +34,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - **BREAKING:** `UPPER()` and `LOWER()` with these eight code pages now use VFP9's language byte
   mappings instead of Unicode casing, including in index expressions. Turkish dotted-I comparisons
   also treat an absent secondary weight like a zero weight, as VFP9 does.
-  Case-expression parity is verified in the matching language sessions; selecting a different VFP
-  session code page for index-expression evaluation is not currently supported by the writer.
 - CZECH and SLOVAK collations on code pages 1250, 852 and 895; POLISH on 1250, 852 and 620;
   HUNGARY on 1250 and 852. VFP9-exact keys support bulk and incremental index creation, existing-tag
   maintenance, SEEK with EXACT OFF/ON, Rushmore ranges and microVFP `SET COLLATE TO` / `INDEX ON`.

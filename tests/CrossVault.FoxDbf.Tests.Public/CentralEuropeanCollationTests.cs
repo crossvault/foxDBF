@@ -76,7 +76,7 @@ public sealed class CentralEuropeanCollationTests
         }
         using var session = new VfpSession();
         session.OpenDirectory(temp.Path);
-        using var interpreter = new VfpInterpreter(session);
+        using var interpreter = new VfpInterpreter(session, 1250);
         interpreter.Execute($"SET COLLATE TO '{name}'\nUSE central\nINDEX ON name TAG micro\nSEEK 'dzs'");
         Assert.True(interpreter.EvalExpression("FOUND()").AsLogical);
         Assert.Equal(name, interpreter.EvalExpression("IDXCOLLATE(2)").AsString);
