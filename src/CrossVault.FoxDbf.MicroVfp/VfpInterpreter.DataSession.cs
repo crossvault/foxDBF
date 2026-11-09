@@ -166,9 +166,9 @@ public sealed partial class VfpInterpreter
     /// (SET DELETED ON, SET EXACT OFF, Latin1) — the same baseline the ctor applies to session 1, and NOT a
     /// copy of the current session's (possibly mutated) settings. Consistent per-session start point; the
     /// oracle test pins that DELETED/EXACT are session-SCOPED (isolated), which is the load-bearing fact.</summary>
-    private static EvaluationContext FreshSessionContext()
+    private EvaluationContext FreshSessionContext()
     {
-        var c = new EvaluationContext { Exact = false, Deleted = true, VfpBlankFields = true };
+        var c = new EvaluationContext { Exact = false, Deleted = true, VfpBlankFields = true, SessionCodePage = SessionCodePage, Encoding = _ctx.Encoding };
         c.Encoding ??= Encoding.Latin1;
         return c;
     }

@@ -514,6 +514,7 @@ internal static class CdxIndexBuilder
             // stored in (VFP9: INDEX ON CHR(130) on a CP850 table stores 0x82), and identical for the bulk
             // build and the incremental maintenance (which has no live evaluation context).
             Encoding = schema.Encoding,
+            SessionCodePage = evalContext?.SessionCodePage ?? schema.IndexSessionCodePage ?? schema.Encoding.CodePage,
         };
 
         var (keyType, baseLen, isChar) = ResolveKey(schema, def.KeyExpression);

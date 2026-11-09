@@ -63,7 +63,7 @@ public sealed class EasternCollationTests
         }
         using var session = new VfpSession();
         session.OpenDirectory(temp.Path);
-        using var interpreter = new VfpInterpreter(session);
+        using var interpreter = new VfpInterpreter(session, cp);
         interpreter.Execute($"SET COLLATE TO '{sequence}'\nUSE t\nINDEX ON name TAG m\nSET ORDER TO m");
         Assert.True(interpreter.EvalExpression($"SEEK('{value}')").AsLogical);
     }

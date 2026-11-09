@@ -39,7 +39,7 @@ public sealed class IndexSafetyTests
 
     [Theory]
     [InlineData("approximate")]
-    [InlineData("dutch")]
+    [InlineData("thai")]
     [InlineData("udf")]
     public void UnmaintainableTag_AlterPreservesFiles(string kind)
     {
@@ -68,7 +68,7 @@ public sealed class IndexSafetyTests
 
     [Theory]
     [InlineData("approximate")]
-    [InlineData("dutch")]
+    [InlineData("thai")]
     [InlineData("udf")]
     public void UnmaintainableTag_AppendPreservesDbfMemoAndAllTags(string kind)
     {
@@ -80,8 +80,8 @@ public sealed class IndexSafetyTests
         {
             var error = Assert.Throws<DbfWriteException>(() => writer.AppendRecord("DELTA", "new memo"));
             Assert.Contains("BAD", error.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains(kind == "approximate" ? "437" : "1252", error.Message);
-            Assert.Contains(kind == "approximate" ? "SPANISH" : kind == "dutch" ? "DUTCH" : "MACHINE", error.Message);
+            Assert.Contains(kind == "approximate" ? "1250" : kind == "thai" ? "874" : "1252", error.Message);
+            Assert.Contains(kind == "approximate" ? "SPANISH" : kind == "thai" ? "THAI" : "MACHINE", error.Message);
             Assert.Equal(1, writer.RecordCount);
         }
         foreach (var (path, bytes) in before) Assert.Equal(bytes, File.ReadAllBytes(path));
@@ -94,15 +94,31 @@ public sealed class IndexSafetyTests
         string dbf = CreateFixture(temp.Path, "approximate");
         using var table = DbfTable.Open(dbf);
         using var index = CdxFile.Open(Path.ChangeExtension(dbf, ".cdx"), table);
-        Assert.Throws<NotSupportedException>(() => index.Tag("BAD")!.Seek("ALPHA"));
+        var error = Assert.Throws<NotSupportedException>(() => index.Tag("BAD")!.Seek("ALPHA"));
+        Assert.Contains("SPANISH", error.Message);
+    }
+
+    [Fact]
+    public void UnsupportedSeek_MicroVfpRefusesWithSequenceName()
+    {
+        using var temp = new IndexMaintTestSupport.TempDir();
+        CreateFixture(temp.Path, "thai");
+        using var session = new VfpSession();
+        session.OpenDirectory(temp.Path);
+        using var interpreter = new VfpInterpreter(session);
+        interpreter.Execute("USE t ORDER bad");
+        var error = Assert.Throws<MicroVfpRuntimeException>(() => interpreter.Execute("SEEK 'ALPHA'"));
+        Assert.Contains("THAI", error.Message);
     }
 
     [Theory]
     [InlineData(false, "GENERAL", 0xC9)]
     [InlineData(true, "GENERAL", 0xC9)]
-    [InlineData(false, "SPANISH", 0x01)]
-    [InlineData(true, "SPANISH", 0x01)]
-    public void ApproximateBuild_RefusesBeforeCreatingIndex(bool compact, string collation, byte mark)
+    [InlineData(false, "SPANISH", 0xC8)]
+    [InlineData(true, "SPANISH", 0xC8)]
+    [InlineData(false, "THAI", 0x7C)]
+    [InlineData(true, "THAI", 0x7C)]
+    public void NonExactBuild_RefusesBeforeCreatingIndex(bool compact, string collation, byte mark)
     {
         using var temp = new IndexMaintTestSupport.TempDir();
         string dbf = Path.Combine(temp.Path, "t.dbf");
@@ -113,11 +129,14 @@ public sealed class IndexSafetyTests
         File.WriteAllBytes(dbf, bytes);
         string index = Path.ChangeExtension(dbf, compact ? ".idx" : ".cdx");
         using (var writer = DbfWriter.Open(dbf))
-            Assert.Throws<DbfWriteException>(() =>
+        {
+            var error = Assert.Throws<DbfWriteException>(() =>
             {
                 if (compact) writer.CreateCompactIdx(index, "k", collation: collation);
                 else writer.CreateTag(new CdxTagDefinition("BAD", "k", collation: collation));
             });
+            Assert.Contains(collation, error.Message);
+        }
         Assert.Equal(bytes, File.ReadAllBytes(dbf));
         Assert.False(File.Exists(index));
     }
@@ -133,13 +152,14 @@ public sealed class IndexSafetyTests
         byte[] bytes = File.ReadAllBytes(cdx);
         if (kind == "udf") Replace(bytes, "UPPER(k)", "e1udf(k)");
         if (kind == "builtin") Replace(bytes, "UPPER(k)", "CEIL(1) ");
-        if (kind == "dutch") Replace(bytes, "GENERAL", "DUTCH\0\0");
+        if (kind == "thai") Replace(bytes, "GENERAL", "THAI\0\0\0");
         File.WriteAllBytes(cdx, bytes);
-        if (kind == "approximate")
+        if (kind is "approximate" or "thai")
         {
             bytes = File.ReadAllBytes(dbf);
-            // GENERAL/852 is now exact; SPANISH/437 still exercises the approximate guard.
-            bytes[29] = 0x01;
+            // No VFP9-producible approximate cell remains: SPANISH/1250 is deliberately header-patched.
+            // THAI/874 is deferred in Phase 4; the internal oracle builds real tags in a CP874 session.
+            bytes[29] = kind == "thai" ? (byte)0x7C : (byte)0xC8;
             File.WriteAllBytes(dbf, bytes);
         }
         return dbf;

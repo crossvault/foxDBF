@@ -42,6 +42,7 @@ public sealed partial class DbfWriter
         {
             LockMode = options.LockMode,
             Encoding = options.Encoding,
+            SessionCodePage = options.SessionCodePage,
         };
         return Open(path, openOptions);
     }

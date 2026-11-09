@@ -95,6 +95,7 @@ public sealed partial class DbfWriter
         var reopenOptions = new DbfOptions
         {
             LockMode = _lockMode,
+            SessionCodePage = _schema.IndexSessionCodePage,
             Encoding = _schema.EncodingIsExplicit ? _schema.Encoding : null,
         };
         var createOptions = new DbfCreateOptions
@@ -210,7 +211,7 @@ public sealed partial class DbfWriter
             if (newHasMemo)
                 WriteEmptyFpt(tmpFpt, createOptions.MemoBlockSize);
 
-            using (var tw = Open(tmpDbf, new DbfOptions { LockMode = LockMode.Exclusive, Encoding = reopenOptions.Encoding }))
+            using (var tw = Open(tmpDbf, new DbfOptions { LockMode = LockMode.Exclusive, Encoding = reopenOptions.Encoding, SessionCodePage = reopenOptions.SessionCodePage }))
             {
                 foreach (var (values, deleted) in snapshot)
                 {

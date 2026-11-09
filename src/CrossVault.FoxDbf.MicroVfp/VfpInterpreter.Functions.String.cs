@@ -336,11 +336,19 @@ public sealed partial class VfpInterpreter
         }
     }
 
-    /// <summary>The connection's Windows-ANSI code page as an <see cref="Encoding"/> (== CPCURRENT()); falls
+    /// <summary>The interpreter session code page as an <see cref="Encoding"/> (== CPCURRENT()); falls
     /// back to Latin1 if the codepage cannot be resolved on this platform.</summary>
-    private static Encoding ConnectionEncoding()
+    private Encoding ConnectionEncoding()
     {
-        try { return Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.ANSICodePage); }
+        try
+        {
+            return SessionCodePage switch
+            {
+                620 => Encodings.ResolveEncoding(0x69),
+                895 => Encodings.ResolveEncoding(0x68),
+                _ => Encoding.GetEncoding(SessionCodePage),
+            };
+        }
         catch (ArgumentException) { return Encoding.Latin1; }
     }
 
@@ -368,11 +376,11 @@ public sealed partial class VfpInterpreter
 
     /// <summary>CPCURRENT([1|2]): the current system code page — 1 (default) = Windows ANSI, 2 = the
     /// underlying OEM/DOS code page.</summary>
-    private static int FnCpCurrent(VfpValue[] a)
+    private int FnCpCurrent(VfpValue[] a)
     {
         bool oem = a.Length > 0 && IsNumeric(a[0]) && (int)a[0].AsNumber == 2;
         var ti = CultureInfo.CurrentCulture.TextInfo;
-        return oem ? ti.OEMCodePage : ti.ANSICodePage;
+        return oem ? ti.OEMCodePage : SessionCodePage;
     }
 
     /// <summary>CPDBF([cAlias|nArea]): the code page marked in the addressed (or current) table's header,

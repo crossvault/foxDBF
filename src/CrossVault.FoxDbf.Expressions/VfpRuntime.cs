@@ -383,8 +383,8 @@ internal static class VfpRuntime
         switch (name)
         {
             // ---- string ----
-            case "UPPER": return VfpValue.Character(VfpLanguageCase.Convert(Arg(args, 0).AsString, ctx.Encoding, upper: true));
-            case "LOWER": return VfpValue.Character(VfpLanguageCase.Convert(Arg(args, 0).AsString, ctx.Encoding, upper: false));
+            case "UPPER": return VfpValue.Character(VfpLanguageCase.Convert(Arg(args, 0).AsString, ctx.Encoding, upper: true, ctx.SessionCodePage));
+            case "LOWER": return VfpValue.Character(VfpLanguageCase.Convert(Arg(args, 0).AsString, ctx.Encoding, upper: false, ctx.SessionCodePage));
             case "ALLTRIM": return VfpValue.Character(Arg(args, 0).AsString.Trim(' '));
             case "TRIM":
             case "RTRIM": return VfpValue.Character(Arg(args, 0).AsString.TrimEnd(' '));

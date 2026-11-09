@@ -163,6 +163,11 @@ public sealed class EvaluationContext
     /// </summary>
     public System.Text.Encoding? Encoding { get; set; }
 
+    /// <summary>VFP session code page (CPCURRENT), independent of the table/CHR encoding.
+    /// Index expressions apply this session's case table to the table's raw bytes.
+    /// Null preserves the standalone expression engine's existing casing defaults.</summary>
+    public int? SessionCodePage { get; set; }
+
     /// <summary>A fresh context with VFP defaults (EXACT OFF, MACHINE collation).</summary>
     public static EvaluationContext Default => new();
 }

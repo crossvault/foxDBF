@@ -354,7 +354,10 @@ public sealed class CdxTag
         // A character tag whose expression could not be typed (e.g. a UDF) still holds character keys.
         if ((KeyType == IndexKeyType.Character || (KeyType == IndexKeyType.Unknown && IsCharacterKey)) && value is string s)
         {
-            if (_collationSupport == CollationSupport.Unsupported)
+            // Keep the existing loud refusal for GENERAL/SPANISH cells formerly classified
+            // as approximate; changing their classification must not turn a bad key into a miss.
+            if (_collationSupport == CollationSupport.Unsupported
+                && Collation is not ("GENERAL" or "SPANISH"))
                 return NotFound;
             var needle = CreateCharacterSeekNeedle(s, exact: false);
             return needle.Bytes.Length == 0 && needle.TrailingBlanks == 0 ? NotFound : Seek(needle);
