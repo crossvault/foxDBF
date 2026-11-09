@@ -22,6 +22,16 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: Failed structural-CDX maintenance now rolls back the DBF append/update and changed index
+  pages, including append batches, instead of leaving a row with stale keys. Tag definitions are preserved.
+  If rollback itself fails, a `.cdx.needs-reindex` marker blocks subsequent path-based table/index reads;
+  `DbfWriter.Open` exposes `ReindexNeeded`, and a successful `Reindex` clears the marker.
+- BREAKING: microVFP resolves the physical INSERT target before refusing SQL fallback writes with open compact
+  standalone indexes, including custom aliases and `FROM ARRAY`/`FROM MEMVAR`. These unsupported paths
+  now fail before changing the DBF or IDX instead of silently leaving stale index keys.
+- microVFP `TABLEUPDATE` persists buffered INSERTs addressed by a DBC table name even when the table
+  is open under a different alias, matching VFP9.
+
 - microVFP `INSERT` error handling is verified against VFP9: unknown column names (including truncated
   DBC field names) raise error 12; a buffered INSERT omitting a NOT NULL field under `SET NULL ON` raises
   1581. `TRY/CATCH` and `AERROR()` retain those numbers, `ERROR()` is 0 inside CATCH, and these failures

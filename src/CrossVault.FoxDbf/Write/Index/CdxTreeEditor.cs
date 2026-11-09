@@ -29,6 +29,8 @@ internal sealed class CdxTreeEditor : IDisposable
     private readonly IndexFile _reader;   // page reads over the SAME stream (leaveOpen)
     private long _end;                     // next free byte offset (== file length); new pages land here
     private Dictionary<long, byte[]>? _appendPageCache;
+    private Dictionary<long, byte[]>? _undoPages;
+    private long _undoLength;
     private readonly System.Text.Encoding? _textEncoding;   // the table code page tag names/expressions are stored in
 
     public CdxTreeEditor(FileStream rw, System.Text.Encoding? textEncoding = null)
@@ -134,6 +136,35 @@ internal sealed class CdxTreeEditor : IDisposable
     }
 
     internal int AppendPageCachePageCountForTests => _appendPageCache?.Count ?? 0;
+
+    // Keep only touched pages, including split/sibling edits, rather than copying a whole CDX per row.
+    internal void BeginEdit()
+    {
+        _undoLength = _rw.Length;
+        _undoPages = new Dictionary<long, byte[]>();
+    }
+
+    internal void CommitEdit() => _undoPages = null;
+
+    internal void RollbackEdit()
+    {
+        if (_undoPages is null) return;
+        BeforeRollbackForTests?.Invoke();
+        foreach (var (offset, bytes) in _undoPages)
+        {
+            _rw.Position = offset;
+            _rw.Write(bytes);
+        }
+        _rw.SetLength(_undoLength);
+        _rw.Flush();
+        _undoPages = null;
+        RefreshFromDisk();
+    }
+
+    [ThreadStatic]
+    internal static Action? AfterPageWriteForTests;
+    [ThreadStatic]
+    internal static Action? BeforeRollbackForTests;
 
     public void Flush() => _rw.Flush();
     public void Dispose()
@@ -782,8 +813,16 @@ internal sealed class CdxTreeEditor : IDisposable
 
     private void WritePage(long off, byte[] page)
     {
+        if (_undoPages is not null && off < _undoLength && !_undoPages.ContainsKey(off))
+        {
+            var original = new byte[Math.Min(PageSize, _undoLength - off)];
+            _rw.Position = off;
+            _rw.ReadExactly(original);
+            _undoPages.Add(off, original);
+        }
         _rw.Seek(off, SeekOrigin.Begin);
         _rw.Write(page, 0, PageSize);
+        AfterPageWriteForTests?.Invoke();
         if (_appendPageCache is not null)
             _appendPageCache[off] = page.AsSpan(0, PageSize).ToArray();
         if (off + PageSize > _end)

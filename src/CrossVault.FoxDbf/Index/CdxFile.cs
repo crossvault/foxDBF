@@ -51,7 +51,10 @@ public sealed class CdxFile : IDisposable
     /// <param name="path">Path to the <c>.cdx</c>.</param>
     /// <param name="table">Optional table for bare-field key-type resolution.</param>
     public static CdxFile Open(string path, DbfTable? table = null)
-        => new(IndexFile.Open(path), table, leaveOpen: false);
+    {
+        IndexRecovery.RequireHealthy(path);
+        return new(IndexFile.Open(path), table, leaveOpen: false);
+    }
 
     /// <summary>Opens a compound index over an existing seekable stream.</summary>
     public static CdxFile Open(Stream stream, DbfTable? table = null, bool leaveOpen = false)
@@ -77,7 +80,10 @@ public sealed class CdxFile : IDisposable
     /// <c>ReadBackendResolver</c>; page reads stay byte-identical either way.
     /// </summary>
     public static CdxFile Open(string path, DbfTable? table, DbfReadBackend backend, DbfDriveKind driveKind)
-        => new(IndexFile.Open(path, backend, driveKind), table, leaveOpen: false);
+    {
+        IndexRecovery.RequireHealthy(path);
+        return new(IndexFile.Open(path, backend, driveKind), table, leaveOpen: false);
+    }
 
     /// <summary>
     /// True when this index's page reads are served from a memory-mapped view rather than per-read

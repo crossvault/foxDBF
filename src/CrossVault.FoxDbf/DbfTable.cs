@@ -276,6 +276,7 @@ public sealed partial class DbfTable : IDisposable
     public static DbfTable Open(string path, DbfOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        Index.IndexRecovery.RequireHealthy(SidecarFile.ChangeExtension(path, ".cdx"));
         if (!File.Exists(path))
             throw new DbfFileNotFoundException($"DBF file not found: {path}");
 
@@ -308,6 +309,7 @@ public sealed partial class DbfTable : IDisposable
     internal static DbfTable Open(string path, DbfOptions options, Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? columnTransform)
     {
         ArgumentNullException.ThrowIfNull(options);
+        Index.IndexRecovery.RequireHealthy(SidecarFile.ChangeExtension(path, ".cdx"));
         if (!File.Exists(path))
             throw new DbfFileNotFoundException($"DBF file not found: {path}");
 

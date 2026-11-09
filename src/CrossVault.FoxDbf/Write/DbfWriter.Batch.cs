@@ -96,6 +96,7 @@ public sealed partial class DbfWriter
         long appendPos = VfpLock.AppendLockPosition(_usesStructuralScheme);
         WithLock(appendPos, 1, () =>
         {
+            CloseCdxMaint(flush: true);
             ValidateIndexes(CdxMaintMode.Append);
             int diskCount = (int)ReadOnDiskRecordCount();
             _recordCount = diskCount;
@@ -153,6 +154,8 @@ public sealed partial class DbfWriter
             // Commit every prepared record. NO per-row 0x1A / SetLength / flush — the next row's
             // data offset overwrites where the per-row path would have stamped 0x1A, and the final
             // single EOF below lands at exactly the same byte.
+            using var mutation = BeginIndexMutation(_headerLength + (long)diskCount * _recordLength,
+                append: true, bulk: ShouldBulkBuildIndexesAfterAppendBatch(n, diskCount));
             for (int r = 0; r < n; r++)
             {
                 var (_, record) = appended[r];
@@ -189,8 +192,10 @@ public sealed partial class DbfWriter
             // §5.1 structural-CDX maintenance: the whole batch is durably written above; keep the append
             // lock through either incremental page edits or the large-batch rebuild.
             MaintainIndexesAfterAppendBatch(appended, existingRecordCount);
+            mutation?.Commit();
             foreach (var (recNo, record) in appended)
                 MaintainCompactIndexes(recNo, null, new DbfRecord(_schema, record));
+            CloseCdxMaint(flush: true);
         });
 
         return indices;

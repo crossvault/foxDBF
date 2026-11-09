@@ -13,7 +13,9 @@ namespace CrossVault.FoxDbf.Tests;
 /// <see cref="DbfWriter"/>. The SQL DML executor (UPDATE / INSERT) and buffered microVFP (REPLACE under
 /// optimistic table buffering + TABLEUPDATE, which commits at TABLEUPDATE time) both end with a
 /// maintained structural index. Plus the crash-safety backstop: if tag maintenance throws, the row is
-/// still written, <see cref="DbfWriter.ReindexNeeded"/> is raised, and the exception propagates.
+/// rolled back together with the changed pages, <see cref="DbfWriter.ReindexNeeded"/> is raised on the
+/// failing handle, and the exception propagates. VFP9 reopens the original state in
+/// FinalReviewFailureVfp9OracleTests.
 ///
 /// RED until write-path maintenance exists: today these writes update the row(s) but leave the tag
 /// stale, and no maintenance failure can be observed (so the backstop never fires).
@@ -91,7 +93,7 @@ public sealed class IndexMaintDmlBufferingTests
     }
 
     [Fact]
-    public void TagMaintenanceFailure_SetsReindexNeeded_AndRethrows_RowStillWritten()
+    public void TagMaintenanceFailure_SetsReindexNeeded_AndRethrows_RowRolledBack()
     {
         using var dir = new IndexMaintTestSupport.TempDir();
         var cols = new[] { new DbfColumnDef("NAME", 'C', 10) };
@@ -106,7 +108,7 @@ public sealed class IndexMaintDmlBufferingTests
         Assert.ThrowsAny<Exception>(() => w.AppendRecord("CHARLIE"));
         // …with the reindex backstop raised so the caller knows an explicit rebuild is required…
         Assert.True(w.ReindexNeeded);
-        // …and the row itself is on disk (never a half-applied write).
-        Assert.Equal(3, w.RecordCount);
+        // …and the failed append has been removed, keeping the DBF consistent with the preserved tags.
+        Assert.Equal(2, w.RecordCount);
     }
 }

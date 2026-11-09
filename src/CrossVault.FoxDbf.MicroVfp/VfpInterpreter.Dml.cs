@@ -141,7 +141,7 @@ public sealed partial class VfpInterpreter
         }
 
         // The fallback uses a session-owned SQL writer with no standalone-index inventory.
-        if (table is not null && Session.FindAreaByAlias(table)?.Table.SourcePath is string indexedPath
+        if (ResolveInsertTablePath(table) is string indexedPath
             && OpenCompactIdxPaths(indexedPath).Count > 0)
             throw new MicroVfpRuntimeException("This INSERT path cannot maintain open standalone indexes.");
 
@@ -283,6 +283,13 @@ public sealed partial class VfpInterpreter
     /// target is not already open, use a short-lived named-table handle only to discover its physical path.</summary>
     private string? ResolveInsertWritePath(string? table)
     {
+        string? path = ResolveInsertTablePath(table);
+        return path is null ? null : Path.GetFullPath(BeginTxWrite(path));
+    }
+
+    // Resolve the physical target before the fallback writer can bypass a custom alias's IDX inventory.
+    private string? ResolveInsertTablePath(string? table)
+    {
         if (table is null) return null;
         string? path = Session.FindInsertArea(table)?.Table.SourcePath;
         if (path is null)
@@ -297,7 +304,7 @@ public sealed partial class VfpInterpreter
             catch { return null; }
             finally { cdx?.Dispose(); opened?.Dispose(); }
         }
-        return path is null ? null : Path.GetFullPath(BeginTxWrite(path));
+        return path;
     }
 
     /// <summary>

@@ -54,10 +54,10 @@ public sealed partial class DbfWriter
     private void ValidateIndexes(CdxMaintMode mode = CdxMaintMode.Update)
     {
         ValidateCompactIndexes();
-        if (!ShouldMaintainIndexes())
-            return;
         if (ReindexNeeded)
             throw new DbfWriteException("Index maintenance previously failed; rebuild the structural index before writing again.");
+        if (!ShouldMaintainIndexes())
+            return;
         EnsureCdxMaint(mode);
     }
 
@@ -184,9 +184,6 @@ public sealed partial class DbfWriter
     /// <summary>Maintain a small append batch incrementally, or bulk-rebuild a large batch.</summary>
     private void MaintainIndexesAfterAppendBatch(IReadOnlyList<(int RecNo, byte[] Record)> appended, int existingRecordCount)
     {
-        // A batch opens its OWN editor session below; never let a lingering per-row incremental editor (from
-        // an earlier single-row append/update loop on this same writer) coexist with it on the file.
-        CloseCdxMaint(flush: true);
         if (appended.Count == 0 || !ShouldMaintainIndexes())
             return;
         if (ShouldBulkBuildIndexesAfterAppendBatch(appended.Count, existingRecordCount))
@@ -197,25 +194,23 @@ public sealed partial class DbfWriter
         try
         {
             ThrowIfInjectedFault();
-            using (var rw = OpenCdxReadWrite())
-            using (var editor = new CdxTreeEditor(rw, _schema.Encoding))
+            // Share the mutation's page undo log with the single-row path.
+            var editor = _cdxMaintEditor!;
+            var plans = _cdxMaintPlans!;
+            // Record by record, every tag for each one — the order VFP maintains its tags in.
+            foreach (var (recNo, bytes) in appended)
             {
-                var plans = ResolveComputers(editor);
-                // Record by record, every tag for each one — the order VFP maintains its tags in.
-                foreach (var (recNo, bytes) in appended)
+                var record = new DbfRecord(_schema, bytes);
+                foreach (var (tag, computer) in plans)
                 {
-                    var record = new DbfRecord(_schema, bytes);
-                    foreach (var (tag, computer) in plans)
-                    {
-                        if (!computer.TryComputeKey(record, recNo, _recordCount, out var key))
-                            continue;
-                        if (computer.Unique && editor.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
-                            continue;
-                        editor.Insert(tag.HeaderOffset, key, (uint)recNo, computer.KeyLen, computer.Pad);
-                    }
+                    if (!computer.TryComputeKey(record, recNo, _recordCount, out var key))
+                        continue;
+                    if (computer.Unique && editor.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
+                        continue;
+                    editor.Insert(tag.HeaderOffset, key, (uint)recNo, computer.KeyLen, computer.Pad);
                 }
-                editor.Flush();
             }
+            editor.Flush();
         }
         catch
         {
@@ -227,10 +222,14 @@ public sealed partial class DbfWriter
     private static bool ShouldBulkBuildIndexesAfterAppendBatch(int appendedCount, int existingRecordCount)
         => appendedCount > 0 && appendedCount >= existingRecordCount;
 
+    [ThreadStatic]
+    internal static Action? AfterBulkIndexRebuildForTests;
+
     private void RebuildIndexesAfterBulkAppend(int existingRecordCount)
     {
         try
         {
+            ThrowIfInjectedFault();
             var tags = ReadExistingTagDefinitions();
             if (tags.Count == 0)
                 return;
@@ -238,6 +237,7 @@ public sealed partial class DbfWriter
             var statistics = CaptureAppendKeyStatistics();
             RebuildStructuralCdx(tags, includeDeleted: true, appendUniqueState: appendUniqueState,
                 preservedKeyStatistics: statistics);
+            AfterBulkIndexRebuildForTests?.Invoke();
         }
         catch
         {
@@ -355,7 +355,7 @@ public sealed partial class DbfWriter
     private void MarkIndexMaintenanceFailed()
     {
         // An unexpected I/O failure still propagates, but must not destroy the tag definitions.
-        CloseCdxMaint(flush: false);
+        // The enclosing IndexMutation still needs the editor to restore its touched pages.
         ReindexNeeded = true;
     }
 

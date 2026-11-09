@@ -303,7 +303,7 @@ public sealed partial class VfpInterpreter
         string? table = (ae.Stmt.Parsed as InsertStatement)?.Table
                      ?? (SafeParseSql(ae.Stmt.Sql) as InsertStatement)?.Table;
         if (table is null) return false;
-        var wa = Session.FindAreaByAlias(table);
+        var wa = Session.FindInsertArea(table);
         if (wa?.Table.SourcePath is not string livePath) return false;
         int area = wa.Area;
         // COPY-ON-WRITE seam: a buffered INSERT committed here (TABLEUPDATE / row-buffer auto-commit) must

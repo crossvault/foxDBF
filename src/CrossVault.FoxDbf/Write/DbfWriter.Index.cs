@@ -347,6 +347,7 @@ public sealed partial class DbfWriter
         // sidecar instead of early-returning and leaving it stale.
         EnsureStructuralCdxAdvertised();
         _tagComputers = null;
+        File.Delete(IndexFailurePath);
         ReindexNeeded = false;
     }
 

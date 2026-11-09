@@ -99,6 +99,7 @@ public sealed partial class DbfWriter : IDisposable
         _fptNextFree = c.FptNextFree;
         _usesStructuralScheme = c.UsesStructuralScheme;
         _hasStructuralCdx = c.HasStructuralCdx;
+        ReindexNeeded = File.Exists(IndexFailurePath);
     }
 
     /// <summary>Open <paramref name="path"/> for record writing with default options.</summary>
@@ -241,10 +242,8 @@ public sealed partial class DbfWriter : IDisposable
 
     // ---- incremental CDX maintenance test seam (project-review finding 5.1) -----
     // Test-only fault injector: when true, the NEXT write-path index-maintenance pass MUST throw so
-    // the crash-safety backstop can be proven — the data row is written FIRST, then on a maintenance
-    // failure <see cref="ReindexNeeded"/> is raised (the caller must explicitly rebuild the index) and
-    // the exception is rethrown (never leave a half-edited page silently). Honoured by the incremental
-    // maintenance the implementer wires into AppendCore/UpdateCore; NEVER set outside tests.
+    // rollback can be proven — the data row is written FIRST, then a maintenance failure restores
+    // the pre-image and raises ReindexNeeded on this handle. NEVER set outside tests.
     internal bool FailIndexMaintenanceForTests { get; set; }
 
     /// <summary>The current number of physical records (the live header value, bytes 4–7).</summary>
@@ -595,6 +594,7 @@ public sealed partial class DbfWriter : IDisposable
             }
 
             byte[] record = RecordEncoder.Encode(_schema, positional, deleted: false, blankWhenNull);
+            using var mutation = BeginIndexMutation(dataOffset, append: true);
             PatchMemoPointers(record, positional);
 
             // Write the row (overwriting any pre-existing EOF byte), the fresh EOF, and pin the
@@ -621,6 +621,7 @@ public sealed partial class DbfWriter : IDisposable
             // §5.1 incremental maintenance: keep the append byte-range lock through the structural-CDX
             // read/modify/write so a second Shared writer cannot interleave page edits.
             MaintainIndexesAfterAppend(newCount, new DbfRecord(_schema, record));
+            mutation?.Commit();
             MaintainCompactIndexes(newCount, null, new DbfRecord(_schema, record));
         });
 
@@ -707,6 +708,7 @@ public sealed partial class DbfWriter : IDisposable
 
             byte[] record = RecordEncoder.Encode(_schema, toEncode, deleted: false);
             record[0] = deletionMarker;
+            using var mutation = BeginIndexMutation(offset, append: false);
             PatchMemoPointers(record, toEncode);
 
             if (hasKeep && existing is not null)
@@ -736,6 +738,7 @@ public sealed partial class DbfWriter : IDisposable
             if (maintain && oldRecordBytes is not null && writtenRecord is not null)
                 MaintainIndexesAfterUpdate(index + 1,
                     new DbfRecord(_schema, oldRecordBytes), new DbfRecord(_schema, writtenRecord));
+            mutation?.Commit();
             if (oldRecordBytes is not null && writtenRecord is not null)
                 MaintainCompactIndexes(index + 1, new DbfRecord(_schema, oldRecordBytes), new DbfRecord(_schema, writtenRecord));
         });
