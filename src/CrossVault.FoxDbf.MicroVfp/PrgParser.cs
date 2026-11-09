@@ -1475,13 +1475,15 @@ public static class PrgParser
                 {
                     scope = first + " " + tail;
                     head = "";
-                    foreach (var word in PrgScan.TopWords(tail))
+                    for (int split = 1; split < tail.Length; split++)
                     {
-                        if (word.Start == 0 || !char.IsWhiteSpace(tail[word.Start - 1])) continue;
-                        string count = tail[..word.Start].TrimEnd();
+                        if (!char.IsWhiteSpace(tail[split])) continue;
+                        string count = tail[..split].TrimEnd();
                         if (!PrgExpr.Parse(count).IsParsed) continue;
+                        string expressions = tail[split..].TrimStart();
+                        if (expressions.Length == 0 || PrgScan.SplitTopCommas(expressions).Any(p => !PrgExpr.Parse(p).IsParsed)) continue;
                         scope = first + " " + count;
-                        head = tail[word.Start..];
+                        head = expressions;
                         break;
                     }
                 }

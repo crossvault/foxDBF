@@ -142,15 +142,19 @@ public sealed partial class VfpInterpreter
         if (ord is not null)
         {
             var m = Meta(area);
-            if (includeCurrent && !m.Eof && m.RecNo >= 1 && m.RecNo <= EffCount(area, wa)
-                && CurrentIndex(ord, m) < 0)
+            if (includeCurrent && !m.Eof && m.RecNo >= 1 && m.RecNo <= EffCount(area, wa))
             {
-                // A reopen/order reset can discard the tombstone. REST still starts on that
-                // physical row; synthesize its slot without adding it to the live index cache.
-                int position = MissingOrderInsertionPoint(area, m);
-                var scoped = new List<int>(m.Ordered!);
-                scoped.Insert(position, -m.RecNo);
-                return scoped;
+                int slot = CurrentIndex(ord, m);
+                if (slot < 0 || ord[slot] < 0 && !m.OrderKeyIsField)
+                {
+                    // A reopen/order reset can discard the tombstone. REST still starts on that
+                    // physical row; an expression tombstone must use its current key, as SKIP does.
+                    // Synthesize that slot without adding it to the live index cache.
+                    int position = MissingOrderInsertionPoint(area, m);
+                    var scoped = new List<int>(m.Ordered!);
+                    scoped.Insert(position, -m.RecNo);
+                    return scoped;
+                }
             }
             return ord;
         }
@@ -993,7 +997,9 @@ public sealed partial class VfpInterpreter
         if (src is null) return null;
         // Ordinary traversal needs only recnos. Retaining every key and a dictionary here
         // dwarfs the order itself; materialize them only for removed-entry navigation.
-        var ordered = OrderedEntries(src).Select(e => e.Recno).ToList();
+        var ordered = src.CdxTag is { } tag
+            ? tag.EnumerateEntries().Select(e => (int)e.RecordNumber).ToList()
+            : src.Idx!.EnumerateEntries().Select(e => (int)e.RecordNumber).ToList();
         if (m.OrderReversed) ordered.Reverse();
         m.OrderKeys = null;
         m.OrderSlots = null;
@@ -1211,7 +1217,7 @@ public sealed partial class VfpInterpreter
                     {
                         // The writer has already flushed this delta. Read the live keys once,
                         // with a fresh reader because the area's CDX view is refreshed afterwards.
-                        using var cdx = CdxFile.Open(Path.ChangeExtension(path, ".cdx"), wa.Table);
+                        using var cdx = CdxFile.Open(wa.Cdx!.SourcePath ?? Path.ChangeExtension(path, ".cdx"), wa.Table);
                         CacheOrderKeys(m, cdx.Tag(m.Order!)!.EnumerateEntries()
                             .Select(e => (e.Key, (int)e.RecordNumber)));
                     }
