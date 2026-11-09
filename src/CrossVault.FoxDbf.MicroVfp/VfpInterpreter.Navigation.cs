@@ -142,15 +142,19 @@ public sealed partial class VfpInterpreter
         if (ord is not null)
         {
             var m = Meta(area);
-            if (includeCurrent && !m.Eof && m.RecNo >= 1 && m.RecNo <= EffCount(area, wa)
-                && CurrentIndex(ord, m) < 0)
+            if (includeCurrent && !m.Eof && m.RecNo >= 1 && m.RecNo <= EffCount(area, wa))
             {
-                // A reopen/order reset can discard the tombstone. REST still starts on that
-                // physical row; synthesize its slot without adding it to the live index cache.
-                int position = MissingOrderInsertionPoint(area, m);
-                var scoped = new List<int>(m.Ordered!);
-                scoped.Insert(position, -m.RecNo);
-                return scoped;
+                int slot = CurrentIndex(ord, m);
+                if (slot < 0 || ord[slot] < 0 && !m.OrderKeyIsField)
+                {
+                    // A reopen/order reset can discard the tombstone. REST still starts on that
+                    // physical row; an expression tombstone must use its current key, as SKIP does.
+                    // Synthesize that slot without adding it to the live index cache.
+                    int position = MissingOrderInsertionPoint(area, m);
+                    var scoped = new List<int>(m.Ordered!);
+                    scoped.Insert(position, -m.RecNo);
+                    return scoped;
+                }
             }
             return ord;
         }
@@ -176,9 +180,8 @@ public sealed partial class VfpInterpreter
         if (pos >= 0 && pos < order.Count && Math.Abs(order[pos]) == rec) return pos;
         // Scope walkers normally advance one entry; keep COUNT/SUM linear without a dictionary.
         if (pos + 1 >= 0 && pos + 1 < order.Count && Math.Abs(order[pos + 1]) == rec) return pos + 1;
-        if (m.OrderSlots is not null) return m.OrderSlots.GetValueOrDefault(rec, -1);
-        int slot = order.IndexOf(rec);
-        return slot >= 0 ? slot : order.IndexOf(-rec);
+        EnsureOrderSlots(m);
+        return m.OrderSlots!.GetValueOrDefault(rec, -1);
     }
 
     private static void EnsureOrderSlots(AreaMeta m)
@@ -288,6 +291,9 @@ public sealed partial class VfpInterpreter
         else
         {
             var order = TraversalOrder(area, wa, includeCurrent: kind != LocScope.All);
+            // A missing current key can reload the live order and discard tombstones.
+            // Pointer slots (including EOF) must refer to that refreshed cache.
+            ord = ActiveOrder(area);
             int startIdx = kind == LocScope.All ? 0 : CurrentIndex(order, m);
             if (startIdx < 0) startIdx = order.Count;   // current at EOF/BOF ⇒ REST/NEXT window is empty.
             int remaining = kind == LocScope.Next ? count : int.MaxValue;
@@ -991,7 +997,9 @@ public sealed partial class VfpInterpreter
         if (src is null) return null;
         // Ordinary traversal needs only recnos. Retaining every key and a dictionary here
         // dwarfs the order itself; materialize them only for removed-entry navigation.
-        var ordered = OrderedEntries(src).Select(e => e.Recno).ToList();
+        var ordered = src.CdxTag is { } tag
+            ? tag.EnumerateEntries().Select(e => (int)e.RecordNumber).ToList()
+            : src.Idx!.EnumerateEntries().Select(e => (int)e.RecordNumber).ToList();
         if (m.OrderReversed) ordered.Reverse();
         m.OrderKeys = null;
         m.OrderSlots = null;
@@ -1132,13 +1140,7 @@ public sealed partial class VfpInterpreter
             // Read the refreshed live tree: removed expression keys may have changed value,
             // so their old tombstones cannot take part in this binary search.
             using var src = OpenOrderSource(area, m.Order!, resolveHosted: false);
-            var entries = OrderedEntries(src!).ToList();
-            if (m.OrderReversed) entries.Reverse();
-            m.Ordered = entries.Select(e => e.Recno).ToList();
-            m.OrderKeys = entries.Select(e => e.Key).ToList();
-            m.OrderSlots = null;
-            m.OrderPos = -1;
-            EnsureOrderSlots(m);
+            CacheOrderKeys(m, OrderedEntries(src!));
         }
         int selected = Session.CurrentArea;
         VfpValue value;
@@ -1149,16 +1151,31 @@ public sealed partial class VfpInterpreter
         }
         finally { Session.SelectArea(selected); }
         byte[] key = m.OrderEncodeKey!(value);
-        bool descending = m.OrderDescending;
         // VFP uses the current expression value for a missing expression key (including
         // IIF(DELETED(), ...)); ordinary field keys keep their original cached slot.
+        return OrderInsertionPoint(m, key, m.RecNo);
+    }
+
+    private static void CacheOrderKeys(AreaMeta m, IEnumerable<(byte[] Key, int Recno)> source)
+    {
+        var entries = source.ToList();
+        if (m.OrderReversed) entries.Reverse();
+        m.Ordered = entries.Select(e => e.Recno).ToList();
+        m.OrderKeys = entries.Select(e => e.Key).ToList();
+        m.OrderSlots = null;
+        EnsureOrderSlots(m);
+        m.OrderPos = m.Eof ? m.Ordered.Count : m.OrderSlots!.GetValueOrDefault(m.RecNo, -1);
+    }
+
+    private static int OrderInsertionPoint(AreaMeta m, byte[] key, int recno)
+    {
         int low = 0, high = m.Ordered!.Count;
         while (low < high)
         {
             int mid = low + (high - low) / 2;
             int compare = CompareBytesUnsigned(m.OrderKeys![mid], key);
-            if (compare == 0) compare = Math.Abs(m.Ordered[mid]).CompareTo(m.RecNo);
-            if (descending ? compare > 0 : compare < 0) low = mid + 1;
+            if (compare == 0) compare = Math.Abs(m.Ordered[mid]).CompareTo(recno);
+            if (m.OrderDescending ? compare > 0 : compare < 0) low = mid + 1;
             else high = mid;
         }
         return low;
@@ -1184,21 +1201,54 @@ public sealed partial class VfpInterpreter
                 int slot = OrderSlot(m, change.Recno);
                 if (change.Key is null)
                 {
-                    if (slot >= 0) m.Ordered[slot] = -change.Recno;
+                    if (slot >= 0)
+                    {
+                        if (!m.OrderKeyIsField && m.OrderKeys is not null)
+                            MoveOrderEntry(m, slot, change.Recno, null);
+                        else m.Ordered[slot] = -change.Recno;
+                    }
                 }
                 else if (slot >= 0 && (m.OrderKeyIsField ||
                     m.OrderKeys is not null && m.OrderKeys[slot].AsSpan().SequenceEqual(change.Key)))
                     m.Ordered[slot] = change.Recno;
                 else
                 {
-                    m.Ordered = null;
-                    m.OrderKeys = null;
-                    m.OrderSlots = null;
-                    m.OrderPos = -1;
-                    break;
+                    if (m.OrderKeys is null)
+                    {
+                        // The writer has already flushed this delta. Read the live keys once,
+                        // with a fresh reader because the area's CDX view is refreshed afterwards.
+                        using var cdx = CdxFile.Open(wa.Cdx!.SourcePath ?? Path.ChangeExtension(path, ".cdx"), wa.Table);
+                        CacheOrderKeys(m, cdx.Tag(m.Order!)!.EnumerateEntries()
+                            .Select(e => (e.Key, (int)e.RecordNumber)));
+                    }
+                    else MoveOrderEntry(m, slot, change.Recno, change.Key);
                 }
             }
         }
+    }
+
+    private static void MoveOrderEntry(AreaMeta m, int slot, int recno, byte[]? key)
+    {
+        var order = m.Ordered!;
+        var keys = m.OrderKeys!;
+        if (slot >= 0)
+        {
+            order.RemoveAt(slot);
+            keys.RemoveAt(slot);
+            m.OrderSlots!.Remove(recno);
+        }
+        int inserted = key is null ? order.Count : OrderInsertionPoint(m, key, recno);
+        if (key is not null)
+        {
+            order.Insert(inserted, recno);
+            keys.Insert(inserted, key);
+        }
+        // Only shifted entries need new slots. Keep the dictionary and keys for subsequent
+        // DELETE NEXT/REST steps rather than rereading the entire CDX after every row.
+        int first = slot < 0 ? inserted : Math.Min(slot, inserted);
+        int last = slot < 0 || key is null ? order.Count - 1 : Math.Min(order.Count - 1, Math.Max(slot, inserted));
+        for (int i = first; i <= last; i++) m.OrderSlots![Math.Abs(order[i])] = i;
+        m.OrderPos = m.Eof ? order.Count : m.OrderSlots!.GetValueOrDefault(m.RecNo, -1);
     }
 
     // ── navigation wrappers (microVFP P1 gap #2) — every USER parent move goes through one of these and,

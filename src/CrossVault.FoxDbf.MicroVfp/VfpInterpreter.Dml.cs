@@ -1153,6 +1153,10 @@ public sealed partial class VfpInterpreter
         if (sum.Scope is null && sum.While is not null) kind = LocScope.Rest;
         MaybeAutoCommitRow(area);
         wa = Session.AreaAt(area)!;
+        // RECORD is a physical address, not a tombstone: reject it before traversal or
+        // PositionPointer can erase EOF/BOF (VFP error 5 leaves the pointer untouched).
+        if (kind == LocScope.Record && (count < 1 || count > wa.Table.RecordCount))
+            throw new MicroVfpRuntimeException("Record is out of range.", 5);
         var order = TraversalOrder(area, wa, includeCurrent: kind != LocScope.All);
         int n = sum.Expressions.Count;
         var acc = new double[n];
