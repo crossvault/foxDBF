@@ -758,6 +758,22 @@ public sealed partial class VfpInterpreter
                 using var master = OpenMasterOrder(area);
                 physical = string.IsNullOrWhiteSpace(master?.CdxTag?.ForExpression ?? master?.Idx?.Header.ForExpression);
             }
+            // VFP navigates a bounded DELETE through the live index. A DELETED()-dependent
+            // key can move the current row to the end, exhausting NEXT before its count is reached.
+            if (resolvedScope is not null && !includeDeleted && !physical && Meta(area).Buffering == 1)
+            {
+                if (kind == LocScope.All) GoTop(area);
+                int left = kind == LocScope.Next ? count : int.MaxValue;
+                while (left > 0 && !Meta(area).Eof)
+                {
+                    if (whileExpr is not null && !ScopePredicate(whileExpr)) return;
+                    if (forExpr is null || ScopePredicate(forExpr)) action();
+                    if (--left == 0) return;
+                    Skip(area, 1);
+                }
+                if (Meta(area).Eof) Meta(area).Found = false;
+                return;
+            }
             var order = ReplaceOrder(wa, physical, out var keyVisible, includeCurrent: kind != LocScope.All);
             int start = kind == LocScope.All ? 0 : CurrentIndex(order, Meta(area));
             if (start < 0) start = order.Count;
@@ -768,7 +784,11 @@ public sealed partial class VfpInterpreter
                 wa = Session.AreaAt(area)!;
                 int rec = order[i];
                 if ((kind == LocScope.All || i != start) && !Visible(wa, rec, keyVisible, includeDeleted)) continue;
-                GoRecord(area, rec);
+                // This statement already owns its traversal snapshot. Rebuilding ActiveOrder
+                // here after every re-key wastes a full CDX walk (and can cache a stale view).
+                MaybeAutoCommitRow(area);
+                PositionPointer(Meta(area), Meta(area).Ordered, rec);
+                RepositionChildren(area);
                 if (whileExpr is not null && !ScopePredicate(whileExpr)) return;
                 if (forExpr is null || ScopePredicate(forExpr)) action();
                 // VFP leaves a bounded scope ON its last examined record (unlike SCAN's final SKIP).
