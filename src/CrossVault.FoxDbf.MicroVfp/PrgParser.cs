@@ -669,7 +669,7 @@ public static class PrgParser
                 "REPLACE" => BuildReplace(text),
                 "DELETE" => BuildDelete(text),
                 "UPDATE" => PrgScan.FirstWord(PrgScan.AfterFirstWord(text)).Equals("ON", StringComparison.OrdinalIgnoreCase)
-                    ? new UnknownCommand(kw, PrgScan.AfterFirstWord(text))
+                    ? BuildXbaseUpdate(text)
                     : new SqlDmlStmt(text.Trim()),
                 "RECALL" => BuildRecall(text),
                 "INSERT" => new InsertStmt(text.Trim(), TrySql(text)),
@@ -1192,6 +1192,24 @@ public static class PrgParser
             if (command.StartsWith('&'))
                 return new OnErrorStmt(OnErrorKind.Macro, null, new MacroSubst(command));
             return new OnErrorStmt(OnErrorKind.Command, BuildSimple(command, line), null, command);
+        }
+
+        private static PrgStatement BuildXbaseUpdate(string text)
+        {
+            string rest = PrgScan.AfterFirstWord(PrgScan.AfterFirstWord(text));
+            int from = PrgScan.IndexOfKeyword(rest, "FROM");
+            int replace = PrgScan.IndexOfKeyword(rest, "REPLACE");
+            if (from <= 0 || replace <= from + 4)
+                return new UnknownCommand("UPDATE", PrgScan.AfterFirstWord(text));
+            string replacement = rest[replace..].Trim();
+            int random = PrgScan.IndexOfKeyword(replacement, "RANDOM");
+            bool isRandom = random >= 0 && replacement[(random + 6)..].Trim().Length == 0;
+            if (isRandom) replacement = replacement[..random].Trim();
+            if (BuildReplace(replacement) is not ReplaceStmt rp || rp.Clauses.Count == 0
+                || rp.Scope is not null || rp.For is not null || rp.While is not null || rp.In is not null)
+                return new UnknownCommand("UPDATE", PrgScan.AfterFirstWord(text));
+            return new XbaseUpdateStmt(PrgExpr.Parse(rest[..from].Trim()),
+                ToNameRef(rest[(from + 4)..replace].Trim()), rp, isRandom);
         }
 
         private static PrgStatement BuildReplace(string text)

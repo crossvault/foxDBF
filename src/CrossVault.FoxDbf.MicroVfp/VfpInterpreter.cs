@@ -572,6 +572,7 @@ public sealed partial class VfpInterpreter
             case DoCall dca: ExecDoCall(dca); break;
             case ExprStatement es: Eval(es.Expression); break;
             case UseStmt us: ExecUse(us); break;
+            case XbaseUpdateStmt update: ExecXbaseUpdate(update); break;
             case SelectAreaStmt sa: ExecSelectArea(sa); break;
             case SqlSelectStmt sq: ExecSqlSelect(sq); break;
             case SeekStmt sk: ExecSeek(sk); break;

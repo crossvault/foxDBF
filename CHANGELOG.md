@@ -40,6 +40,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- microVFP supports xBase `UPDATE ON field FROM alias REPLACE ... [RANDOM]`, including
+  sequential source matches, VFP9 record pointers and `_TALLY`, errors, buffering,
+  validation/triggers and index maintenance through the existing REPLACE writer.
+
 - microVFP runs UPDATE-SQL and DELETE-SQL in PRGs with VFP9-matched row expressions, `_TALLY`, work-area/record-pointer behavior, errors, validation and triggers, buffering, index maintenance, and transaction commit/rollback.
 
 - `CREATE TABLE` / `CREATE DBF` accept AFIELDS-style microVFP arrays with 4–18 columns, including
