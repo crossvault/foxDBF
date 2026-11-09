@@ -42,7 +42,8 @@ public sealed partial class VfpInterpreter
         {
             int ai = recno - rcTable - 1;
             if (ai < 0 || ai >= buf.Appends.Count) { if (buf.IsEmpty) m.Buf = null; return; }
-            target = buf.Appends[ai].Fields;
+            edit = buf.Appends[ai];
+            target = edit.Fields;
         }
         else
         {
@@ -56,7 +57,7 @@ public sealed partial class VfpInterpreter
             string field = StripQualifier(NameOf(clause.Field));
             int idx = ColumnIndex(wa.Table, field);
             if (idx < 0) continue;
-            if (edit is not null && !edit.Old.ContainsKey(field))
+            if (edit is not null && recno <= rcTable && !edit.Old.ContainsKey(field))
                 edit.Old[field] = ReadFieldOnDisk(wa, field);   // capture the buffer-start (on-disk) value once.
             var v = Eval(clause.Value);
             var col = wa.Table.Columns[idx];
@@ -125,6 +126,13 @@ public sealed partial class VfpInterpreter
         for (int i = 0; i < columns.Count; i++)
             if (!columns[i].IsSystem && !columns[i].IsAutoIncrement && !blank[i] && !ae.Fields.ContainsKey(i))
                 ae.Fields[i] = null;
+        // INSERT rejects invalid fields before keeping the append; record rules are deferred.
+        try { ValidateBufferedRow(wa, EffCount(wa.Area, wa) + 1, ae, validateRecord: false); }
+        catch
+        {
+            GoRecordCore(wa.Area, EffCount(wa.Area, wa) + 1);
+            throw;
+        }
         (m.Buf ??= new TableBuffer()).Appends.Add(ae);
     }
 
@@ -234,18 +242,20 @@ public sealed partial class VfpInterpreter
     private void ValidateBufferedRow(VfpSession.WorkArea wa, int recno, RowEdit edit,
         int? changedField = null, bool validateRecord = true)
     {
-        if (!EnforceReferentialIntegrity || edit.Fields.Count == 0 || Session.Database is null) return;
+        bool append = edit is AppendEntry;
+        if (!EnforceReferentialIntegrity || (!append && edit.Fields.Count == 0) || Session.Database is null) return;
         var fields = changedField.HasValue ? new[] { changedField.Value }
-            : edit.Fields.Keys.Where(i => !edit.ValidatedFields.Contains(i)).ToArray();
+            : (append ? Enumerable.Range(0, wa.Table.Columns.Count).Where(i => !wa.Table.Columns[i].IsSystem) : edit.Fields.Keys)
+                .Where(i => !edit.ValidatedFields.Contains(i)).ToArray();
         bool checkRecord = validateRecord && !edit.RecordRuleValidated;
         if (fields.Length == 0 && !checkRecord) return;
         var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        var record = wa.Table.GetRecord(recno - 1, includeDeleted: true);
+        var record = append ? null : wa.Table.GetRecord(recno - 1, includeDeleted: true);
         for (int i = 0; i < wa.Table.Columns.Count; i++)
         {
             var column = wa.Table.Columns[i];
             if (!column.IsSystem)
-                map[column.Name] = edit.Fields.TryGetValue(i, out var value) ? value : record?[column.Name];
+                map[column.Name] = edit.Fields.TryGetValue(i, out var value) ? value : append ? BlankFor(column) : record?[column.Name];
         }
         WithImportRow(wa, recno, map, () =>
         {
@@ -285,6 +295,11 @@ public sealed partial class VfpInterpreter
         {
             foreach (var (rec, edit) in buf.Rows)
                 if (allRows || rec == m.RecNo) ValidateBufferedRow(wa, rec, edit);
+            for (int i = 0; i < buf.Appends.Count; i++)
+            {
+                int rec = wa.Table.RecordCount + i + 1;
+                if (allRows || rec == m.RecNo) ValidateBufferedRow(wa, rec, buf.Appends[i]);
+            }
         }
         catch (FoxDbfSqlException error)
         {
@@ -390,6 +405,7 @@ public sealed partial class VfpInterpreter
         var wa = Session.FindInsertArea(table);
         if (wa?.Table.SourcePath is not string livePath) return false;
         int area = wa.Area;
+        ValidateBufferedRow(wa, wa.Table.RecordCount + 1, ae);
         // COPY-ON-WRITE seam: a buffered INSERT committed here (TABLEUPDATE / row-buffer auto-commit) must
         // land on the table's private working copy inside a FoxDbfTransaction — mirror ExecInsert's redirect.
         // No-op in autocommit, so the non-transactional buffered append stays byte-identical.
@@ -504,7 +520,7 @@ public sealed partial class VfpInterpreter
         public bool IsEmpty => Rows.Count == 0 && Appends.Count == 0;
     }
 
-    private sealed class RowEdit
+    private class RowEdit
     {
         public readonly Dictionary<int, object?> Fields = new();               // colIndex → buffered new value.
         public readonly HashSet<int> ValidatedFields = new();
@@ -513,10 +529,9 @@ public sealed partial class VfpInterpreter
         public readonly Dictionary<string, object?> Old = new(StringComparer.OrdinalIgnoreCase); // OLDVAL per field.
     }
 
-    private sealed class AppendEntry
+    private sealed class AppendEntry : RowEdit
     {
         public InsertStmt Stmt = null!;                                        // replayed through ExecInsert at commit.
-        public readonly Dictionary<int, object?> Fields = new();              // colIndex → value (visible pre-commit).
         public bool Deleted;                                                   // a buffered DELETE on the appended row.
     }
 

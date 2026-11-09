@@ -139,6 +139,7 @@ public sealed class VfpSession : IDisposable
 
     // Bound only while microVFP executes INSERT; plain SQL retains its constant-row evaluator.
     internal Func<VfpExpression, VfpValue>? InsertValueEvaluator { get; set; }
+    internal Action<string, DbfTable, Dictionary<string, object?>, bool[], int>? InsertRowValidator { get; set; }
 
     /// <summary>Evaluate CREATE CODEPAGE in the hosting interpreter's live variable scope.</summary>
     internal Func<VfpExpression, VfpValue>? DdlExpressionEvaluator { get; set; }

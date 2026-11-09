@@ -60,10 +60,30 @@ internal sealed partial class DmlExecutor
         {
             var columns = target.Writer.Schema.Columns;
             var values = EvaluateValues(_session, st);
-            if (st.Columns is null) { AppendAllColumns(target.Writer, columns, values); return SqlResult.Dml(1); }
+            if (_session.InsertRowValidator is { } validate)
+            {
+                if (st.Columns is null && values.Length != columns.Count)
+                    throw new FoxDbfSqlException("INSERT value count does not match the table's columns.");
+                var candidate = st.Columns is null
+                    ? columns.Select((c, i) => (c.Name, Value: values[i])).ToDictionary(c => c.Name, c => c.Value, StringComparer.OrdinalIgnoreCase)
+                    : MapValues(st, columns, values);
+                if (st.Columns is not null) FillDbcDefaults(_session, st.Table, ref target, candidate);
+                var blank = st.Columns is null ? new bool[columns.Count]
+                    : OmittedColumnsBlankMask(_session, st.Table, columns, candidate, honourSetNull: true);
+                var schema = target.Writer.Schema;
+                int recno = target.Writer.RecordCount + 1;
+                // The fallback writer temporarily owns an exclusive work area's handle.
+                // Restore that area before invoking PRG rules, as with DEFAULT evaluation.
+                target.Dispose();
+                validate(st.Table, schema, candidate, blank, recno);
+                target = _session.OpenWritableTarget(st.Table);
+                target.Writer.AppendRecord(candidate, blank);
+                return SqlResult.Dml(1);
+            }
+            if (st.Columns is null) { AppendAllColumns(_session, st.Table, target.Writer, columns, values); return SqlResult.Dml(1); }
             var map = MapValues(st, columns, values);
             FillDbcDefaults(_session, st.Table, ref target, map);
-            target.Writer.AppendRecord(map, OmittedColumnsBlankMask(_session, st.Table, columns, map, honourSetNull: true));
+            AppendValidatedRow(_session, st.Table, target.Writer, map, honourSetNull: true);
         }
         finally { target.Dispose(); }
         return SqlResult.Dml(1);
@@ -81,10 +101,10 @@ internal sealed partial class DmlExecutor
     {
         var columns = writer.Schema.Columns;
         var values = EvaluateValues(session, st);
-        if (st.Columns is null) { AppendAllColumns(writer, columns, values); return; }
+        if (st.Columns is null) { AppendAllColumns(session, st.Table, writer, columns, values); return; }
         var map = MapValues(st, columns, values);
         EvaluateDbcDefaults(session, st.Table, columns, map);
-        writer.AppendRecord(map, OmittedColumnsBlankMask(session, st.Table, columns, map, honourSetNull: true));
+        AppendValidatedRow(session, st.Table, writer, map, honourSetNull: true);
     }
 
     /// <summary>Evaluate every VALUES expression to a CONSTANT against <see cref="ConstantRow.Instance"/>
@@ -131,12 +151,26 @@ internal sealed partial class DmlExecutor
     }
 
     /// <summary>No column list: values map to the physical field order; VFP requires one per field.</summary>
-    private static void AppendAllColumns(DbfWriter writer, IReadOnlyList<DbfColumn> columns, object?[] values)
+    private static void AppendAllColumns(VfpSession session, string table, DbfWriter writer, IReadOnlyList<DbfColumn> columns, object?[] values)
     {
         if (values.Length != columns.Count)
             throw new FoxDbfSqlException(
                 $"INSERT value count {values.Length} does not match the table's {columns.Count} column(s) (no column list given).");
+        if (session.InsertRowValidator is { } validate)
+        {
+            var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < columns.Count; i++) map[columns[i].Name] = values[i];
+            validate(table, writer.Schema, map, new bool[columns.Count], writer.RecordCount + 1);
+        }
         writer.AppendRecord(values);
+    }
+
+    private static void AppendValidatedRow(VfpSession session, string table, DbfWriter writer,
+        Dictionary<string, object?> map, bool honourSetNull)
+    {
+        var blank = OmittedColumnsBlankMask(session, table, writer.Schema.Columns, map, honourSetNull);
+        session.InsertRowValidator?.Invoke(table, writer.Schema, map, blank, writer.RecordCount + 1);
+        writer.AppendRecord(map, blank);
     }
 
     // ---- INSERT ... FROM ARRAY | FROM MEMVAR ----------------------------------------------

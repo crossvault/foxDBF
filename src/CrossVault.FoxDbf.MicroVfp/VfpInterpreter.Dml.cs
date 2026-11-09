@@ -23,6 +23,8 @@ public sealed partial class VfpInterpreter
     {
         var previous = Session.DbcDefaultEvaluator;
         var previousValues = Session.InsertValueEvaluator;
+        var previousValidator = Session.InsertRowValidator;
+        Session.InsertRowValidator = EnforceReferentialIntegrity ? ValidateInsertRules : null;
         Session.DbcDefaultEvaluator = _dbcDefaultEvaluator ??= EvalDbcDefault;
         Session.InsertValueEvaluator = _insertValueEvaluator ??= expression =>
         {
@@ -53,6 +55,39 @@ public sealed partial class VfpInterpreter
         {
             Session.DbcDefaultEvaluator = previous;
             Session.InsertValueEvaluator = previousValues;
+            Session.InsertRowValidator = previousValidator;
+        }
+    }
+
+    private void ValidateInsertRules(string table, DbfTable schema, Dictionary<string, object?> supplied, bool[] blank, int recno)
+    {
+        if (Session.Database is null) return;
+        var wa = Session.FindInsertArea(table);
+        if (wa is null)
+        {
+            Session.Use(table, inArea: 0);
+            wa = Session.FindInsertArea(table)!;
+        }
+        var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < schema.Columns.Count; i++)
+        {
+            var column = schema.Columns[i];
+            if (!column.IsSystem)
+                values[column.Name] = supplied.TryGetValue(column.Name, out var value) ? value : blank[i] ? BlankFor(column) : null;
+        }
+        try
+        {
+            WithImportRow(wa, recno, values, () =>
+            {
+                DmlExecutor.ValidateImportRules(Session, wa.Alias, schema.Columns, values, EvalTextLoud);
+                return true;
+            });
+        }
+        catch
+        {
+            // An INSERT rejected before publication leaves VFP on its blank EOF record.
+            GoRecordCore(wa.Area, recno);
+            throw;
         }
     }
 

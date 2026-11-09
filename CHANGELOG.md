@@ -103,6 +103,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP with rule enforcement enabled now checks DBC field and record rules for INSERT,
+  REPLACE and buffered appends at VFP9's validation points. Invalid buffered REPLACE values
+  remain editable, invalid INSERT field values are rejected, and TABLEUPDATE cannot publish
+  an append that violates a rule. SKIP from an indexed table-buffered append resumes at its
+  key position; reading fields at buffered EOF returns typed blanks.
 - BREAKING: With `EnforceReferentialIntegrity = true`, buffered field rules run when `REPLACE`
   changes the field and can reject it immediately; record rules run once at commit (`TABLEUPDATE`
   or the row-buffer commit on a pointer move), as in VFP9. Rule UDFs run once per validation.
