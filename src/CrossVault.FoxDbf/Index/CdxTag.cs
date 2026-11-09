@@ -116,7 +116,7 @@ public sealed class CdxTag
         bool isUnique = false,
         System.Text.Encoding? characterEncoding = null,
         int tableCodePage = 1252,
-        bool isBinaryKey = false)
+        bool isBinaryKey = false, bool nullableKey = false)
     {
         _index = index;
         Name = name;
@@ -133,7 +133,12 @@ public sealed class CdxTag
         CharacterEncoding = isBinaryKey ? System.Text.Encoding.Latin1 : characterEncoding ?? IndexKey.ResolveCharacterEncoding(null, null);
         _collationSupport = VfpCollations.Resolve(collation, tableCodePage, out _collation);
         _unsupportedKeyFunction = VfpRuntime.UnsupportedIndexFunction(keyExpression);
+        NullableKey = nullableKey;
     }
+
+    internal bool NullableKey { get; }
+    private byte[] PrefixCharacterKey(byte[] bytes)
+        => NullableKey ? IndexKey.PrefixNonNullKey(bytes) : bytes;
 
     /// <summary>
     /// The NATURAL (unpadded) stored bytes of the character value <paramref name="s"/> in this tag: the
@@ -148,7 +153,7 @@ public sealed class CdxTag
         if (_collationSupport != CollationSupport.Exact)
             throw new NotSupportedException(
                 $"Index tag '{Name}' uses collating sequence '{Collation}' with code page {CharacterEncoding.CodePage}, which cannot be encoded exactly for SEEK.");
-        return IndexKey.EncodeCharacterKey(s.AsSpan(), _collation, CharacterEncoding, KeyLength);
+        return PrefixCharacterKey(IndexKey.EncodeCharacterKey(s.AsSpan(), _collation, CharacterEncoding, KeyLength - (NullableKey ? 1 : 0)));
     }
 
     /// <summary>
@@ -156,7 +161,7 @@ public sealed class CdxTag
     /// so it is half the key length. VFP9 rejects expressions over 120 characters with error 112 rather than
     /// capping their keys; the CDX builder enforces that same limit.
     /// </summary>
-    private int WeightedKeyWidth => KeyLength / 2;
+    private int WeightedKeyWidth => (KeyLength - (NullableKey ? 1 : 0)) / 2;
 
     /// <summary>
     /// The needle VFP9's SEEK (SEEK(), KEYMATCH(), INDEXSEEK(), the SET RELATION reposition) uses for the character
@@ -183,7 +188,7 @@ public sealed class CdxTag
             return new CharacterSeekNeedle(EncodeCharacterKey(s), exact: true, KeyPad, blankHead: general.BlankHead);
         int trimmed = s.Length;
         while (trimmed > 0 && s[trimmed - 1] == ' ') trimmed--;
-        var heads = general.GetHeadKey(s.AsSpan(0, trimmed));
+        var heads = PrefixCharacterKey(general.GetHeadKey(s.AsSpan(0, trimmed)));
         if (heads.Length >= KeyLength)
             return new CharacterSeekNeedle(heads.AsSpan(0, KeyLength).ToArray(), exact: false, KeyPad);
         int headLength = heads.Length;
@@ -216,6 +221,7 @@ public sealed class CdxTag
             natural = new byte[heads.Length + s.Length - trimmed];
             Array.Fill(natural, general.BlankHead);
             heads.CopyTo(natural, 0);
+            natural = PrefixCharacterKey(natural);
             equality = false;
         }
         else
@@ -236,9 +242,18 @@ public sealed class CdxTag
     /// <see cref="KeyType"/> (plan §C5). Never throws.
     /// </summary>
     public IndexKey DecodeKey(ReadOnlySpan<byte> keyBytes)
-        => KeyType == IndexKeyType.Character && IndexKey.IsMachineCollation(_collation)
-            ? IndexKey.DecodeCharacter(keyBytes, CharacterEncoding)
-            : IndexKey.Decode(keyBytes, KeyType);
+    {
+        var payload = keyBytes;
+        if (NullableKey && keyBytes.Length > 0)
+        {
+            if (keyBytes[0] == 0) return new IndexKey(KeyType, keyBytes.ToArray(), null);
+            payload = keyBytes[1..];
+        }
+        var decoded = KeyType == IndexKeyType.Character && IndexKey.IsMachineCollation(_collation)
+            ? IndexKey.DecodeCharacter(payload, CharacterEncoding)
+            : IndexKey.Decode(payload, KeyType);
+        return NullableKey ? new IndexKey(KeyType, keyBytes.ToArray(), decoded.Value) : decoded;
+    }
 
     /// <summary>
     /// Seeks a record whose key matches <paramref name="keyBytes"/> by
@@ -400,6 +415,7 @@ public sealed class CdxTag
         }
 
         var keyBytes = IndexKey.Encode(value, KeyType);
+        if (keyBytes is not null && NullableKey) keyBytes = IndexKey.PrefixNonNullKey(keyBytes);
         return keyBytes is null ? NotFound : Seek(keyBytes.AsSpan());
     }
 

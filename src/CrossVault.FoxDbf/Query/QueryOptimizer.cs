@@ -1569,6 +1569,7 @@ public static class QueryOptimizer
         private Analysis? SeekCold(CdxTag tag, Func<double, bool> pred, double? lo, double? hi, bool exact)
         {
             byte[]? loBytes = lo is null ? null : IndexKey.EncodeOrderedBound(tag.KeyType, lo.Value);
+            if (loBytes is not null && tag.NullableKey) loBytes = IndexKey.PrefixNonNullKey(loBytes);
             var bm = new RecordBitmap(_rc);
             foreach (var entry in tag.EnumerateFrom(loBytes))
             {

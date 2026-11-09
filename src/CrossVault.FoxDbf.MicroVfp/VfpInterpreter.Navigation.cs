@@ -705,7 +705,10 @@ public sealed partial class VfpInterpreter
         if (value.IsBinary) return System.Text.Encoding.Latin1.GetBytes(value.AsString);
         string text = value.AsString ?? string.Empty;
         if (src.Idx is not null)
-            return src.IdxCharacterEncoding.GetBytes(text);
+        {
+            var bytes = src.IdxCharacterEncoding.GetBytes(text);
+            return src.IdxNullableKey ? IndexKey.PrefixNonNullKey(bytes) : bytes;
+        }
         return EncodeTagCharacterKey(src.CdxTag!, text);
     }
 
@@ -1297,6 +1300,12 @@ public sealed partial class VfpInterpreter
         using var src = OpenOrderSource(area, identity);
         if (src is null) { m.Found = false; return false; }
 
+        // VFP9 permits NULL seeks except against a currency expression (error 9).
+        // KEYMATCH is a raw membership probe and does not share that SEEK restriction.
+        if (key.IsNull && VfpExpression.Parse(src.CdxTag?.KeyExpression ?? src.Idx!.Header.KeyExpression)
+            .InferType(new Sql.SelectExecutor.TableSchema(wa.Table, wa.Alias)).Type == VfpType.Currency)
+            throw new MicroVfpRuntimeException("Data type mismatch.", 9);
+
         // A character value seeks with the needle VFP9 builds for SEEK, SEEK(), KEYMATCH(), INDEXSEEK() and the
         // relation reposition alike: SET EXACT ON matches the whole key (value plus pad), EXACT OFF a prefix (under
         // GENERAL / SPANISH the head weights only) — so under EXACT ON SEEK 'Stra' misses 'Straße' and a short value
@@ -1310,7 +1319,7 @@ public sealed partial class VfpInterpreter
         uint? recno = null;
         if (src.CdxTag is { } t)
         {
-            recno = characterNeedle is not null
+            recno = key.IsNull ? t.Seek(new byte[t.KeyLength].AsSpan()) : characterNeedle is not null
                 ? t.Seek(characterNeedle)
                 : t.Seek(key.ToClr() ?? string.Empty);
         }
@@ -1413,12 +1422,14 @@ public sealed partial class VfpInterpreter
     /// run when the first hit is filtered/deleted out.</summary>
     private bool SeekEntryMatches(byte[] keyBytes, VfpValue key, OrderSource src, CharacterSeekNeedle? characterNeedle)
     {
+        if (key.IsNull) return keyBytes.AsSpan().IndexOfAnyExcept((byte)0) < 0;
+        if (src.NullableKey && keyBytes.Length > 0 && keyBytes[0] == 0) return false;
         if (src.IsCharacterKey && key.Type == VfpType.Character)
             return (characterNeedle ?? SeekCharacterNeedle(src, key, _ctx.Exact)).Matches(keyBytes);
         if (src.CdxTag is { } t)
-            return CompareDecodedToValue(IndexKey.Decode(keyBytes, t.KeyType), t.KeyType, key) == 0;
+            return CompareDecodedToValue(t.DecodeKey(keyBytes), t.KeyType, key) == 0;
         if (src.Idx is not null)
-            return SeekValueMatches(IndexKey.Decode(keyBytes, src.IdxKeyType), src.IdxKeyType, key);
+            return SeekValueMatches(src.DecodeKey(keyBytes), src.IdxKeyType, key);
         return false;
     }
 
@@ -1432,13 +1443,18 @@ public sealed partial class VfpInterpreter
             throw new NotSupportedException($"Index '{src.Name}': function {function}() is not supported by the index engine for SEEK.");
         foreach (var e in src.Idx.EnumerateEntries())
         {
+            if (key.IsNull)
+            {
+                if (e.Key.AsSpan().IndexOfAnyExcept((byte)0) < 0) return e.RecordNumber;
+                continue;
+            }
             if (characterNeedle is not null)
             {
                 if (characterNeedle.Matches(e.Key))
                     return e.RecordNumber;
                 continue;
             }
-            var decoded = IndexKey.Decode(e.Key, src.IdxKeyType);
+            var decoded = src.DecodeKey(e.Key);
             if (SeekValueMatches(decoded, src.IdxKeyType, key))
                 return e.RecordNumber;
         }
@@ -1499,6 +1515,8 @@ public sealed partial class VfpInterpreter
     /// key sorts after the seek value, &lt;0 before, 0 equal — in the key's own encoding.</summary>
     private int CompareStoredKeyToSeek(byte[] keyBytes, VfpValue key, OrderSource src, CharacterSeekNeedle? characterNeedle)
     {
+        if (key.IsNull) return keyBytes.AsSpan().IndexOfAnyExcept((byte)0) < 0 ? 0 : 1;
+        if (src.NullableKey && keyBytes.Length > 0 && keyBytes[0] == 0) return -1;
         // Character keys: the raw stored bytes against where the needle sorts (unsigned byte order; under SET EXACT
         // ON the needle plus pad, so a key the needle is only a prefix of sorts after it).
         if (src.IsCharacterKey && key.Type == VfpType.Character)
@@ -1509,9 +1527,9 @@ public sealed partial class VfpInterpreter
             return keyBytes.Length - needle.Length;
         }
         if (src.Idx is not null)
-            return CompareDecodedToValue(IndexKey.Decode(keyBytes, src.IdxKeyType), src.IdxKeyType, key);
+            return CompareDecodedToValue(src.DecodeKey(keyBytes), src.IdxKeyType, key);
         var t = src.CdxTag!;
-        return CompareDecodedToValue(IndexKey.Decode(keyBytes, t.KeyType), t.KeyType, key);
+        return CompareDecodedToValue(t.DecodeKey(keyBytes), t.KeyType, key);
     }
 
     private static int CompareDecodedToValue(IndexKey decoded, IndexKeyType type, VfpValue key) => type switch

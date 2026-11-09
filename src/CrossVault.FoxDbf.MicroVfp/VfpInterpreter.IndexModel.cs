@@ -404,6 +404,7 @@ public sealed partial class VfpInterpreter
         public IndexKeyType IdxKeyType;
         public Encoding IdxCharacterEncoding = Encoding.Latin1;
         public byte IdxKeyPad = 0x20;
+        public bool IdxNullableKey;
         public bool Descending;
         public string Name = "";
         private readonly IDisposable? _owner;
@@ -417,10 +418,15 @@ public sealed partial class VfpInterpreter
         public IndexKeyType KeyType => CdxTag?.KeyType ?? IdxKeyType;
         public byte KeyPad => CdxTag?.KeyPad ?? IdxKeyPad;
         public int KeyLength => CdxTag?.KeyLength ?? (Idx?.KeyLength ?? 0);
+        public bool NullableKey => CdxTag?.NullableKey ?? IdxNullableKey;
         public string CollationName =>
             CdxTag is { } t && !string.IsNullOrEmpty(t.Collation) ? t.Collation : "MACHINE";
-        public IndexKey DecodeKey(byte[] keyBytes) =>
-            CdxTag is { } t ? t.DecodeKey(keyBytes) : IndexKey.Decode(keyBytes, IdxKeyType);
+        public IndexKey DecodeKey(byte[] keyBytes)
+        {
+            if (CdxTag is { } t) return t.DecodeKey(keyBytes);
+            if (!IdxNullableKey || keyBytes.Length == 0) return IndexKey.Decode(keyBytes, IdxKeyType);
+            return new IndexKey(IdxKeyType, keyBytes, keyBytes[0] == 0 ? null : IndexKey.Decode(keyBytes.AsSpan(1), IdxKeyType).Value);
+        }
     }
 
     /// <summary>Resolve an ORDER identity (tag name or standalone-IDX stem) to a live <see cref="OrderSource"/>
@@ -461,6 +467,7 @@ public sealed partial class VfpInterpreter
                             ? CdxIndexBuilder.ResolveKey(wa.Table, idx.Header.KeyExpression, _ctx).Type
                             : IndexKey.ResolveType(idx.Header.KeyExpression.Trim(), wa.Table),
                         IdxKeyPad = IndexKey.IsBinaryExpression(idx.Header.KeyExpression, wa.Table) ? (byte)0 : (byte)0x20,
+                        IdxNullableKey = IndexKey.NullableKeyField(wa.Table, idx.Header.KeyExpression),
                         IdxCharacterEncoding = IdxIndexBuilder.ResolveCharacterEncoding(
                             wa.Table, idx.Header.KeyExpression.Trim()),
                     };

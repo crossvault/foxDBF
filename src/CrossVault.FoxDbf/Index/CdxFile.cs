@@ -203,7 +203,8 @@ public sealed class CdxFile : IDisposable
             // GENERAL / SPANISH weights are per TABLE code page (also for a NOCPTRANS field, whose
             // MACHINE bytes above are Latin-1); no table → the library default code page.
             (table?.Encoding ?? IndexKey.ResolveCharacterEncoding(null, null)).CodePage,
-            keyType == IndexKeyType.Character && IndexKey.IsBinaryExpression(hdr.KeyExpression, table))
+            keyType == IndexKeyType.Character && IndexKey.IsBinaryExpression(hdr.KeyExpression, table),
+            IndexKey.NullableKeyField(table, hdr.KeyExpression))
             { IsCandidate = hdr.IsCandidate };
     }
 

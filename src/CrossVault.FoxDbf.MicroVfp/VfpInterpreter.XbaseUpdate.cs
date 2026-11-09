@@ -94,7 +94,9 @@ public sealed partial class VfpInterpreter
                 {
                     // This is a forward merge, not a search from the top for every source row.
                     // VFP accepts physically ordered tables and does not diagnose unsorted inputs.
-                    while (!Meta(target).Eof && VfpRuntime.Compare(Eval(keyExpression), key, _ctx) < 0)
+                    // VFP's merge predicate propagates NULL: a NULL source is skipped, while
+                    // a NULL target stops this forward scan. Non-NULL type errors still propagate.
+                    while (!Meta(target).Eof && VfpRuntime.Binary(BinOp.Lt, Eval(keyExpression), key, _ctx).AsLogical)
                     {
                         FinishRow();
                         Skip(target, 1);

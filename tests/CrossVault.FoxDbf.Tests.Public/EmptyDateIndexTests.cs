@@ -83,6 +83,7 @@ public sealed class EmptyDateIndexTests
         }
         using var table = DbfTable.Open(path);
         using var cdx = CdxFile.Open(Path.ChangeExtension(path, ".cdx"), table);
-        Assert.Equal("0000000000000000", Convert.ToHexString(Assert.Single(cdx.Tag("k")!.EnumerateEntries()).Key));
+        // VFP9 reserves a leading NULL marker in nullable field keys.
+        Assert.Equal("000000000000000000", Convert.ToHexString(Assert.Single(cdx.Tag("k")!.EnumerateEntries()).Key));
     }
 }

@@ -299,7 +299,7 @@ public sealed partial class VfpInterpreter
         uint? recno = null;
         if (src.CdxTag is { } t)
         {
-            recno = characterNeedle is not null
+            recno = key.IsNull ? t.Seek(new byte[t.KeyLength].AsSpan()) : characterNeedle is not null
                 ? t.Seek(characterNeedle)
                 : t.Seek(key.ToClr() ?? string.Empty);
         }

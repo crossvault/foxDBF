@@ -270,6 +270,20 @@ public readonly struct IndexKey
         }
     }
 
+    // VFP reserves a leading null discriminator for a nullable field's key:
+    // all zero bytes for NULL, 0x80 followed by the ordinary key otherwise.
+    internal static bool NullableKeyField(DbfTable? table, string expression)
+        => table is not null && table.Columns.Any(c => c.IsNullable && c.Type is 'C' or 'V' or 'I' or 'N' or 'F' or 'B' or 'Y' or 'L' or 'D' or 'T'
+            && string.Equals(c.Name, expression.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    internal static byte[] PrefixNonNullKey(byte[] bytes)
+    {
+        var result = new byte[bytes.Length + 1];
+        result[0] = 0x80;
+        bytes.CopyTo(result, 1);
+        return result;
+    }
+
     private static byte[]? EncodeCharacter(object value)
         => value is byte[] bytes ? bytes : value is string s ? Encoding.Latin1.GetBytes(s) : null;
 

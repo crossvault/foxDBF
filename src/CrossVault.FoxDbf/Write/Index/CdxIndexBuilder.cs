@@ -393,6 +393,7 @@ internal static class CdxIndexBuilder
         public required IndexKeyType KeyType;
         public required int KeyLen;
         public required bool IsChar;
+        public bool NullableKey;
         public required byte Pad;
         public required IVfpCollation Collation;
         /// <summary>The code page a MACHINE character key is stored in (<see cref="IndexKey.ResolveCharacterEncoding"/>).</summary>
@@ -429,7 +430,14 @@ internal static class CdxIndexBuilder
                     return false;
                 }
             }
-            key = DateField is not null
+            if (NullableKey)
+            {
+                var value = KeyFn(rc);
+                key = value.IsNull ? new byte[KeyLen] : IndexKey.PrefixNonNullKey(DateField is not null
+                    ? IndexKey.EncodeDateField(record, DateField)
+                    : EncodeKey(value, KeyType, KeyLen - 1, Collation, CharacterEncoding, Pad));
+            }
+            else key = DateField is not null
                 ? IndexKey.EncodeDateField(record, DateField)
                 : EncodeKey(KeyFn(rc), KeyType, KeyLen, Collation, CharacterEncoding, Pad);
             return true;
@@ -493,6 +501,8 @@ internal static class CdxIndexBuilder
         // Q keys use raw bytes, a zero pad and MACHINE metadata even under SET COLLATE GENERAL.
         if (isBinary) collation = VfpCollations.Machine;
         int keyLen = CollatedKeyLength(baseLen, isChar, collation);
+        bool nullableKey = IndexKey.NullableKeyField(schema, def.KeyExpression);
+        if (nullableKey) keyLen++;
         byte pad = isChar && !isBinary ? IndexKey.CharacterKeyPad(collation.Name) : (byte)0x00;
 
         Func<IRowContext, VfpValue>? forFn = !string.IsNullOrWhiteSpace(def.ForExpression)
@@ -538,6 +548,7 @@ internal static class CdxIndexBuilder
             KeyType = keyType,
             KeyLen = keyLen,
             IsChar = isChar,
+            NullableKey = nullableKey,
             Pad = pad,
             Collation = collation,
             CharacterEncoding = IndexKey.ResolveCharacterEncoding(schema, def.KeyExpression),

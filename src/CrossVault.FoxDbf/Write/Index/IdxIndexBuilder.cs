@@ -66,6 +66,8 @@ internal static class IdxIndexBuilder
         };
 
         var (keyType, keyLen, _) = CdxIndexBuilder.ResolveKey(schema, keyExpr, ctx);
+        bool nullableKey = IndexKey.NullableKeyField(schema, keyExpr);
+        if (nullableKey) keyLen++;
         Encoding characterEncoding = ResolveCharacterEncoding(schema, keyExpr);
 
         var keyFn = CdxIndexBuilder.CompileIndex(keyExpr, ctx);
@@ -87,9 +89,13 @@ internal static class IdxIndexBuilder
                 if (!(f.Type == VfpType.Logical && f.AsLogical))
                     continue;
             }
-            byte[] key = dateField is not null
+            var value = keyFn(rc);
+            byte[] key = nullableKey
+                ? value.IsNull ? new byte[keyLen] : IndexKey.PrefixNonNullKey(dateField is not null
+                    ? IndexKey.EncodeDateField(row.Record, dateField) : EncodeKey(value, keyType, keyLen - 1, characterEncoding))
+                : dateField is not null
                 ? IndexKey.EncodeDateField(row.Record, dateField)
-                : EncodeKey(keyFn(rc), keyType, keyLen, characterEncoding);
+                : EncodeKey(value, keyType, keyLen, characterEncoding);
             entries.Add(new Entry(key, (uint)row.RecNo));
         }
 
