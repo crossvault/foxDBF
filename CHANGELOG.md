@@ -12,6 +12,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   and sharp-s expansions. Index creation, maintenance of existing GERMAN tags, SEEK and microVFP
   `SET COLLATE TO "GERMAN"` use the table's code page. GERMAN on code page 850 remains unsupported.
 
+### Fixed
+
+- GENERAL is now exact on code pages 852, 857, 861, 863, 865, 1254, 10000, 10029, 620 and 895.
+  Index keys are byte-identical to VFP9, allowing index creation and maintenance, SEEK in both directions
+  and Rushmore narrowing on these tables. Previously these combinations were approximate and index writes
+  and SEEK were refused.
+
 ## [0.11.0] - 2026-11-09
 
 ### Added
