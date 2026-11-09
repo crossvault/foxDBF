@@ -24,10 +24,18 @@ public sealed partial class VfpInterpreter
         var previous = Session.DbcDefaultEvaluator;
         var previousValues = Session.InsertValueEvaluator;
         var previousValidator = Session.InsertRowValidator;
-        var rules = EnforceReferentialIntegrity && ResolveInsertStatement(ins) is { } parsed
-            ? DmlExecutor.ValidationRules(Session, parsed.Table) : null;
-        Session.InsertRowValidator = rules is null ? null
-            : (table, schema, values, blank, recno) => ValidateInsertRules(table, schema, values, blank, recno, rules);
+        var previousFilter = Session.InsertRuleFilter;
+        string? outerTable = EnforceReferentialIntegrity ? ResolveInsertStatement(ins)?.Table : null;
+        var rules = outerTable is null ? null : DmlExecutor.ValidationRules(Session, outerTable);
+        DbcTableRules? RulesFor(string table) => string.Equals(table, outerTable, StringComparison.OrdinalIgnoreCase)
+            ? rules : DmlExecutor.ValidationRules(Session, table);
+        Session.InsertRuleFilter = EnforceReferentialIntegrity ? table => RulesFor(table) is not null : null;
+        Session.InsertRowValidator = !EnforceReferentialIntegrity ? null
+            : (table, schema, values, blank, recno) =>
+            {
+                if (RulesFor(table) is { } targetRules)
+                    ValidateInsertRules(table, schema, values, blank, recno, targetRules);
+            };
         Session.DbcDefaultEvaluator = _dbcDefaultEvaluator ??= EvalDbcDefault;
         Session.InsertValueEvaluator = _insertValueEvaluator ??= expression =>
         {
@@ -59,6 +67,7 @@ public sealed partial class VfpInterpreter
             Session.DbcDefaultEvaluator = previous;
             Session.InsertValueEvaluator = previousValues;
             Session.InsertRowValidator = previousValidator;
+            Session.InsertRuleFilter = previousFilter;
         }
     }
 

@@ -60,7 +60,7 @@ internal sealed partial class DmlExecutor
         {
             var columns = target.Writer.Schema.Columns;
             var values = EvaluateValues(_session, st);
-            if (_session.InsertRowValidator is { } validate)
+            if (_session.InsertValidatorFor(st.Table) is { } validate)
             {
                 if (st.Columns is null) CheckInsertValueCount(columns, values);
                 var candidate = st.Columns is null
@@ -154,8 +154,8 @@ internal sealed partial class DmlExecutor
     private static void AppendAllColumns(VfpSession session, string table, DbfWriter writer, IReadOnlyList<DbfColumn> columns, object?[] values)
     {
         CheckInsertValueCount(columns, values);
-        using var appendLock = session.InsertRowValidator is null ? null : writer.LockAppendScope();
-        if (session.InsertRowValidator is { } validate)
+        using var appendLock = session.InsertValidatorFor(table) is null ? null : writer.LockAppendScope();
+        if (session.InsertValidatorFor(table) is { } validate)
         {
             var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < columns.Count; i++) map[columns[i].Name] = values[i];
@@ -168,8 +168,8 @@ internal sealed partial class DmlExecutor
         Dictionary<string, object?> map, bool honourSetNull)
     {
         var blank = OmittedColumnsBlankMask(session, table, writer.Schema.Columns, map, honourSetNull);
-        using var appendLock = session.InsertRowValidator is null ? null : writer.LockAppendScope();
-        if (session.InsertRowValidator is { } validate)
+        using var appendLock = session.InsertValidatorFor(table) is null ? null : writer.LockAppendScope();
+        if (session.InsertValidatorFor(table) is { } validate)
             validate(table, writer.Schema, StoredInsertValues(writer, map, blank), blank, writer.RecordCount + 1);
         writer.AppendRecord(map, blank);
     }
@@ -236,7 +236,7 @@ internal sealed partial class DmlExecutor
     {
         var schema = target.Writer.Schema;
         var blank = OmittedColumnsBlankMask(_session, table, schema.Columns, map, honourSetNull);
-        if (_session.InsertRowValidator is { } validate)
+        if (_session.InsertValidatorFor(table) is { } validate)
         {
             AppendWithRestoredArea(table, ref target, map, blank, validate);
             return;

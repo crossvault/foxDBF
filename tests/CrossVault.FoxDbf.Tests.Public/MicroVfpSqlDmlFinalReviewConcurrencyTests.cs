@@ -59,7 +59,7 @@ public sealed class MicroVfpSqlDmlFinalReviewConcurrencyTests
         session.MemoryBridge = new NestedBridge(session);
         var error = Assert.ThrowsAny<Exception>(() => vfp.Execute("INSERT INTO parent FROM ARRAY rows"));
         Assert.Equal(1582, Assert.IsAssignableFrom<IVfpErrorCode>(error).VfpErrorNumber);
-        Assert.Equal(0, session.Execute("SELECT n FROM child")!.Rows!.Count());
+        Assert.Empty(session.Execute("SELECT n FROM child")!.Rows!);
     }
 
     private sealed class NestedBridge(VfpSession session) : IVfpMemoryBridge
@@ -91,21 +91,29 @@ public sealed class MicroVfpSqlDmlFinalReviewConcurrencyTests
         using var vfp = new VfpInterpreter(session);
         string index = dir.File("extra." + (format == "cdx" ? "cdx" : "idx"));
         vfp.Execute(MicroVfpNonStructuralTxnTests.Setup(format, false) + "\nUSE t");
-        byte[] originalDbf = File.ReadAllBytes(dir.File("t.dbf"));
-        byte[] originalIndex = File.ReadAllBytes(index);
+        byte[] originalDbf = ReadShared(dir.File("t.dbf"));
+        byte[] originalIndex = ReadShared(index);
         vfp.Execute("BEGIN TRANSACTION\nREPLACE id WITH 2");
-        byte[] innerDbf = File.ReadAllBytes(dir.File("t.dbf"));
+        byte[] innerDbf = ReadShared(dir.File("t.dbf"));
         vfp.Execute("BEGIN TRANSACTION\nSET INDEX TO [" + index + "]\nREPLACE id WITH 3");
-        Assert.False(originalIndex.SequenceEqual(File.ReadAllBytes(index)));
+        Assert.False(originalIndex.SequenceEqual(ReadShared(index)));
         vfp.Execute(commitInner ? "END TRANSACTION" : "ROLLBACK");
         if (!commitInner)
         {
-            Assert.Equal(innerDbf, File.ReadAllBytes(dir.File("t.dbf")));
-            Assert.Equal(originalIndex, File.ReadAllBytes(index));
+            Assert.Equal(innerDbf, ReadShared(dir.File("t.dbf")));
+            Assert.Equal(originalIndex, ReadShared(index));
         }
         vfp.Execute("ROLLBACK\nUSE");
-        Assert.Equal(originalDbf, File.ReadAllBytes(dir.File("t.dbf")));
-        Assert.Equal(originalIndex, File.ReadAllBytes(index));
+        Assert.Equal(originalDbf, ReadShared(dir.File("t.dbf")));
+        Assert.Equal(originalIndex, ReadShared(index));
     }
+    private static byte[] ReadShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var copy = new MemoryStream();
+        stream.CopyTo(copy);
+        return copy.ToArray();
+    }
+
 }
 
