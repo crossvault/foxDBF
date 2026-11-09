@@ -1134,13 +1134,7 @@ public sealed partial class VfpInterpreter
             // Read the refreshed live tree: removed expression keys may have changed value,
             // so their old tombstones cannot take part in this binary search.
             using var src = OpenOrderSource(area, m.Order!, resolveHosted: false);
-            var entries = OrderedEntries(src!).ToList();
-            if (m.OrderReversed) entries.Reverse();
-            m.Ordered = entries.Select(e => e.Recno).ToList();
-            m.OrderKeys = entries.Select(e => e.Key).ToList();
-            m.OrderSlots = null;
-            m.OrderPos = -1;
-            EnsureOrderSlots(m);
+            CacheOrderKeys(m, OrderedEntries(src!));
         }
         int selected = Session.CurrentArea;
         VfpValue value;
@@ -1151,16 +1145,31 @@ public sealed partial class VfpInterpreter
         }
         finally { Session.SelectArea(selected); }
         byte[] key = m.OrderEncodeKey!(value);
-        bool descending = m.OrderDescending;
         // VFP uses the current expression value for a missing expression key (including
         // IIF(DELETED(), ...)); ordinary field keys keep their original cached slot.
+        return OrderInsertionPoint(m, key, m.RecNo);
+    }
+
+    private static void CacheOrderKeys(AreaMeta m, IEnumerable<(byte[] Key, int Recno)> source)
+    {
+        var entries = source.ToList();
+        if (m.OrderReversed) entries.Reverse();
+        m.Ordered = entries.Select(e => e.Recno).ToList();
+        m.OrderKeys = entries.Select(e => e.Key).ToList();
+        m.OrderSlots = null;
+        EnsureOrderSlots(m);
+        m.OrderPos = m.Eof ? m.Ordered.Count : m.OrderSlots!.GetValueOrDefault(m.RecNo, -1);
+    }
+
+    private static int OrderInsertionPoint(AreaMeta m, byte[] key, int recno)
+    {
         int low = 0, high = m.Ordered!.Count;
         while (low < high)
         {
             int mid = low + (high - low) / 2;
             int compare = CompareBytesUnsigned(m.OrderKeys![mid], key);
-            if (compare == 0) compare = Math.Abs(m.Ordered[mid]).CompareTo(m.RecNo);
-            if (descending ? compare > 0 : compare < 0) low = mid + 1;
+            if (compare == 0) compare = Math.Abs(m.Ordered[mid]).CompareTo(recno);
+            if (m.OrderDescending ? compare > 0 : compare < 0) low = mid + 1;
             else high = mid;
         }
         return low;
@@ -1186,21 +1195,54 @@ public sealed partial class VfpInterpreter
                 int slot = OrderSlot(m, change.Recno);
                 if (change.Key is null)
                 {
-                    if (slot >= 0) m.Ordered[slot] = -change.Recno;
+                    if (slot >= 0)
+                    {
+                        if (!m.OrderKeyIsField && m.OrderKeys is not null)
+                            MoveOrderEntry(m, slot, change.Recno, null);
+                        else m.Ordered[slot] = -change.Recno;
+                    }
                 }
                 else if (slot >= 0 && (m.OrderKeyIsField ||
                     m.OrderKeys is not null && m.OrderKeys[slot].AsSpan().SequenceEqual(change.Key)))
                     m.Ordered[slot] = change.Recno;
                 else
                 {
-                    m.Ordered = null;
-                    m.OrderKeys = null;
-                    m.OrderSlots = null;
-                    m.OrderPos = -1;
-                    break;
+                    if (m.OrderKeys is null)
+                    {
+                        // The writer has already flushed this delta. Read the live keys once,
+                        // with a fresh reader because the area's CDX view is refreshed afterwards.
+                        using var cdx = CdxFile.Open(Path.ChangeExtension(path, ".cdx"), wa.Table);
+                        CacheOrderKeys(m, cdx.Tag(m.Order!)!.EnumerateEntries()
+                            .Select(e => (e.Key, (int)e.RecordNumber)));
+                    }
+                    else MoveOrderEntry(m, slot, change.Recno, change.Key);
                 }
             }
         }
+    }
+
+    private static void MoveOrderEntry(AreaMeta m, int slot, int recno, byte[]? key)
+    {
+        var order = m.Ordered!;
+        var keys = m.OrderKeys!;
+        if (slot >= 0)
+        {
+            order.RemoveAt(slot);
+            keys.RemoveAt(slot);
+            m.OrderSlots!.Remove(recno);
+        }
+        int inserted = key is null ? order.Count : OrderInsertionPoint(m, key, recno);
+        if (key is not null)
+        {
+            order.Insert(inserted, recno);
+            keys.Insert(inserted, key);
+        }
+        // Only shifted entries need new slots. Keep the dictionary and keys for subsequent
+        // DELETE NEXT/REST steps rather than rereading the entire CDX after every row.
+        int first = slot < 0 ? inserted : Math.Min(slot, inserted);
+        int last = slot < 0 || key is null ? order.Count - 1 : Math.Min(order.Count - 1, Math.Max(slot, inserted));
+        for (int i = first; i <= last; i++) m.OrderSlots![Math.Abs(order[i])] = i;
+        m.OrderPos = m.Eof ? order.Count : m.OrderSlots!.GetValueOrDefault(m.RecNo, -1);
     }
 
     // ── navigation wrappers (microVFP P1 gap #2) — every USER parent move goes through one of these and,
