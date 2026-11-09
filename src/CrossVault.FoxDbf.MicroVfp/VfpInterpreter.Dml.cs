@@ -131,7 +131,13 @@ public sealed partial class VfpInterpreter
         // VFP rolls the rejected field back before evaluating its ERROR expression. A record
         // rule's ERROR expression, in contrast, still sees the complete rejected candidate.
         bool supplied = row.Values.TryGetValue(field, out var candidate);
-        row.Values[field] = ReadFieldOnDisk(area, field);
+        var buffer = Meta(area.Area).Buf;
+        int appendIndex = row.RecNo - area.Table.RecordCount - 1;
+        bool retainedBuffer = _xbaseUpdateUnbufferedArea != area.Area && buffer is not null
+            && (buffer.Rows.ContainsKey(row.RecNo) || (appendIndex >= 0 && appendIndex < buffer.Appends.Count));
+        // A rejected edit remains in a real buffer, and VFP's ERROR expression sees it.
+        // An INSERT candidate not yet admitted to that buffer still sees the blank disk row.
+        if (!retainedBuffer) row.Values[field] = ReadFieldOnDisk(area, field);
         try { return EvalTextLoud(expression); }
         catch (MicroVfpRuntimeException error)
         {

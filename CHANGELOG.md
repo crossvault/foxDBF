@@ -113,6 +113,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- Field-rule ERROR expressions now read the rejected value retained in a row/table buffer,
+  including buffered appends. Unbuffered replacements continue to report the preceding value.
+
 - `REPLACE` rejects incompatible field types before evaluating later clauses and retains the
   accepted prefix on error 9. Errors in field ERROR expressions discard the candidate; errors
   in CHECK evaluation retain it as in VFP9. Record rules still run on a partial replacement,
