@@ -12,7 +12,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   NULL `SEEK`/`INDEXSEEK`/`KEYMATCH` probes use stored NULL keys and honor visibility. Nullable fields
   retain VFP9's NULL marker in CDX and legacy/compact IDX keys, including write maintenance.
 - microVFP `SUM` and `AVERAGE` retain VFP9 numeric display precision and currency results.
-  `CALCULATE AVG/SUM/STD/VAR/CNT/MIN/MAX` supports scoped aggregation into variables, including
+  Numeric `CALCULATE AVG/SUM/STD/VAR/CNT/MIN/MAX` supports scoped aggregation into variables, including
   VFP9 empty and NULL-input results. `TRANSFORM` preserves aggregate scale across assignments;
   `STR()` defaults remain unchanged. `SET DECIMALS` also supplies the default scale of new Double fields.
 - BREAKING: microVFP `SUM` now treats leading `REST` and `RECORD` as VFP9 scope keywords,

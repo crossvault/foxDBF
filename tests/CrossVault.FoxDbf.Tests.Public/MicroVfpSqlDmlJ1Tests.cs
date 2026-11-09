@@ -6,6 +6,35 @@ namespace CrossVault.FoxDbf.Tests;
 
 public sealed class MicroVfpSqlDmlJ1Tests
 {
+    [Theory]
+    [InlineData("legacy", false)]
+    [InlineData("legacy", true)]
+    [InlineData("compact", false)]
+    [InlineData("compact", true)]
+    [InlineData("cdx", false)]
+    [InlineData("cdx", true)]
+    public void LateOpenedIndex_OuterSqlSnapshotSurvivesInnerBoundary(string format, bool commitInner)
+    {
+        using var dir = new MicroVfpTestSupport.TempDir("sql_j1_outer");
+        DbfDatabaseBuilder.Create(dir.File("probe.dbc"), Array.Empty<DbcTableSpec>());
+        using var session = new VfpSession();
+        session.OpenDirectory(dir.Path);
+        session.OpenDatabase(dir.File("probe.dbc"));
+        using var vfp = new VfpInterpreter(session);
+        vfp.Execute(Setup(format) + "\nUSE t");
+        string[] files = ["t.dbf", "t.fpt", "t.cdx", IndexFile(format)];
+        var before = files.ToDictionary(f => f, f => File.ReadAllBytes(dir.File(f)));
+        vfp.Execute("BEGIN TRANSACTION");
+        session.Execute("UPDATE t SET note='outer'");
+        vfp.Execute("BEGIN TRANSACTION\nSET INDEX TO " + IndexFile(format));
+        session.Execute("UPDATE t SET id=2,note='inner'");
+        vfp.Execute((commitInner ? "END TRANSACTION" : "ROLLBACK") + "\nROLLBACK\nUSE");
+        foreach (string file in files) Assert.Equal(before[file], File.ReadAllBytes(dir.File(file)));
+        vfp.Execute("USE t INDEX " + IndexFile(format) + "\nSET ORDER TO 2");
+        Assert.True(vfp.EvalExpression("SEEK(1)").AsLogical);
+        Assert.False(vfp.EvalExpression("SEEK(2)").AsLogical);
+    }
+
     public static IEnumerable<object[]> Cases =>
         from format in new[] { "legacy", "compact", "cdx" }
         from form in new[] { "array", "memvar", "select", "update", "delete" }
