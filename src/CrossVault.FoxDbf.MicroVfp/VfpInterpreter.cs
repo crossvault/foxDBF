@@ -481,7 +481,10 @@ public sealed partial class VfpInterpreter
     {
         // (1) typed number — authoritative. Walk the inner chain: a BCL wrapper may sit on top of ours.
         for (Exception? e = ex; e is not null; e = e.InnerException)
+        {
             if (e is IVfpErrorCode { VfpErrorNumber: int typed }) return typed;
+            if (e is ExpressionException { VfpErrorNumber: int expressionError }) return expressionError;
+        }
 
         // (2) known OWN exception types with a well-defined 1:1 VFP class.
         if (ex is DbfFileNotFoundException) return 1;   // "File/table does not exist" (VFP err 1).

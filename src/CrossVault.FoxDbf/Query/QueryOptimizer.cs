@@ -524,7 +524,7 @@ public static class QueryOptimizer
     {
         int st = i, n = s.Length;
         bool dot = false;
-        while (i < n && (char.IsDigit(s[i]) || (s[i] == '.' && !dot)))
+        while (i < n && (char.IsDigit(s[i]) || (s[i] == '.' && !dot && !ExpressionLexer.IsDottedOperatorAhead(s, i))))
         {
             if (s[i] == '.') dot = true;
             i++;

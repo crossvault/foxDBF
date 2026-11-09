@@ -60,7 +60,7 @@ public sealed class SqlExecutorFixTests : IDisposable
 
         Assert.Single(rows);
         Assert.Equal(0m, SqlTestSupport.Norm(rows[0][0])); // COUNT(*) → 0
-        Assert.Equal(0m, SqlTestSupport.Norm(rows[0][1])); // SUM → 0
+        Assert.Null(rows[0][1]);                            // SUM → null (SqlBacklogS2Vfp9OracleTests)
         Assert.Null(rows[0][2]);                            // AVG → null
         Assert.Null(rows[0][3]);                            // MIN → null
         Assert.Null(rows[0][4]);                            // MAX → null

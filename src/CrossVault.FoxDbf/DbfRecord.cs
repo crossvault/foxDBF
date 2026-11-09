@@ -108,7 +108,18 @@ public readonly struct DbfRecord
             return null;
         var column = columns[index];
         if (column.Type != 'C')
-            return this[index];
+        {
+            var fieldValue = this[index];
+            // VFP reads an all-star numeric overflow as +infinity, distinct from a NULL bit.
+            // Keep the raw public decoder's malformed-data contract; SQL/expressions use this view.
+            if (fieldValue is null && column.Type is 'N' or 'F'
+                && !(_table.ApplyNullFlags && IsNullFlagSet(column)))
+            {
+                var raw = GetRawField(column);
+                if (!raw.IsEmpty && raw.IndexOfAnyExcept((byte)'*') < 0) return double.PositiveInfinity;
+            }
+            return fieldValue;
+        }
         // Memoized like the indexer: a filter naming the field twice (a OR chain, a range) decodes it once.
         if (_decoded[index] == ExpressionDecoded)
             return _cache[index];

@@ -178,6 +178,15 @@ internal sealed class SelectExecutor
 
     public SqlResult Run(SelectStatement sel)
     {
+        try { return RunCore(sel); }
+        catch (ExpressionException ex) when (ex.VfpErrorNumber is not null)
+        {
+            throw new FoxDbfSqlException(ex.Message, ex) { VfpErrorNumber = ex.VfpErrorNumber };
+        }
+    }
+
+    private SqlResult RunCore(SelectStatement sel)
+    {
         PushdownFilters = Array.Empty<string>(); // reset: RunSingle / RunUnion never push
 
         // UNION owns its overall ORDER BY / TOP / INTO modifiers. VFP's grammar attaches a
@@ -336,7 +345,7 @@ internal sealed class SelectExecutor
             int i = position++;
             var col = columns[i];
             if (!ContainsAggregate(item) && item.Expression is { } expression
-                && expression.ContainsFunction(static (n, a) => n == "IIF" && a == 3))
+                && expression.ContainsFunction(static (n, a) => (n == "IIF" && a == 3) || (n == "VAL" && a == 1)))
             {
                 sample ??= firstSourceRow();
                 if (sample is not null)
@@ -480,6 +489,11 @@ internal sealed class SelectExecutor
 
         // Size unknown character expressions before filtering or sorting the source rows.
         var columns = BuildColumns(table, alias, schema, sel.Items);
+        Func<SelectItem, int> starWidth = _ => table.Columns.Count;
+        Func<string, bool> isSourceField = f => FindColumn(table, f) is not null;
+        var order = new OrderScope(sel.Items, starWidth, isSourceField, columns.Count);
+        var groupBy = ValidateClauses(sel, order, schema, _ => table.Columns.Select(c => alias + "." + c.Name),
+            table.Columns.Select(c => alias + "." + c.Name));
         columns = SizeRuntimeColumns(columns, sel.Items, _ => table.Columns.Count, () =>
         {
             var first = table.EnumerateAll(includeDeleted: true).Select(r => (DbfRecord?)r).FirstOrDefault();
@@ -494,10 +508,6 @@ internal sealed class SelectExecutor
         // row context so ORDER BY / TOP can re-evaluate row-level keys after grouping.
         bool aggregate = sel.GroupBy.Count > 0 || sel.Items.Any(ContainsAggregate);
 
-        Func<SelectItem, int> starWidth = _ => table.Columns.Count;
-        Func<string, bool> isSourceField = f => FindColumn(table, f) is not null;
-        var order = new OrderScope(sel.Items, starWidth, isSourceField, columns.Count);
-
         List<(object?[] row, IRowContext rep)> pairs;
         if (!aggregate)
         {
@@ -507,7 +517,6 @@ internal sealed class SelectExecutor
         }
         else
         {
-            var groupBy = ResolveGroupBy(sel, order, _ => table.Columns.Select(c => c.Name));
             pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, order, rows.ConvertAll(r => r.Ctx));
         }
 
@@ -973,6 +982,13 @@ internal sealed class SelectExecutor
 
             var schema = new CompositeSchema(src);
             var columns = BuildJoinColumns(src, schema, sel.Items);
+            Func<SelectItem, int> starWidth = it => StarWidthJoin(it, src);
+            Func<string, bool> isSourceField = f => Array.Exists(src, s => s.ColNames.Contains(f));
+            var order = new OrderScope(sel.Items, starWidth, isSourceField, columns.Count);
+            var groupBy = ValidateClauses(sel, order, schema, it => src
+                .Where(s => it.StarAlias is null || string.Equals(it.StarAlias, s.Alias, StringComparison.OrdinalIgnoreCase))
+                .SelectMany(s => s.Columns.Select(c => s.Alias + "." + c.Name)),
+                src.SelectMany(s => s.Columns.Select(c => s.Alias + "." + c.Name)));
             columns = SizeRuntimeColumns(columns, sel.Items, it => StarWidthJoin(it, src), () =>
             {
                 var first = src.Select(s => s.Table.EnumerateAll(includeDeleted: true)
@@ -1046,10 +1062,6 @@ internal sealed class SelectExecutor
 
             bool aggregate = sel.GroupBy.Count > 0 || sel.Items.Any(ContainsAggregate);
 
-            Func<SelectItem, int> starWidth = it => StarWidthJoin(it, src);
-            Func<string, bool> isSourceField = f => Array.Exists(src, s => s.ColNames.Contains(f));
-            var order = new OrderScope(sel.Items, starWidth, isSourceField, columns.Count);
-
             List<(object?[] row, IRowContext rep)> pairs;
             if (!aggregate)
             {
@@ -1062,9 +1074,6 @@ internal sealed class SelectExecutor
             }
             else
             {
-                var groupBy = ResolveGroupBy(sel, order, it => src
-                    .Where(s => it.StarAlias is null || string.Equals(it.StarAlias, s.Alias, StringComparison.OrdinalIgnoreCase))
-                    .SelectMany(s => s.Columns.Select(c => s.Alias + "." + c.Name)));
                 var rcs = composites.ConvertAll(c => Bind(new CompositeRowContext(src, c, _outer, VfpBlankFields)));
                 pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, order, rcs);
             }
@@ -1544,6 +1553,70 @@ internal sealed class SelectExecutor
 
     // ---- aggregates / GROUP BY / HAVING (source-agnostic) ---------------------------------
 
+    // These are binding errors, including for empty inputs: validate before sampling or projecting rows.
+    private IReadOnlyList<VfpExpression> ValidateClauses(
+        SelectStatement sel, OrderScope scope, ISchema schema,
+        Func<SelectItem, IEnumerable<string>> starFields, IEnumerable<string> sourceFields)
+    {
+        var groups = ResolveGroupBy(sel, scope, starFields);
+        if (sel.Having is null && !sel.Distinct) return groups;
+        var fields = sourceFields.ToArray();
+        string FieldKey(string name)
+        {
+            string key = StripWs(name).ToUpperInvariant();
+            if (key.Contains('.')) return key;
+            var matches = fields.Where(f => f.EndsWith("." + key, StringComparison.OrdinalIgnoreCase)).ToArray();
+            return matches.Length == 1 ? matches[0].ToUpperInvariant() : key;
+        }
+
+        bool IsExternalReference(string name)
+        {
+            // QualifierBinder has already checked qualified outer fields and m.vars. They are
+            // constants of this query, not local fields that must appear in GROUP BY.
+            if (name.Contains('.')) return !fields.Contains(StripWs(name), StringComparer.OrdinalIgnoreCase);
+            return !schema.TryGetColumn(name, out _, out _, out _) && _host is not null
+                && _session.MemoryBridge?.TryReadMemvar(name, out _) == true;
+        }
+
+        var aliases = AliasColumns(scope);
+        if (sel.Having is { } having)
+        {
+            foreach (string field in having.ReferencedFields())
+                if (!IsExternalReference(field) && !schema.TryGetColumn(field, out _, out _, out _) && !aliases.ContainsKey(field))
+                    throw new FoxDbfSqlException($"Column '{field}' is not found in HAVING.") { VfpErrorNumber = 1806 };
+            bool aggregate = groups.Count > 0 || sel.Items.Any(ContainsAggregate);
+            if (aggregate)
+            {
+                // GROUP BY an expression does not group its individual input fields in HAVING.
+                var grouped = groups.Where(g => SimpleFieldRx.IsMatch(g.Text.Trim()))
+                    .SelectMany(g => g.ReferencedFields()).Select(FieldKey).ToHashSet();
+                foreach (string field in having.ReferencedFields(IsSqlAggregateCall))
+                {
+                    if (IsExternalReference(field)) continue;
+                    if (!schema.TryGetColumn(field, out _, out _, out _) && aliases.ContainsKey(field)) continue;
+                    if (!grouped.Contains(FieldKey(field)))
+                        throw new FoxDbfSqlException($"HAVING field '{field}' is not grouped.") { VfpErrorNumber = 1803 };
+                }
+            }
+        }
+
+        if (sel.Distinct)
+        {
+            var selectedFields = sel.Items.SelectMany(it => it.IsStar ? starFields(it)
+                : it.Expression is { } ex && SimpleFieldRx.IsMatch(ex.Text.Trim())
+                    ? new[] { ex.Text } : Array.Empty<string>()).Select(FieldKey).ToHashSet();
+            foreach (var ob in sel.OrderBy)
+            {
+                if (ob.Ordinal is int ordinal && ordinal >= 1 && ordinal <= scope.ColumnCount) continue;
+                if (ob.Expression is { } aliasExpression && SimpleFieldRx.IsMatch(aliasExpression.Text.Trim())
+                    && ResolveOrderColumn(ob, sel.Items, scope.StarWidth) >= 0) continue;
+                if (ob.Expression is { } ex && SimpleFieldRx.IsMatch(ex.Text.Trim()) && selectedFields.Contains(FieldKey(ex.Text))) continue;
+                throw new FoxDbfSqlException("ORDER BY must name a selected column with DISTINCT.") { VfpErrorNumber = 1808 };
+            }
+        }
+        return groups;
+    }
+
     private static List<(object?[] row, IRowContext rep)> Aggregate(
         EvaluationContext ctx, SelectStatement sel, OrderScope scope, IReadOnlyList<IRowContext> rows)
     {
@@ -1581,8 +1654,8 @@ internal sealed class SelectExecutor
         var result = new List<(object?[] row, IRowContext rep)>();
         foreach (var members in groups)
         {
-            // A whole-table aggregate over an EMPTY set still emits one row (COUNT→0, SUM→0,
-            // AVG/MIN/MAX→null). Use a synthetic context when there is no member.
+            // A whole-table aggregate over an EMPTY set still emits one row (COUNT→0,
+            // SUM/AVG/MIN/MAX→null). Use a synthetic context when there is no member.
             // VFP9 takes non-aggregated values from the LAST member in source order, including
             // differently cased GROUP BY keys that collate equal under GENERAL.
             IRowContext rep = members.Count > 0 ? members[^1] : EmptyRowContext.Instance;
@@ -1700,7 +1773,7 @@ internal sealed class SelectExecutor
         var vals = members.Select(m => arg.Evaluate(m, ctx)).Where(v => !v.IsNull).ToList();
         switch (func)
         {
-            case "SUM": return vals.Count == 0 && members.Count > 0 ? null : vals.Aggregate(0m, (acc, v) => acc + v.AsNumber);
+            case "SUM": return vals.Count == 0 ? null : vals.Aggregate(0m, (acc, v) => acc + v.AsNumber);
             case "AVG": return vals.Count == 0 ? (decimal?)null : vals.Aggregate(0m, (acc, v) => acc + v.AsNumber) / vals.Count;
             case "MIN": return vals.Count == 0 ? null : Norm(ToClr(vals.Aggregate((a, b) => CompareVfp(a, b, ctx) <= 0 ? a : b)));
             case "MAX": return vals.Count == 0 ? null : Norm(ToClr(vals.Aggregate((a, b) => CompareVfp(a, b, ctx) >= 0 ? a : b)));
@@ -2285,7 +2358,7 @@ internal sealed class SelectExecutor
         VfpType.DateTime => v.AsDateTime,
         VfpType.Integer => v.AsInteger,    // I → int (matches SqlColumn.ClrType typeof(int))
         VfpType.Currency => v.AsNumber,    // Y → decimal
-        VfpType.Numeric => v.AsNumber,     // N / F / B → decimal (B coerced to double by CoerceCell)
+        VfpType.Numeric => double.IsFinite(v.AsDouble) ? (object)v.AsNumber : v.AsDouble,
         _ => v.AsNumber,
     };
 
@@ -2303,12 +2376,19 @@ internal sealed class SelectExecutor
 
     private static object? StoreCell(object? value, SqlColumn column)
     {
+        if (value is double nonFinite && !double.IsFinite(nonFinite)) return value;
         if (value is not null && IsNumericBox(value))
         {
             if (column.VfpType == 'I') value = decimal.Truncate(Convert.ToDecimal(value));
             else if (column.VfpType == 'Y') value = Math.Round(Convert.ToDecimal(value), 4, MidpointRounding.AwayFromZero);
             else if (column.VfpType is 'N' or 'F' && column.Length > 0)
-                value = Math.Round(Convert.ToDecimal(value), Math.Clamp(column.Decimals, 0, 28), MidpointRounding.AwayFromZero);
+            {
+                int decimals = Math.Clamp(column.Decimals, 0, 28);
+                value = Math.Round(Convert.ToDecimal(value), decimals, MidpointRounding.AwayFromZero);
+                // VFP's all-star numeric cursor value is +infinity when copied into a B field.
+                if (((decimal)value).ToString("F" + decimals, CultureInfo.InvariantCulture).Length > column.Length)
+                    return double.PositiveInfinity;
+            }
         }
         value = CoerceCell(value, column.ClrType);
         // A SELECT result is a VFP cursor: both direct results and INTO must expose its stored
@@ -2341,7 +2421,7 @@ internal sealed class SelectExecutor
     {
         null => null,
         decimal m => m,
-        double d => (decimal)d,
+        double d => double.IsFinite(d) ? (object)(decimal)d : d,
         float f => (decimal)f,
         int i => (decimal)i,
         long l => (decimal)l,
@@ -2361,6 +2441,7 @@ internal sealed class SelectExecutor
             return a.AsLogical.CompareTo(b.AsLogical);
         if (a.Type is VfpType.Date or VfpType.DateTime && b.Type is VfpType.Date or VfpType.DateTime)
             return a.AsDateTime.CompareTo(b.AsDateTime);
+        if (!double.IsFinite(a.AsDouble) || !double.IsFinite(b.AsDouble)) return a.AsDouble.CompareTo(b.AsDouble);
         return a.AsNumber.CompareTo(b.AsNumber);
     }
 
@@ -2389,6 +2470,9 @@ internal sealed class SelectExecutor
         {
             case (string sa, string sb): return ctx.Collation.Compare(sa.AsSpan(), sb.AsSpan());
             case (decimal da, decimal db): return da.CompareTo(db);
+            case (double da, double db): return da.CompareTo(db);
+            case (double da, decimal db): return da.CompareTo((double)db);
+            case (decimal da, double db): return ((double)da).CompareTo(db);
             case (bool ba, bool bb): return ba.CompareTo(bb);
             case (DateOnly or DateTime, DateOnly or DateTime): return AsDateTime(a).CompareTo(AsDateTime(b));
             case (byte[] xa, byte[] xb): return xa.AsSpan().SequenceCompareTo(xb);

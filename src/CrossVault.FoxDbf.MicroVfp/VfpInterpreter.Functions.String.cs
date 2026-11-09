@@ -94,6 +94,8 @@ public sealed partial class VfpInterpreter
         VfpType.Null => ".NULL.",
         VfpType.Date => v.AsDate == default ? new string(' ', 10) : v.AsDate.ToString("MM/dd/yyyy", CultureInfo.InvariantCulture),
         VfpType.DateTime => v.AsDateTime.ToString("MM/dd/yyyy hh:mm:ss tt", CultureInfo.InvariantCulture),
+        // SQL cursor overflow remains numeric; VFP's default TRANSFORM renders ten stars.
+        VfpType.Numeric when double.IsInfinity(v.AsDouble) => new string('*', 10),
         VfpType.Numeric or VfpType.Integer or VfpType.Currency => NumberToPlainString(v.AsNumber),
         _ => v.ToString(),
     };
