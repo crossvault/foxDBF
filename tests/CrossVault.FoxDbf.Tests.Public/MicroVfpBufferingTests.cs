@@ -221,7 +221,7 @@ public sealed class MicroVfpBufferingTests
         b.Run("INSERT INTO people (id, name, city) VALUES (99, 'New', 'nowhere')");
         Assert.Equal(3, b.DiskCount());                    // append NOT flushed
 
-        b.Run("GO 4");                                      // position onto the buffered appended row
+        Assert.Equal(4m, b.Num("RECNO()"));                 // INSERT already positions here; GO would commit the row.
         Assert.Equal(99m, b.Num("id"));
         Assert.True(b.Num("GETFLDSTATE(1)") >= 3m);         // appended (3) / appended+changed (4)
 
@@ -238,7 +238,7 @@ public sealed class MicroVfpBufferingTests
         b.Run("USE people\n=CURSORSETPROP('Buffering', 3)");
 
         b.Run("INSERT INTO people (id, name, city) VALUES (99, 'New', 'nowhere')");
-        b.Run("GO 4");                                      // sit on the buffered append
+        Assert.Equal(4m, b.Num("RECNO()"));                 // VFP9 row buffering uses a positive record number.
         Assert.Equal(3, b.DiskCount());                    // still buffered
 
         b.Run("GO 1");                                      // MOVE off it → implicit commit of the append

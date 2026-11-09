@@ -568,6 +568,7 @@ public sealed partial class VfpInterpreter
             case InsertStmt ins: VfpInsertProfile.Stop(VfpInsertProfileBucket.StatementFetchDispatch, dispatchStart); ExecInsert(ins); break;
             case GatherStmt g: ExecGather(g); break;
             case ScatterStmt sc2: ExecScatter(sc2); break;
+            case AppendBlankStmt blank: ExecAppendBlank(blank); break;
             case AppendFromStmt af: ExecAppendFrom(af); break;
             case CopyStructureStmt cs: ExecCopyStructure(cs); break;
             case CopyToStmt ct: ExecCopyTo(ct); break;
@@ -1208,7 +1209,12 @@ public sealed partial class VfpInterpreter
         {
             string head = name[..dot], rest = name[(dot + 1)..];
             if (head.Equals("m", StringComparison.OrdinalIgnoreCase))
+            {
+                int memberDot = rest.IndexOf('.');
+                if (memberDot > 0 && TryResolveObjectMember(rest[..memberDot], rest[(memberDot + 1)..], out var property))
+                    return property;
                 return Memory.Get(rest).ToClr();
+            }
             var wa = Session.FindAreaByAlias(head);
             if (wa is not null)
             {
@@ -1301,7 +1307,7 @@ public sealed partial class VfpInterpreter
         if (m.Cached is { } c && m.CachedRec == m.RecNo) rec = c;
         else
         {
-            var got = wa.Table.GetRecord(m.RecNo - 1);
+            var got = wa.Table.GetRecord(m.RecNo - 1, includeDeleted: true);
             if (got is not DbfRecord dr) return null;     // deleted / unreadable.
             rec = dr; m.Cached = dr; m.CachedRec = m.RecNo;
         }
@@ -1343,6 +1349,7 @@ public sealed partial class VfpInterpreter
         VfpValue v;
         try { v = EvalTextLoud(e); } catch { return "U"; }
         if (TryGetObject(v, out _)) return "O";
+        if (v.IsBinary) return "Q";
         return v.Type switch
         {
             VfpType.Character => "C",
@@ -1401,6 +1408,15 @@ public sealed partial class VfpInterpreter
     {
         string t = target.Trim();
         if (t.StartsWith("m.", StringComparison.OrdinalIgnoreCase)) t = t[2..];
+
+        int dot = t.LastIndexOf('.');
+        if (dot > 0 && t.IndexOfAny(new[] { '(', '[' }) < 0)
+        {
+            if (!TryGetObject(EvalTextLoud(t[..dot]), out var obj))
+                throw new MicroVfpRuntimeException($"{t[..dot]} is not an object.", 1924);
+            obj.Set(t[(dot + 1)..], value);
+            return;
+        }
 
         // An array-element target `a(i)` / `a(i,j)` / `a[i]` / `a[i,j]`: write the element of the named
         // array (1-based). The subscripts are live expressions (e.g. gaErrors[lnErrorRows,4]).

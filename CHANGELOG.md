@@ -6,6 +6,26 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Added
+
+- microVFP `APPEND BLANK`, including buffered appends, index maintenance and DBC DEFAULTs evaluated once.
+  DEFAULTs see the new record's fields and physical record number, while `RECCOUNT()` still excludes it,
+  matching VFP9's distinction between APPEND BLANK and INSERT.
+- microVFP `SCATTER NAME` / `GATHER NAME` record objects with field properties, shared object references,
+  `ADDITIVE`, `BLANK`, `MEMO`, and `FIELDS` lists, `LIKE` and `EXCEPT` patterns.
+- microVFP `REPLACE` supports `ALL`, `FOR`, `WHILE`, `NEXT`, `REST` and `RECORD`, preserving VFP9's final
+  record position, visibility under SET DELETED/FILTER/KEY, buffering and index maintenance.
+
+### Fixed
+
+- BREAKING: microVFP INSERT positions the target on the appended record and keeps a previously closed target
+  open. Row buffering reports a positive record number; table buffering reports a provisional negative number.
+  An explicit navigation command after INSERT can therefore commit a row buffer, as it does in VFP9.
+- INSERT VALUES resolves user functions, memory variables and microVFP functions through the interpreter,
+  evaluates expressions once and propagates evaluation errors instead of silently buffering NULL.
+- EnforceRules leaves fields beyond a short INSERT FROM ARRAY row blank, even with DBC DEFAULTs or SET NULL ON.
+- Assigning a CATCH object's property updates that object; it no longer creates a separate dotted memory variable.
+
 ## [0.11.0] - 2026-11-09
 
 ### Added

@@ -94,7 +94,8 @@ internal sealed class DmlExecutor
         var ctx = session.SqlContext();
         var values = new object?[st.Values.Count];
         for (int i = 0; i < st.Values.Count; i++)
-            values[i] = SelectExecutor.ToClr(st.Values[i].Evaluate(ConstantRow.Instance, ctx));
+            values[i] = SelectExecutor.ToClr(session.InsertValueEvaluator is { } evaluate
+                ? evaluate(st.Values[i]) : st.Values[i].Evaluate(ConstantRow.Instance, ctx));
         return values;
     }
 
@@ -213,7 +214,7 @@ internal sealed class DmlExecutor
         IReadOnlyDictionary<string, object?> provided, bool honourSetNull)
     {
         // Session.Context, not SqlContext(): the microVFP interpreter's SET NULL writes Context.NullSetting.
-        bool nullOn = honourSetNull && session.Context.NullSetting;
+        bool nullOn = honourSetNull && !session.InsertArrayRow && session.Context.NullSetting;
         var blank = new bool[columns.Count];
         DbcTableRules? rules = null;
         bool rulesRead = false;
@@ -287,9 +288,9 @@ internal sealed class DmlExecutor
 
     /// <summary>Shared field-order evaluation for direct and buffered INSERTs, before either appends a row.</summary>
     internal static void EvaluateDbcDefaults(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
-        Dictionary<string, object?> map)
+        Dictionary<string, object?> map, bool honourSetNull = true)
     {
-        if (PendingDbcDefaults(session, table, columns, map) is { } pending)
+        if (PendingDbcDefaults(session, table, columns, map, honourSetNull: honourSetNull) is { } pending)
             session.DbcDefaultEvaluator!(table, pending, map);
     }
 
@@ -299,11 +300,11 @@ internal sealed class DmlExecutor
     /// <c>SET NULL ON</c>, stops at the first omitted NOT NULL field without a DEFAULT (error 1581, raised by
     /// <see cref="OmittedColumnsBlankMask"/>), so the DEFAULTs after it never run (probed with a counting UDF).</summary>
     private static List<(string Field, string Expression)>? PendingDbcDefaults(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
-        Dictionary<string, object?> map, string? sourcePath = null)
+        Dictionary<string, object?> map, string? sourcePath = null, bool honourSetNull = true)
     {
-        if (session.DbcDefaultEvaluator is null || DbcDefaultExpressions(session, table, columns, sourcePath) is not { } defaults)
+        if (session.InsertArrayRow || session.DbcDefaultEvaluator is null || DbcDefaultExpressions(session, table, columns, sourcePath) is not { } defaults)
             return null;
-        bool nullOn = session.Context.NullSetting;
+        bool nullOn = honourSetNull && session.Context.NullSetting;
         List<(string Field, string Expression)>? pending = null;
         for (int i = 0; i < columns.Count; i++)
         {

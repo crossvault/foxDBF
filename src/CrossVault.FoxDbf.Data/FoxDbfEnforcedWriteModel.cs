@@ -57,7 +57,7 @@ internal sealed class FoxDbfEnforcedWriteModel
     // ─────────────────────────── INSERT … FROM ARRAY | MEMVAR (enforced) ───────────────────────────
 
     /// <summary>Expand an <c>INSERT … FROM ARRAY | MEMVAR</c> into concrete per-row VALUES inserts and run each
-    /// through <see cref="Insert(InsertStatement)"/>, so DBC DEFAULTs (for fields the row does not reach),
+    /// through <see cref="Insert"/>, preserving blank unreached fields for FROM ARRAY and DEFAULTs for MEMVAR;
     /// field/record RULEs and the bound RI trigger all fire exactly as for the VALUES form. FROM ARRAY appends
     /// one VALUES insert per array row (position-mapped; excess ignored); FROM MEMVAR one insert whose columns
     /// are the fields that have a matching <c>m.&lt;field&gt;</c> memvar (missing fields fall to their DEFAULT).</summary>
@@ -82,18 +82,18 @@ internal sealed class FoxDbfEnforcedWriteModel
                 ?? throw new FoxDbfException($"INSERT … FROM ARRAY: '{ins.SourceName}' is not a memory array.");
             foreach (var row in rows)
             {
-                int k = Math.Min(row.Count, fields.Count);   // excess ignored; short row → DEFAULT/blank.
+                int k = Math.Min(row.Count, fields.Count);   // VFP leaves a short array's tail blank, even with DEFAULTs.
                 var cols = new List<string>(k);
                 var vals = new List<VfpValue>(k);
                 for (int i = 0; i < k; i++) { cols.Add(fields[i]); vals.Add(VfpValue.FromClr(row[i])); }
-                total += Insert(BuildValuesInsert(ins.Table, cols, vals));
+                total += Insert(BuildValuesInsert(ins.Table, cols, vals), arrayRow: true);
             }
         }
         return total;
     }
 
     /// <summary>A concrete <c>INSERT INTO table (cols) VALUES (literals)</c> statement whose VALUES are literal
-    /// renderings of the already-resolved memvar/array values — the shape <see cref="Insert(InsertStatement)"/>
+    /// renderings of the already-resolved memvar/array values — the shape <see cref="Insert"/>
     /// enforces.</summary>
     private static InsertStatement BuildValuesInsert(string table, List<string> cols, List<VfpValue> vals)
     {
@@ -127,7 +127,7 @@ internal sealed class FoxDbfEnforcedWriteModel
 
     // ─────────────────────────── INSERT: DEFAULT → field RULE → record RULE → trigger ───────────────────────────
 
-    private int Insert(InsertStatement ins)
+    private int Insert(InsertStatement ins, bool arrayRow = false)
     {
         var rules = TableRules(ins.Table);
 
@@ -160,7 +160,7 @@ internal sealed class FoxDbfEnforcedWriteModel
         {
             foreach (var f in rules.Fields)
             {
-                if (string.IsNullOrEmpty(f.DefaultValue) || provided.Contains(f.FieldName)) continue;
+                if (arrayRow || string.IsNullOrEmpty(f.DefaultValue) || provided.Contains(f.FieldName)) continue;
                 var dv = _interp.EvalExpression(f.DefaultValue!);
                 candidates[f.FieldName] = dv;
                 cols.Add(f.FieldName);
@@ -176,7 +176,10 @@ internal sealed class FoxDbfEnforcedWriteModel
         // 4) the row lands + its bound __RI_INSERT_* trigger auto-fires atomically (orphan child → rollback).
         string augmented = $"INSERT INTO {ins.Table} ({string.Join(", ", cols)}) VALUES ({string.Join(", ", valTexts)})";
         _interp.LastDmlTriggerAborted = false;
-        _interp.Execute(augmented);
+        bool previousArrayRow = _connection.Session.InsertArrayRow;
+        _connection.Session.InsertArrayRow = arrayRow;
+        try { _interp.Execute(augmented); }
+        finally { _connection.Session.InsertArrayRow = previousArrayRow; }
         ThrowIfTriggerAborted(ins.Table);   // a .F. INSERT trigger rolled the row back ⇒ VFP err 1539, not a phantom success.
         return 1;
     }
