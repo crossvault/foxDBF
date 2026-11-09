@@ -116,6 +116,9 @@ public readonly struct DbfRecord
         if (column.Type != 'C')
         {
             var fieldValue = this[index];
+            // Imports can store 0x80000000 in I. VFP exposes this as numeric overflow,
+            // not the valid integer -2147483648: comparisons are false and STR emits stars.
+            if (column.Type == 'I' && fieldValue is int.MinValue) return double.NaN;
             // VFP reads an all-star numeric overflow as +infinity, distinct from a NULL bit.
             // Keep the raw public decoder's malformed-data contract; SQL/expressions use this view.
             if (fieldValue is null && column.Type is 'N' or 'F'

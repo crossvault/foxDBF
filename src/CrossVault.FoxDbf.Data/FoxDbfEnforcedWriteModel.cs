@@ -52,6 +52,13 @@ internal sealed class FoxDbfEnforcedWriteModel
         var stmt = SqlParser.Parse(sql);
         // INSERT … FROM ARRAY | MEMVAR: expand into concrete per-row VALUES inserts (reading the active
         // session's memvar store) so each row flows through the SAME DEFAULT/RULE/TRIGGER enforcement below.
+        if (stmt is InsertStatement { SourceKind: InsertSourceKind.Select })
+        {
+            // The interpreter binds DEFAULT/UDF evaluation and the same per-row trigger
+            // route used by VALUES; the ordinary SELECT import still uses the core batch.
+            _interp.Execute(sql);
+            return _interp.Memory.Get("_TALLY").AsInteger;
+        }
         if (stmt is InsertStatement { SourceKind: not InsertSourceKind.Values } insFrom)
             return InsertFrom(insFrom);
         return stmt switch

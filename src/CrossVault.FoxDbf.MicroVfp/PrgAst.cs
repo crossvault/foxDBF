@@ -372,12 +372,18 @@ internal sealed record ScatterStmt(
     bool Except = false) : PrgStatement;
 
 /// <summary><c>APPEND FROM cFile [FIELDS cList] [FOR lExpr] [TYPE cType]</c> — append the matching-named
-/// fields of another DBF's rows to the CURRENT work area. Non-DBF <see cref="Type"/> formats are FLAGGED.</summary>
+/// fields of another DBF, positional array rows, or SDF/delimited text to the CURRENT work area.</summary>
 internal sealed record AppendFromStmt(
     NameRef Source,
     IReadOnlyList<string> Fields,
     PrgExpr? For,
-    string? Type) : PrgStatement;
+    string? Type,
+    bool Array = false,
+    string? FieldPattern = null,
+    bool Except = false,
+    string? Delimiter = null,
+    PrgExpr? CodePage = null,
+    string? Separator = null) : PrgStatement;
 
 internal sealed record AppendBlankStmt(NameRef? In) : PrgStatement;
 

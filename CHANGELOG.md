@@ -32,6 +32,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 - SQL and microVFP `CREATE TABLE` / `CREATE DBF` support `FREE` and `CODEPAGE = expression`,
   including VFP9 language-driver bytes, memo encoding and invalid-code-page errors.
+- microVFP `APPEND FROM ARRAY` (1-D/2-D, `FIELDS`, `LIKE`/`EXCEPT`, `FOR`) and
+  `APPEND FROM ... SDF / DELIMITED` with custom quotes/separators, `WITH BLANK`/`TAB`,
+  `FIELDS`, `FOR` and `AS` code pages. Imports preserve VFP9 field conversion, blank/NULL
+  distinctions, date parsing, partial progress, `_TALLY`, autoincrement and index constraints.
+- `INSERT INTO ... [(fields)] SELECT ...` in SQL, microVFP and ADO.NET, including DBC
+  defaults and field rules, source materialization for self-inserts, and batch writing.
+  VFP9 integer import overflow bytes are preserved and exposed as overflow in expressions.
 
 - microVFP scoped `DELETE` and `RECALL`: `ALL`, `NEXT`, `RECORD`, `REST`, `FOR`, `WHILE`,
   `IN` and `NOOPTIMIZE`, with VFP9 record order, visibility, final pointers and `_TALLY`.

@@ -18,6 +18,8 @@ public sealed partial class VfpInterpreter
         private readonly VfpInterpreter _it;
         public MemvarBridge(VfpInterpreter it) => _it = it;
 
+        public void SetImportTally(int count) => _it.Memory.Set("_TALLY", VfpValue.Integer(count));
+
         public void StoreQueryIntoArray(string name, int rows, int cols, IReadOnlyList<object?[]> data)
         {
             // _TALLY = row count in ALL cases (incl. zero rows).

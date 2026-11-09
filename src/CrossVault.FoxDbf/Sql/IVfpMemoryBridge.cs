@@ -15,6 +15,9 @@ namespace CrossVault.FoxDbf.Sql;
 /// </summary>
 internal interface IVfpMemoryBridge
 {
+    /// <summary>Publish INSERT SELECT's committed prefix, including a partial failure.</summary>
+    void SetImportTally(int count) { }
+
     /// <summary>
     /// <c>SELECT … INTO ARRAY name</c>: (re)create memory array <paramref name="name"/> as a
     /// <paramref name="rows"/> × <paramref name="cols"/> row-major grid of <paramref name="data"/> and set

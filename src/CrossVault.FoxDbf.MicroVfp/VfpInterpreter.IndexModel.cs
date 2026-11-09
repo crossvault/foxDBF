@@ -657,6 +657,7 @@ public sealed partial class VfpInterpreter
         if (!_candidateTags.TryGetValue(key, out var set))
             _candidateTags[key] = set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         set.Add(tag);
+        Session.ImportCandidateTags = CandidateTagsFor;
     }
 
     /// <summary>The CANDIDATE tag names registered for <paramref name="path"/>, or null when none.</summary>

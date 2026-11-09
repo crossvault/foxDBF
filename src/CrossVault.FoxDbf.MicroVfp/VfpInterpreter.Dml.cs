@@ -128,6 +128,11 @@ public sealed partial class VfpInterpreter
         // An INSERT the SQL parser cannot represent used to fall through every path below into a swallowed
         // Session.Execute — the row silently never landed. Raise the parser's error instead (catchable).
         if (ins.Parsed is null && ResolveInsertStatement(ins) is null) ThrowSqlParseError(ins.Sql);
+        if (ResolveInsertStatement(ins) is { SourceKind: InsertSourceKind.Select } select)
+        {
+            ExecSelectImport(select);
+            return;
+        }
         long checkStart = VfpInsertProfile.Start();
         // P3b: an INSERT on a DBC member with a bound insert trigger (the RI insert RESTRICT rule) is
         // ENFORCED atomically — the row lands, the bound __RI_INSERT_<table> trigger fires positioned ON
@@ -1079,6 +1084,11 @@ public sealed partial class VfpInterpreter
 
     private void ExecAppendFrom(AppendFromStmt s)
     {
+        if (s.Array || s.Type?.ToUpperInvariant() is "SDF" or "DELIMITED")
+        {
+            ExecExternalAppend(s);
+            return;
+        }
         if (s.Type is { } ty && !IsDbfType(ty))
             throw new MicroVfpRuntimeException($"APPEND FROM TYPE '{ty}' (non-DBF) is not supported.");
         var targetWa = Session.AreaAt(Session.CurrentArea);

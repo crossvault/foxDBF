@@ -1567,11 +1567,19 @@ public static class PrgParser
             if (PrgScan.FirstWord(rest) != "FROM")
                 return Unparsed("APPEND", rest);
             string body = PrgScan.AfterFirstWord(rest);   // after FROM
-            var (head, segs) = Carve(body, "FIELDS", "FOR", "WHILE", "TYPE");
+            bool array = PrgScan.FirstWord(body) == "ARRAY";
+            if (array) body = PrgScan.AfterFirstWord(body);
+            var (head, segs) = Carve(body, "FIELDS", "FOR", "WHILE", "TYPE", "SDF", "DELIMITED", "WITH", "AS");
             var source = ToNameRef(FirstToken(head));
             PrgExpr? forE = SegBody(segs, "FOR") is { Length: > 0 } fb ? PrgExpr.Parse(fb) : null;
             string? type = SegBody(segs, "TYPE") is { } tb && tb.Length > 0 ? FirstToken(tb) : null;
-            return new AppendFromStmt(source, FieldsOf(segs), forE, type);
+            if (HasKw(segs, "SDF")) type = "SDF";
+            if (HasKw(segs, "DELIMITED")) type = "DELIMITED";
+            var fields = RecordFieldsOf(segs);
+            return new AppendFromStmt(source, fields.Fields, forE, type, array, fields.Pattern, fields.Except,
+                segs.Where(s => s.Kw == "WITH" && !s.Body.StartsWith("CHARACTER ", StringComparison.OrdinalIgnoreCase)).Select(s => s.Body).FirstOrDefault(),
+                SegBody(segs, "AS") is { Length: > 0 } cp ? PrgExpr.Parse(cp) : null,
+                segs.Where(s => s.Kw == "WITH" && s.Body.StartsWith("CHARACTER ", StringComparison.OrdinalIgnoreCase)).Select(s => s.Body[10..]).FirstOrDefault());
         }
 
         /// <summary><c>COPY STRUCTURE [EXTENDED] TO … / COPY TO … [FIELDS][FOR][TYPE] / COPY MEMO … TO …</c>.

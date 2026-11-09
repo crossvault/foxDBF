@@ -142,6 +142,12 @@ public sealed class VfpSession : IDisposable
     // EnforceRules expands each array row to VALUES for validation; retain its blank-tail semantics.
     internal bool InsertArrayRow { get; set; }
 
+    internal Func<string, IReadOnlyCollection<string>?>? ImportCandidateTags { get; set; }
+
+    internal string ImportDateFormat { get; set; } = "AMERICAN";
+    internal bool ImportCentury { get; set; }
+    internal bool ImportAutoIncError { get; set; } = true;
+
     /// <summary>
     /// The optional query ACCELERATOR (e.g. the Highlike engine) that SELECT / DML candidate-set
     /// discovery routes through instead of the plain <see cref="QueryOptimizer"/>. When <see langword="null"/>
@@ -942,6 +948,7 @@ public sealed class VfpSession : IDisposable
 
         // The member's path before a COW redirect, also available while its aliased area is closed.
         internal string SourcePath { get; }
+        internal string WritePath => _path;
 
         /// <summary>The open writer for the target table.</summary>
         public DbfWriter Writer { get; }
