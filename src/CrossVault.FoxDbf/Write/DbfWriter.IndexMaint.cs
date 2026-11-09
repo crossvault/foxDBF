@@ -47,32 +47,38 @@ public sealed partial class DbfWriter
 
     /// <summary>True when a structural index is available for incremental maintenance.</summary>
     private bool ShouldMaintainIndexes()
-        => _hasStructuralCdx && File.Exists(ExistingCdxPath());
+    {
+        if (!_hasStructuralCdx) return false;
+        // One live existence check on the common path; preserve case-variant discovery on a miss.
+        string path = _cdxMaintStream?.Name ?? Path.ChangeExtension(_stream.Name, ".cdx");
+        return File.Exists(path) || File.Exists(ExistingCdxPath());
+    }
 
     // Q2: VFP refuses an unavailable index expression instead of discarding its definition.
     // DML calls this inside the mutation lock, before memo allocation, auto-increment or any DBF write.
-    private void ValidateIndexes(CdxMaintMode mode = CdxMaintMode.Update)
+    private bool ValidateIndexes(CdxMaintMode mode = CdxMaintMode.Update)
     {
         ValidateCompactIndexes();
         if (ReindexNeeded)
             throw new DbfWriteException("Index maintenance previously failed; rebuild the structural index before writing again.");
         if (!ShouldMaintainIndexes())
-            return;
+        {
+            CloseCdxMaint(flush: true);
+            return false;
+        }
         EnsureCdxMaint(mode);
+        return true;
     }
 
     /// <summary>Insert the appended row into every applicable structural tag.</summary>
     private void MaintainIndexesAfterAppend(int recNo, DbfRecord newRecord)
     {
-        if (!ShouldMaintainIndexes())
-        {
-            CloseCdxMaint(flush: true);   // sidecar vanished (e.g. a prior invalidation) → drop any cached handle
-            return;
-        }
+        // ValidateIndexes prepared this editor under the same mutation lock, before DBF/FPT writes.
+        // Reopening/revalidating here repeats filesystem queries and discards the fresh shared-page cache.
+        if (_cdxMaintEditor is null) return;
         try
         {
             ThrowIfInjectedFault();
-            EnsureCdxMaint(CdxMaintMode.Append);
             var editor = _cdxMaintEditor!;
             foreach (var (tag, computer) in _cdxMaintPlans!)
             {
@@ -300,15 +306,10 @@ public sealed partial class DbfWriter
     /// <summary>Replace changed keys and FOR membership after an in-place update.</summary>
     private void MaintainIndexesAfterUpdate(int recNo, DbfRecord oldRecord, DbfRecord newRecord)
     {
-        if (!ShouldMaintainIndexes())
-        {
-            CloseCdxMaint(flush: true);   // sidecar vanished → drop any cached handle
-            return;
-        }
+        if (_cdxMaintEditor is null) return;   // prepared by this mutation's ValidateIndexes
         try
         {
             ThrowIfInjectedFault();
-            EnsureCdxMaint(CdxMaintMode.Update);
             var editor = _cdxMaintEditor!;
             foreach (var (tag, computer) in _cdxMaintPlans!)
             {

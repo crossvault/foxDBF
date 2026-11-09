@@ -4,8 +4,8 @@ public sealed partial class DbfWriter
 {
     private string IndexFailurePath => StructuralCdxPath() + ".needs-reindex";
 
-    private IndexMutation? BeginIndexMutation(long offset, bool append, bool bulk = false)
-        => ShouldMaintainIndexes() ? new IndexMutation(this, offset, append, bulk) : null;
+    private IndexMutation? BeginIndexMutation(long offset, bool append, bool bulk = false, byte[]? before = null)
+        => _cdxMaintEditor is not null ? new IndexMutation(this, offset, append, bulk, before) : null;
 
     /// <summary>Undo one DBF mutation and its structural index edits while the mutation lock is held.</summary>
     private sealed class IndexMutation : IDisposable
@@ -21,18 +21,19 @@ public sealed partial class DbfWriter
         private readonly FileStream? _backup;
         private bool _committed;
 
-        internal IndexMutation(DbfWriter owner, long offset, bool append, bool bulk)
+        internal IndexMutation(DbfWriter owner, long offset, bool append, bool bulk, byte[]? before)
         {
             _owner = owner;
             _offset = offset;
-            _length = owner._stream.Length;
+            _length = append ? owner._stream.Length : 0;   // only an append changes file length
             _count = owner._recordCount;
             _append = append;
             // Memo allocations are append-only and may be shared. Restore the DBF's old pointers,
             // but do not rewind the FPT allocator over blocks another writer could have reserved.
             // Updates restore only the date: another shared writer may have advanced the row count.
             _header = ReadRaw(owner._handle, append ? 0 : 1, append ? owner._headerLength : 3);
-            _data = ReadRaw(owner._handle, offset, append ? checked((int)Math.Max(0, _length - offset)) : owner._recordLength);
+            // UpdateCore already read this row under the same record lock for KeepValue/key derivation.
+            _data = before ?? ReadRaw(owner._handle, offset, append ? checked((int)Math.Max(0, _length - offset)) : owner._recordLength);
             if (bulk)
             {
                 owner.CloseCdxMaint(flush: true);

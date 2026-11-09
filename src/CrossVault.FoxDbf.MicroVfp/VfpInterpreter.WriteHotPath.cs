@@ -114,8 +114,8 @@ public sealed partial class VfpInterpreter
         // USE may open their VFP built-ins, but a write still needs an executable KEY and FOR.
         foreach (var area in Session.OpenAreas)
         {
-            if (!SamePath(area.Table.SourcePath, path)
-                || !_meta.TryGetValue(area.Area, out var meta) || meta.ExtraIndexes is not { Count: > 0 })
+            if (!_meta.TryGetValue(area.Area, out var meta) || meta.ExtraIndexes is not { Count: > 0 }
+                || !SamePath(area.Table.SourcePath, path))
                 continue;
             foreach (var index in IndexInventory(area.Area))
             {
@@ -134,14 +134,28 @@ public sealed partial class VfpInterpreter
             throw new MicroVfpRuntimeException("Writing with open standalone indexes is not supported in transactions or with candidate/RI rollback enforcement.");
     }
 
-    private List<string> OpenCompactIdxPaths(string path)
-        => Session.OpenAreas.Where(a => SamePath(a.Table.SourcePath, path))
-            .SelectMany(a => IdxFileInventory(a.Area)).Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(p =>
+    private IReadOnlyList<string> OpenCompactIdxPaths(string path)
+    {
+        List<string>? paths = null;
+        HashSet<string>? seen = null;
+        foreach (var area in Session.OpenAreas)
+        {
+            // Most writes only have a structural CDX. Inspect the live inventory so USE/SET INDEX,
+            // sibling areas and data-session switches need no separate cache invalidation protocol.
+            if (!_meta.TryGetValue(area.Area, out var meta) || meta.ExtraIndexes is not { Count: > 0 } extra
+                || !SamePath(area.Table.SourcePath, path))
+                continue;
+            foreach (string file in extra)
             {
-                using var idx = CrossVault.FoxDbf.Index.IdxFile.Open(p);
-                return idx.Header.IsCompact;
-            }).ToList();
+                if (!IsIdxPath(file)) continue;
+                string full = Path.GetFullPath(file);
+                if (!(seen ??= new(StringComparer.OrdinalIgnoreCase)).Add(full)) continue;
+                using var idx = CrossVault.FoxDbf.Index.IdxFile.Open(full);
+                if (idx.Header.IsCompact) (paths ??= new()).Add(full);
+            }
+        }
+        return paths is null ? Array.Empty<string>() : paths;
+    }
 
     /// <summary>The column-name view of <see cref="OpenWriter"/> for <paramref name="path"/>. The EXCLUSIVE
     /// rewriters (INDEX / REINDEX / PACK / ZAP) close the areas on the file first, so they capture it before.</summary>

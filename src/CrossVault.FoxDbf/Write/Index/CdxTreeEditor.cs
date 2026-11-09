@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using CrossVault.FoxDbf.Index;
 
@@ -29,8 +30,9 @@ internal sealed class CdxTreeEditor : IDisposable
     private readonly IndexFile _reader;   // page reads over the SAME stream (leaveOpen)
     private long _end;                     // next free byte offset (== file length); new pages land here
     private Dictionary<long, byte[]>? _appendPageCache;
-    private Dictionary<long, byte[]>? _undoPages;
-    private long _undoLength;
+    private Dictionary<long, (byte[] Bytes, int Length)>? _undoPages;
+    private bool _editing;
+    private long _undoLength = -1;
     private readonly System.Text.Encoding? _textEncoding;   // the table code page tag names/expressions are stored in
 
     public CdxTreeEditor(FileStream rw, System.Text.Encoding? textEncoding = null)
@@ -140,24 +142,40 @@ internal sealed class CdxTreeEditor : IDisposable
     // Keep only touched pages, including split/sibling edits, rather than copying a whole CDX per row.
     internal void BeginEdit()
     {
-        _undoLength = _rw.Length;
-        _undoPages = new Dictionary<long, byte[]>();
+        // A non-key REPLACE has nothing to journal. Capture the length only at the first page write.
+        _editing = true;
     }
 
-    internal void CommitEdit() => _undoPages = null;
+    internal void CommitEdit()
+    {
+        if (_undoPages is not null)
+        {
+            foreach (var entry in _undoPages.Values)
+                ArrayPool<byte>.Shared.Return(entry.Bytes);
+            _undoPages.Clear();
+        }
+        _editing = false;
+        _undoLength = -1;
+    }
 
     internal void RollbackEdit()
     {
-        if (_undoPages is null) return;
+        if (!_editing) return;
         BeforeRollbackForTests?.Invoke();
-        foreach (var (offset, bytes) in _undoPages)
+        if (_undoPages is not null)
         {
-            _rw.Position = offset;
-            _rw.Write(bytes);
+            foreach (var (offset, entry) in _undoPages)
+            {
+                _rw.Position = offset;
+                _rw.Write(entry.Bytes.AsSpan(0, entry.Length));
+            }
         }
-        _rw.SetLength(_undoLength);
-        _rw.Flush();
-        _undoPages = null;
+        if (_undoLength >= 0)
+        {
+            _rw.SetLength(_undoLength);
+            _rw.Flush();
+        }
+        CommitEdit();
         RefreshFromDisk();
     }
 
@@ -169,6 +187,7 @@ internal sealed class CdxTreeEditor : IDisposable
     public void Flush() => _rw.Flush();
     public void Dispose()
     {
+        CommitEdit();   // also return buffers when storage refused rollback
         ClearAppendRunCache();
         _reader.Dispose();   // leaveOpen: does not close _rw (owned by the caller)
     }
@@ -813,12 +832,27 @@ internal sealed class CdxTreeEditor : IDisposable
 
     private void WritePage(long off, byte[] page)
     {
-        if (_undoPages is not null && off < _undoLength && !_undoPages.ContainsKey(off))
+        if (_editing)
         {
-            var original = new byte[Math.Min(PageSize, _undoLength - off)];
-            _rw.Position = off;
-            _rw.ReadExactly(original);
-            _undoPages.Add(off, original);
+            if (_undoLength < 0) _undoLength = _rw.Length;
+            if (off < _undoLength && !(_undoPages?.ContainsKey(off) ?? false))
+            {
+                int length = (int)Math.Min(PageSize, _undoLength - off);
+                var original = ArrayPool<byte>.Shared.Rent(PageSize);
+                try
+                {
+                    // The append cache holds an unmodified copy, refreshed under the mutation lock.
+                    if (length == PageSize && _appendPageCache?.TryGetValue(off, out var cached) == true)
+                        cached.CopyTo(original, 0);
+                    else
+                    {
+                        _rw.Position = off;
+                        _rw.ReadExactly(original.AsSpan(0, length));
+                    }
+                    (_undoPages ??= new()).Add(off, (original, length));
+                }
+                catch { ArrayPool<byte>.Shared.Return(original); throw; }
+            }
         }
         _rw.Seek(off, SeekOrigin.Begin);
         _rw.Write(page, 0, PageSize);

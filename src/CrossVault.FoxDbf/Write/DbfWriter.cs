@@ -646,7 +646,6 @@ public sealed partial class DbfWriter : IDisposable
         long offset = _headerLength + (long)index * _recordLength;
         // §5.1: the pre-image (old row) is needed to compute each tag's OLD key and the post-image for the
         // NEW key. Read it when index maintenance is active, regardless of any KeepValue slot.
-        bool maintain = ShouldMaintainIndexes() || _openCompactIndexes.Count > 0;
         byte[]? oldRecordBytes = null;
         byte[]? writtenRecord = null;
 
@@ -655,7 +654,7 @@ public sealed partial class DbfWriter : IDisposable
         long recPos = VfpLock.RecordLockPosition(index + 1, _usesStructuralScheme, _headerLength, _recordLength);
         WithLock(recPos, 1, () =>
         {
-            ValidateIndexes();
+            bool maintain = ValidateIndexes() || _openCompactIndexes.Count > 0;
             var columns = _schema.Columns;
 
             // KeepValue sentinel: a field whose EXISTING on-disk bytes must survive the full-row
@@ -708,7 +707,7 @@ public sealed partial class DbfWriter : IDisposable
 
             byte[] record = RecordEncoder.Encode(_schema, toEncode, deleted: false);
             record[0] = deletionMarker;
-            using var mutation = BeginIndexMutation(offset, append: false);
+            using var mutation = BeginIndexMutation(offset, append: false, before: existing);
             PatchMemoPointers(record, toEncode);
 
             if (hasKeep && existing is not null)
