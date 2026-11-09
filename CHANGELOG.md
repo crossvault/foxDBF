@@ -4,13 +4,12 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
-## [Unreleased]
+## [0.11.0] - 2026-11-09
 
 ### Added
 
 - `DbfWriter.OpenCompactIdx` registers an existing compact standalone index for write maintenance;
   `CloseCompactIdx` stops maintaining it. Reader-only `IdxFile.Open` does not register a writer.
-
 - Compact standalone `.idx` files: `DbfWriter.CreateCompactIdx` writes what VFP9's `INDEX ON … TO x.idx COMPACT`
   writes. The file is one compact tree in the CDX tag format, with the collation (MACHINE, GENERAL or SPANISH) and
   VFP's key statistics in the header, and the nodes on the pages VFP9 puts them on. microVFP keeps the `COMPACT`
@@ -19,174 +18,46 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   files: `IdxHeader` takes the KEY/FOR text from the expression pool and has a new `Collation` property;
   `EnumerateEntries`, the microVFP orders and `SEEK` read compact leaves and honour the collation;
   `IdxFile.Open(path, table)` resolves the key type from the table.
-
-### Fixed
-
-- BREAKING: Failed structural-CDX maintenance now rolls back the DBF append/update and changed index
-  pages, including append batches, instead of leaving a row with stale keys. Tag definitions are preserved.
-  If rollback itself fails, a `.cdx.needs-reindex` marker blocks subsequent path-based table/index reads;
-  `DbfWriter.Open` exposes `ReindexNeeded`, and a successful `Reindex` clears the marker.
-- BREAKING: microVFP resolves the physical INSERT target before refusing SQL fallback writes with open compact
-  standalone indexes, including custom aliases and `FROM ARRAY`/`FROM MEMVAR`. These unsupported paths
-  now fail before changing the DBF or IDX instead of silently leaving stale index keys.
-- microVFP `TABLEUPDATE` persists buffered INSERTs addressed by a DBC table name even when the table
-  is open under a different alias, matching VFP9.
-- microVFP `USE` recognizes VFP9 built-ins in index KEY/FOR expressions even when they are not yet
-  implemented; genuine missing UDFs retain their VFP error. Unsupported index functions are named when
-  SEEK or write maintenance refuses the operation, before table or memo data is changed.
-- `DTOT()` converts dates to midnight DateTime values, including empty dates and NULL, in expressions
-  and index keys. microVFP rejects other argument types with VFP9 error 11.
-- BREAKING: built-in function abbreviations resolve before user procedures, as in VFP9; a procedure
-  named `SUBST` no longer overrides `SUBSTR()` calls written as `SUBST()`.
-- BREAKING: SQL `ORDER BY` now compares stored projection values after character truncation and numeric
-  rounding. Non-aggregate `IIF` width and scale follow the branch selected for the first source row. `TOP n`
-  returns at most n rows even when boundary keys tie, matching VFP9's default ENGINEBEHAVIOR 90.
-- CDX and IDX character keys now use the same decoder as field reads when `DetectUtf8` is enabled,
-  so SEEK and indexed filters find the decoded text. Explicit encodings and NOCPTRANS still bypass detection.
-- Direct Date/DateTime field indexes preserve a real `0001-01-01` from DBF bytes during creation,
-  reindexing and index maintenance, instead of merging its key with the empty-date key.
-
-- microVFP `INSERT` error handling is verified against VFP9: unknown column names (including truncated
-  DBC field names) raise error 12; a buffered INSERT omitting a NOT NULL field under `SET NULL ON` raises
-  1581. `TRY/CATCH` and `AERROR()` retain those numbers, `ERROR()` is 0 inside CATCH, and these failures
-  leave no new row, pending buffered change, or statement snapshot.
-- INSERT with an explicit column list now reports VFP9 error 94 for too few values and 1230 for too many;
-  writes through a read-only session report error 111, instead of generic error 1 in microVFP error handlers.
-- microVFP `SEEK` and `SEEK()` under a single-value `SET KEY` stop after one step past an out-of-scope
-  match, as VFP9 does; two such entries now give `FOUND() = .F.` and EOF instead of a later in-scope hit.
-- BREAKING: CDX creation rejects character keys wider than 240 characters under MACHINE or 120 under
-  GENERAL/SPANISH with VFP9 error 112, instead of writing oversized or truncated keys. Shorten the index
-  expression explicitly, for example with `LEFT()`, before creating the tag.
-- BREAKING: microVFP `INSERT` now propagates failures instead of silently dropping the row. A failing DBC
-  field `DEFAULT` raises a catchable VFP error and leaves no partial row. DEFAULTs also apply through custom
-  aliases and see the supplied field values, earlier DEFAULTs, and the new record in `RECCOUNT()`, as in VFP9.
-- microVFP SQL resolves missing source fields through memory variables instead of the current work area's
-  fields, including in uncorrelated subqueries. Undefined variables raise VFP9 error 12 when evaluated.
-  Qualified references are checked before filtering: a field name is not an alias (error 13), and a scalar
-  memory variable, including `.NULL.`, is not an object (error 1924).
-- BREAKING: microVFP character reads now share SQL's NOCPTRANS, VARCHAR length and null-bit handling. SQL character
-  expressions use the table code page even for bytes that happen to form valid UTF-8, preserving the
-  declared field width. The public DBF indexer's UTF-8 detection remains unchanged.
-- BREAKING: microVFP `KEY()` preserves the case of string literals in its expression text, matching VFP9.
-  VFP9 operator probes also confirm that `FILTER()`, `SET('FILTER')`, `NORMALIZE()`, `KEY()` and `FOR()`
-  canonicalize both `>=` and `=>` to `=>`, and both `<=` and `=<` to `<=`.
-- Recognize VFP9 codepage identifiers for Macintosh (10000/10006/10007/10029), Hebrew
-  (1255) and Arabic (1256).
-- BREAKING: Mazovia (620) and Kamenicky (895) DBFs now decode and write using their own
-  lossless encodings instead of the fallback codepage. Unicode follows the published
-  tables with VFP9's agreeing, reversible CPCONVERT mappings taking precedence;
-  VFP9 itself has no Unicode conversion table for these two pages.
-- Unknown or unavailable codepages retain their header identifier and use `DefaultEncoding`
-  for text. `DbfTable.CodePage` and microVFP `CPDBF()` report zero for these tables.
-- BREAKING: Character fields no longer auto-detect UTF-8 by default, matching VFP9.
-  Set `DbfOptions.DetectUtf8 = true` to opt in for non-VFP data; explicit `Encoding` still wins.
-
-- microVFP implements `INDEXSEEK(key [, move [, area [, index]]])` with VFP9's collation, EXACT,
-  deleted/filter/scope rules and `FOUND()` updates. The record pointer moves only on a requested hit.
-- BREAKING: `NORMALIZE()` now returns VFP9's decompiled expression text, expanding function abbreviations,
-  canonicalizing operators and folding constant numeric subexpressions while preserving string literals.
-- BREAKING: microVFP `FILTER()` and `SET('FILTER')` return VFP9's canonical expression text, including
-  the dots around `.AND.`, `.OR.` and `.NOT.`.
-- BREAKING: microVFP `PACK DATABASE` compacts the DBC container and its memo/index sidecars, preserving
-  member tables and their deleted records. Open member tables raise VFP9 error 1566 before any rewrite.
-- BREAKING: SQL computed columns now expose VFP9 cursor widths and decimal scales (for example,
-  `LEN()` is N(10,0)). Character results are padded or truncated to their column width, including
-  IIF, DISTINCT and UNION results; numeric results use VFP9's rounding, types and decimal scales.
-  SUM over an all-NULL group returns `.NULL.`, and `INTO CURSOR/TABLE` preserves NULL character results.
-- SQL accepts `IS NULL` and `IS NOT NULL`, including compound WHERE predicates, joins and subqueries.
-- BREAKING: SQL sizes previously unsized character expression columns from the first source record, before
-  filtering or sorting, as VFP9 does. In microVFP, `SELECT VARTYPE(...)` now creates C(1) instead of C(10);
-  `TRANSFORM()` and string UDF results likewise use their evaluated width, with longer later values truncated
-  when written to the result cursor.
-- `PACK` and `ZAP` now preserve every structural CDX tag, including DBC long-field-name expressions.
-  PACK rebuilds the surviving records' keys; ZAP empties the tags. Both retain KEY/FOR definitions,
-  tag order, collation, descending and UNIQUE settings and recompute tag statistics as VFP9 does,
-  so indexed navigation, SEEK and subsequent writes continue to work without recreating the tags.
-
-- BREAKING: microVFP `INDEX ON … TO … DESCENDING` now raises VFP9 error 1706 without creating an IDX,
-  for both compact and uncompressed indexes. `SET INDEX TO` without `ORDER` now selects the first listed
-  IDX (or natural order when a CDX is listed first), also with `ADDITIVE`, and moves to the top when files
-  are listed; closing the indexes clears the order while keeping the record pointer.
-- microVFP `COPY TAG` now writes a compact ascending IDX with the source tag's collation, including GENERAL,
-  independently of `SET COLLATE`. It keeps the source order active, leaves the pointer at EOF and does not
-  open the new IDX, matching VFP9.
-- Bulk `DbfWriter.AppendRecords` now preserves each CDX tag's last-build key statistics, as VFP9
-  `APPEND FROM` and incremental appends do, including empty, deleted-record and UNIQUE-tag cases.
-  Explicit `Reindex` still recalculates these statistics.
-
-- BREAKING: Writes to tables with structural CDX tags whose collation/code page or KEY/FOR expression
-  cannot be maintained exactly now fail before changing DBF, memo or index bytes, instead of deleting the
-  CDX or writing approximate weights. Errors identify the tag, collation and code page; open compact IDX
-  refusals now include the code page too. GENERAL/SPANISH without exact code-page weights can no longer
-  build an index or encode a SEEK key. microVFP `USE` reports VFP error 1 for unavailable index UDFs
-  (114 for a compact IDX KEY);
-  the read-only table API can still inspect these tables. Exact collation support and hosted UDF index
-  maintenance remain separate work; no destructive compatibility option is provided.
-
-- Open compact `.idx` files now stay current through microVFP INSERT/APPEND FROM, key and FOR-field
-  REPLACE, DELETE/RECALL and PACK (MACHINE and GENERAL). `SET INDEX TO` and `USE ... INDEX` register
-  the indexes; navigation and SEEK refresh after writes. The writer API maintains registered indexes
-  through single/batch appends, updates, delete/recall and compaction.
-- BREAKING: Unsupported compact IDX definitions or collations now raise before changing table data.
-  microVFP rejects standalone-index writes through transaction/candidate/RI rollback paths and SQL
-  INSERT fallback paths that cannot maintain them, instead of silently leaving stale indexes.
-- Raw DateTime fields now round stored milliseconds through VFP9's Julian-day conversion.
-  For example, `9998-12-30 23:59:59.500` reads as midnight on December 31, while the corresponding
-  2012 boundary still rounds down. DateTime index keys inherit the corrected field value.
-
-- DateTime CDX/IDX keys now match VFP9's last-bit rounding of the fractional day, including times such as
-  `12:30:00`. Bulk builds, row-by-row maintenance and SEEK use the same encoding, so exact seeks find
-  VFP9-created keys. Reindex existing indexes containing DateTime keys to replace the old key bytes.
-- Empty Date and DateTime index keys now use VFP9's `80 00 00 00 00 00 00 00` encoding in bulk builds
-  and row-by-row maintenance. Blank D/T fields retain their empty date type in KEY/FOR expressions;
-  `SEEK {}` / `SEEK CTOT('')` find them, including the first duplicate in descending order.
-  Reindex existing indexes containing empty dates to replace the old key bytes.
-- CDX tags built by `CreateTag`, `REINDEX` and microVFP `INDEX ON … TAG` now store VFP9's key statistics,
-  place tree pages in VFP9's allocation order, and preserve the first leaf's `0x04` bit on branch pages.
-  This applies to descending, UNIQUE, FOR and GENERAL tags as well. Unused node space remains zero-filled;
-  VFP9 can leave previous contents and process-memory bytes there, so those bytes are not reproducible.
-- microVFP `APPEND FROM` preserves blank numeric source fields as blank bytes instead of writing zero;
-  explicit zero values and `.NULL.` fields remain distinct, under `SET NULL OFF` and `ON`.
-- Expressions reject chained or mixed arrow qualifiers such as `person->name->x` and `m.person->name`,
-  including forms with spaces, as VFP9 does. Valid `alias->field` references still work.
-- BREAKING: SQL aggregate queries take non-aggregated values from the last row of each group, as
-  VFP9 does, including expressions, HAVING aliases and joins. Under GENERAL, grouping `B` followed
-  by `b` now returns `b` rather than `B`; aggregate calculations still include every group member.
-- Single-table SQL `SELECT`, `UPDATE` and `DELETE` now use the structural CDX for Rushmore candidate
-  selection, including open aliases and transaction working copies. UPDATE/DELETE collect their rows
-  before writing, so changing an indexed key cannot process a row twice. Results retain VFP9's
-  DELETED/EXACT/ANSI, ORDER BY, TOP and DISTINCT behavior. Under ANSI OFF, character predicates whose
-  operand may be shorter than the literal stay residual filters, preventing index bounds from losing
-  prefix matches (including `ALLTRIM(name)` and literals longer than a C field).
-- ADO.NET: a Memo column loaded with `DataTable.Load` (or `DbDataAdapter.Fill` with key info) got
-  `MaxLength = 4`, the width of the memo-block pointer in the record, so any memo longer than four characters
-  failed with a `ConstraintException` (#3, thanks @asmith-zinck for the report). `GetSchemaTable` now reports
-  what the Visual FoxPro OLE DB provider reports: `ColumnSize = 2147483647` and `IsLong = true` for M, G, P and
-  W columns, the declared width and `IsLong = false` for V and Q (Varbinary was wrongly flagged as long).
-  `GetSchema("Columns")` gives the same `CHARACTER_MAXIMUM_LENGTH` / `CHARACTER_OCTET_LENGTH`, and, as VFPOLEDB,
-  none for numeric, date and logical columns (previously their field width).
-- GENERAL and SPANISH (weighted) CDX keys are padded with 0x00 up to the key length, as VFP9 pads them; MACHINE
-  keys keep the blank (0x20) pad. The reader, the bulk build, incremental row maintenance (leaves and interior
-  keys), exact `SEEK`, microVFP `SET KEY` bounds and the Highlike key statistics use the tag's pad. Keys that are a
-  prefix of one another now sit in VFP9's order (`Aa` = `60 60` before `áa` = `60 60 01`, `Muller` before
-  `Müller`, the empty key first), and a trailing weight 0x20 (the head of `/`) is stored as data instead of being
-  taken for pad. Our bulk-built leaves now hold the same entries as VFP9's `INDEX ON`, VFP9 SEEKs on our CDX as on
-  its own, and our SEEK and Rushmore find VFP9's rows on its CDX. The "cut, then lose the trailing 0x00 tail
-  bytes" rule listed for 0.10.0 is this pad. GENERAL/SPANISH CDX files written by an earlier version keep the
-  old order and lose a trailing `/` on read: REINDEX them.
-- microVFP `SET KEY TO` a single character value uses VFP9's bound: under GENERAL/SPANISH and `SET EXACT OFF` the head
-  weights only, like SEEK (`SET KEY TO 'áa'` shows `Aa`, `aa`, `áa`, `Áa`, `Aab`); a MACHINE bound is cut to the key
-  length; `SET KEY TO ''` clears the scope. The relation reposition into a DESCENDING child tag lands on the first
-  match in descending order.
-- Expressions see a character field as VFP9 does, at its full declared width. A value with leading blanks no
-  longer matches as if they were not there (`name = 'A'` matched `' Á'` in a scan but not through an index), so
-  a plain scan and Rushmore return the same rows. The index window for `<` / `<=` on a GENERAL/SPANISH tag now
-  holds every key that starts with the literal's head weights (`'Ab' < 'Á'` under SET EXACT OFF).
-- SQL expressions over character fields keep the field's blanks: on a C(5) holding `'N'`, `SELECT p.region +
-  p.region` returns `'N    N    '` (it returned `'NN'`), also across a JOIN (`ca.region + ao.region`), `LEN(region)`
-  is 5, `SUBSTR`/`RIGHT` see the blanks, and `WHERE region + '|' = 'N    |'` matches, under SET ANSI OFF and ON.
-- A SQL `UPDATE` no longer strips the leading blanks of the character fields it does not assign (right-justified
-  keys such as TasTrade's `'     1'` turned into `'1'`).
+- Abbreviated function names, as VFP9 accepts them: `SUBS()` is `SUBSTR()`, `RECC()` is `RECCOUNT()`,
+  `UPPE()`, `TRAN()`, `ALLT()`, `ICAS()` and so on, in microVFP, SQL, filters, index expressions and the
+  compiled delegates. The rule was read from the VFP9 compiler and an internal test checks the whole table
+  against it: at least 4 letters; when a prefix fits several functions the older one wins (`SUBS` is
+  `SUBSTR`, not `SUBSTRC`; `MESS` is `MESSAGE`, not `MESSAGEBOX`; `STRT` is `STRTRAN`, not `STRTOFILE`);
+  some later functions need 10 letters (`GETWORDCOU`) or cannot be abbreviated at all (`JUSTSTEM`,
+  `FORCEEXT`, `SUBSTRC`, `LEFTC`). Three letters (`SUB()`) and a name longer than the function (`SUBSTRX()`)
+  are calls of a user function, as before. An abbreviation of a function the engine does not implement is
+  reported under the full name (`CREA()` raises error 1 "File 'createobject.prg' does not exist."; without a
+  microVFP host it is `.NULL.`). The array-by-reference functions (`AFIE()`, `ALIN()`, `AERR()`, …),
+  `ISBL()` and `LOOK()` get their array or field by name like the full spelling.
+- microVFP `TRY … CATCH [TO oErr] [WHEN lExpr] … FINALLY … ENDTRY` and `THROW [eExpr]` with VFP9 semantics,
+  verified against the VFP9 runtime. Before, TRY was not modelled and both the TRY and the CATCH block ran.
+  A TRY wins over `ON ERROR`, also for errors raised in called procedures; without a matching CATCH the
+  FINALLY block runs and the error propagates. The `CATCH TO` object exposes `ErrorNo`, `Message`, `LineNo`,
+  `LineContents`, `Details`, `Procedure`, `StackLevel` and `UserValue` (`VARTYPE()` = `"O"`); `THROW x`
+  raises 2071 with `UserValue = x`, a bare `THROW` inside CATCH re-raises the caught error. Inside CATCH
+  `ERROR()` is 0 while `MESSAGE()` and `AERROR()` describe the caught error. `EXIT` inside TRY leaves the
+  TRY structure, `LOOP` raises 1939 and `RETURN` raises 2060, as in VFP9. An error that leaves a procedure
+  now also unwinds its call frame, so the caller no longer resumes with the callee's variables in scope.
+- microVFP `COUNT [scope] [FOR lExpr] [WHILE lExpr] TO var` (it was not implemented and left the variable
+  untouched), honouring `SET DELETED`, `SET FILTER` and `SET KEY` and leaving the record pointer where VFP9
+  does.
+- microVFP `COPY MEMO … TO file ADDITIVE` appends to the file (a missing file raises error 1, as in VFP9).
+- Currency literals such as `$0` and `$12.50` in expressions. The TasTrade sample's credit-limit check
+  (`IF lyRemainingCredit < $0`) used to evaluate to `.NULL.` and never fire.
+- microVFP `DECLARE name[n]` as the `DIMENSION` synonym.
+- microVFP `FILE(cFileName [, nFlags])` with VFP9 semantics: blanks are trimmed, a relative name resolves
+  against the session data directory, case does not matter (also on Linux); `""`, a directory, a name without
+  its extension and a wildcard skeleton are `.F.`; `.NULL.` or a non-character argument raises 11, no argument
+  1229. It does not search `SET PATH`, which microVFP does not model.
+- `LENC()` (the DBCS twin of `LEN()`, identical on single-byte code pages). The microVFP guide listed it
+  as implemented, but it evaluated to `.NULL.`; the guide also listed a `BLANK()` function, which VFP9 does
+  not have (it raises error 1 there, as it now does in microVFP).
+- `MicroVfpRuntimeException.Details` — VFP's error detail (`Exception.Details`, `AERROR()` column 3).
+- The xBase qualifier `alias->field` (also `m->var`) is accepted wherever `alias.field` is: in expressions,
+  in SQL projection, WHERE, ORDER BY, GROUP BY, HAVING, JOIN ON, UPDATE and DELETE, with DBC long table and
+  field names, and in microVFP commands (`LOCATE FOR`, `SCAN FOR`, `REPLACE alias->field WITH`,
+  `STORE … TO m->x`, `m->x = …`). As in VFP9, blanks around the arrow are allowed and `a - b > c` stays
+  arithmetic; `a- >b`, `a->b->c` and `5->3` are rejected.
 
 ### Changed
 
@@ -212,9 +83,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   field into a C(6) tag finds nothing, as in VFP9; relate on `LEFT(name, 6)`). The interpreter now starts under VFP's default
   SET EXACT OFF instead of forcing SET EXACT ON (also on the `VfpSession` it runs on, and for a new data
   session): `name = 'ab'` matches `'abc'` and `'abcdef'` unless the program sets SET EXACT ON.
-- microVFP `INDEX ON … TO x.idx` under a `SET COLLATE` other than MACHINE writes a compact `.idx` under that
-  collation (see Added); under a sort sequence we cannot weight (GERMAN, …) it now fails as `INDEX ON … TAG` does,
-  instead of writing an uncompressed MACHINE `.idx`.
 - BREAKING: The new `IdxFile.Open(string, DbfTable)` overload makes a call with a literal `null` second argument ambiguous;
   write `IdxFile.Open(path, (Encoding?)null)` or `IdxFile.Open(path)`.
 - BREAKING: A character `SEEK` on a GENERAL/SPANISH tag (`CdxTag.Seek(object)` and microVFP `SEEK`) uses VFP9's SET EXACT
@@ -222,6 +90,28 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   whose heads start with them matches (`Seek("áa")` lands on `Aa`, `Seek("Müller")` on `Muller` when that sorts
   first), exactly as VFP9's `SEEK`. The raw-byte `CdxTag.Seek(bytes, exact: true)` compares the rest of the key
   against the tag's pad (0x00 for a weighted tag) instead of blanks.
+- BREAKING: microVFP `SEEK`, `SEEK()` and `KEYMATCH()` honour `SET EXACT` under every collation, as VFP9 does (they
+  were always prefix seeks; only the relation reposition honoured it). Under `SET EXACT ON` — microVFP's default —
+  `SEEK 'Stra'` no longer finds `Straße` and a short value no longer finds a longer key: set `SET EXACT OFF` for a
+  prefix seek. EXACT ON matches the whole key (value plus pad); under GENERAL/SPANISH also a value exactly as wide
+  as the key does under EXACT OFF (`SEEK 'Muller    '` does not find `Müller`). Trailing needle blanks under
+  GENERAL/SPANISH EXACT OFF compare with the heads of the blank-padded value (`SEEK 'Ab '` finds `Ab` or `Ab  c`,
+  `SEEK 'Stra  '` not `Strab`); a MACHINE needle longer than the key never matches (also not under `SET NEAR`).
+  `CdxTag.Seek(object)` follows the same EXACT OFF rule.
+- BREAKING: SQL result columns are named as VFP9 names them (checked against VFP9). Names are upper case (also
+  user aliases and DBC long field names: `customer_name` → `CUSTOMER_NAME`). An unaliased expression is `EXP_n`
+  with n its column position (`SELECT a, b, b * 2` → `EXP_3`, was `EXP_1`). An unaliased aggregate is `CNT`
+  for `COUNT(*)`, `CNT_FIELD` / `SUM_FIELD` / `AVG_FIELD` / `MIN_FIELD` / `MAX_FIELD` over a field and
+  `SUM_EXP_n` etc. over an expression (was `COUNT`, `SUM`, …). A name that occurs more than once, user aliases
+  included, becomes `NAME_A`, `NAME_B`, `NAME_C`, … in column order: `SELECT ca.account_number,
+  ao.account_number` gives `ACCOUNT_NUMBER_A` / `ACCOUNT_NUMBER_B` (was `ca_account_number` /
+  `ao_account_number`), and a single-table `SELECT id, id` no longer returns two columns named `id`. ADO.NET
+  lookups by name (`GetOrdinal`, `DataTable` columns) are case-insensitive and keep working for unchanged names.
+  `INTO TABLE` / `INTO CURSOR` still cut field names to 10 characters, so long result names there now become
+  e.g. `ACCOUNT_NU` / `ACCOUNT__2` (was `ca_account` / `ao_account`).
+- microVFP `INDEX ON … TO x.idx` under a `SET COLLATE` other than MACHINE writes a compact `.idx` under that
+  collation (see Added); under a sort sequence we cannot weight (GERMAN, …) it now fails as `INDEX ON … TAG` does,
+  instead of writing an uncompressed MACHINE `.idx`.
 - Index KEY/FOR text is stored as VFP9 stores it. VFP does not keep what was typed: `INDEX ON` writes the
   decompiled expression into the `.idx` header and the CDX tag (`MOD(RECNO(), 3) = 0` → `MOD(RECNO(),3)=0`,
   `UPPER( Name )` → `UPPER(name)`, `NOT lg AND x <> 'a'` → `.NOT.lg.AND.x#"a"`, `RECN()` → `RECNO()`,
@@ -235,16 +125,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Rushmore and the Highlike statistics matched a condition against a tag's KEY by its exact spelling, so a
   VFP-built tag stored as `IIF(.NOT.EMPTY(name),…)` or with `"…"`, `#`, `=>` was not used for a condition
   typed `IIF(NOT EMPTY(NAME),…)`, `'…'`, `<>`, `>=`.
-- BREAKING: microVFP `SEEK`, `SEEK()` and `KEYMATCH()` honour `SET EXACT` under every collation, as VFP9 does (they
-  were always prefix seeks; only the relation reposition honoured it). Under `SET EXACT ON` — microVFP's default —
-  `SEEK 'Stra'` no longer finds `Straße` and a short value no longer finds a longer key: set `SET EXACT OFF` for a
-  prefix seek. EXACT ON matches the whole key (value plus pad); under GENERAL/SPANISH also a value exactly as wide
-  as the key does under EXACT OFF (`SEEK 'Muller    '` does not find `Müller`). Trailing needle blanks under
-  GENERAL/SPANISH EXACT OFF compare with the heads of the blank-padded value (`SEEK 'Ab '` finds `Ab` or `Ab  c`,
-  `SEEK 'Stra  '` not `Strab`); a MACHINE needle longer than the key never matches (also not under `SET NEAR`).
-  `CdxTag.Seek(object)` follows the same EXACT OFF rule.
-### Changed
-
 - **BREAKING — microVFP fails loudly on statements it cannot execute.** A command it does not model used
   to be skipped silently, so a stored procedure could run to the end with a wrong result. Executing such a
   line now raises a catchable VFP error that `ON ERROR` and `TRY…CATCH` see: 16 "Unrecognized command
@@ -302,60 +182,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   phrase/keyword." (catchable). microVFP has no record objects, and both commands used to do nothing, so the
   object stayed undefined and `GATHER NAME` wrote nothing. `SCATTER TO`/`MEMVAR` and `GATHER FROM`/`MEMVAR`
   are unchanged.
-
-### Added
-
-- Abbreviated function names, as VFP9 accepts them: `SUBS()` is `SUBSTR()`, `RECC()` is `RECCOUNT()`,
-  `UPPE()`, `TRAN()`, `ALLT()`, `ICAS()` and so on, in microVFP, SQL, filters, index expressions and the
-  compiled delegates. The rule was read from the VFP9 compiler and an internal test checks the whole table
-  against it: at least 4 letters; when a prefix fits several functions the older one wins (`SUBS` is
-  `SUBSTR`, not `SUBSTRC`; `MESS` is `MESSAGE`, not `MESSAGEBOX`; `STRT` is `STRTRAN`, not `STRTOFILE`);
-  some later functions need 10 letters (`GETWORDCOU`) or cannot be abbreviated at all (`JUSTSTEM`,
-  `FORCEEXT`, `SUBSTRC`, `LEFTC`). Three letters (`SUB()`) and a name longer than the function (`SUBSTRX()`)
-  are calls of a user function, as before. An abbreviation of a function the engine does not implement is
-  reported under the full name (`CREA()` raises error 1 "File 'createobject.prg' does not exist."; without a
-  microVFP host it is `.NULL.`). The array-by-reference functions (`AFIE()`, `ALIN()`, `AERR()`, …),
-  `ISBL()` and `LOOK()` get their array or field by name like the full spelling.
-- microVFP `TRY … CATCH [TO oErr] [WHEN lExpr] … FINALLY … ENDTRY` and `THROW [eExpr]` with VFP9 semantics,
-  verified against the VFP9 runtime. Before, TRY was not modelled and both the TRY and the CATCH block ran.
-  A TRY wins over `ON ERROR`, also for errors raised in called procedures; without a matching CATCH the
-  FINALLY block runs and the error propagates. The `CATCH TO` object exposes `ErrorNo`, `Message`, `LineNo`,
-  `LineContents`, `Details`, `Procedure`, `StackLevel` and `UserValue` (`VARTYPE()` = `"O"`); `THROW x`
-  raises 2071 with `UserValue = x`, a bare `THROW` inside CATCH re-raises the caught error. Inside CATCH
-  `ERROR()` is 0 while `MESSAGE()` and `AERROR()` describe the caught error. `EXIT` inside TRY leaves the
-  TRY structure, `LOOP` raises 1939 and `RETURN` raises 2060, as in VFP9. An error that leaves a procedure
-  now also unwinds its call frame, so the caller no longer resumes with the callee's variables in scope.
-- microVFP `COUNT [scope] [FOR lExpr] [WHILE lExpr] TO var` (it was not implemented and left the variable
-  untouched), honouring `SET DELETED`, `SET FILTER` and `SET KEY` and leaving the record pointer where VFP9
-  does.
-- microVFP `COPY MEMO … TO file ADDITIVE` appends to the file (a missing file raises error 1, as in VFP9).
-- Currency literals such as `$0` and `$12.50` in expressions. The TasTrade sample's credit-limit check
-  (`IF lyRemainingCredit < $0`) used to evaluate to `.NULL.` and never fire.
-- microVFP `DECLARE name[n]` as the `DIMENSION` synonym.
-- microVFP `FILE(cFileName [, nFlags])` with VFP9 semantics: blanks are trimmed, a relative name resolves
-  against the session data directory, case does not matter (also on Linux); `""`, a directory, a name without
-  its extension and a wildcard skeleton are `.F.`; `.NULL.` or a non-character argument raises 11, no argument
-  1229. It does not search `SET PATH`, which microVFP does not model.
-- `LENC()` (the DBCS twin of `LEN()`, identical on single-byte code pages). The microVFP guide listed it
-  as implemented, but it evaluated to `.NULL.`; the guide also listed a `BLANK()` function, which VFP9 does
-  not have (it raises error 1 there, as it now does in microVFP).
-- `MicroVfpRuntimeException.Details` — VFP's error detail (`Exception.Details`, `AERROR()` column 3).
-
-### Fixed
-
-- microVFP `USE … ORDER TAG name` failed with "tag not found" even for an existing tag; `ORDER TAG … OF cdx`
-  and the `ASCENDING`/`DESCENDING` override now work too, and `DESCENDING()` reports the overridden
-  direction. An unknown tag raises error 12 and leaves the table open, as in VFP9.
-### Added
-
-- The xBase qualifier `alias->field` (also `m->var`) is accepted wherever `alias.field` is: in expressions,
-  in SQL projection, WHERE, ORDER BY, GROUP BY, HAVING, JOIN ON, UPDATE and DELETE, with DBC long table and
-  field names, and in microVFP commands (`LOCATE FOR`, `SCAN FOR`, `REPLACE alias->field WITH`,
-  `STORE … TO m->x`, `m->x = …`). As in VFP9, blanks around the arrow are allowed and `a - b > c` stays
-  arithmetic; `a- >b`, `a->b->c` and `5->3` are rejected.
-
-### Changed
-
 - Qualifiers are checked when a SQL statement is bound, before any row is read, as VFP9 does (even over an
   empty table or behind `.F. AND`). An alias that is not a source of the query raises error 13
   ("Alias 'ZZ' is not found."), a column the alias does not have, an undefined `m.` variable and a bad
@@ -374,41 +200,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - microVFP: `EVALUATE()` raises errors (a malformed expression, an unknown alias) instead of returning
   `.NULL.`; `alias.field` naming no open work area raises error 13 and an unknown field of an open alias
   error 12; a field read at EOF returns the blank value (0, empty string, .F.) instead of `.NULL.`.
-
-### Fixed
-
-- SQL `UPDATE`, `DELETE` and `INSERT` on a DBC table use its long field names, as VFP9 does: in SET, WHERE,
-  `table.long_name`, the INSERT column list and through a work-area alias. Previously a field name longer than
-  10 characters was unknown (`UPDATE customer_accounts SET customer_name = …` failed with "does not exist", a
-  long name in WHERE matched no rows). The structural `.cdx` of such a table is now maintained by these
-  statements: VFP9 stores the tag KEY with the long names (`CUSTOMER_NAME`), which the write path could not
-  resolve, so an `UPDATE` or `INSERT` deleted the `.cdx` and VFP had to rebuild it.
-- microVFP `REPLACE` (also `GATHER`), `INSERT … VALUES` and `APPEND FROM` on a DBC table write through its
-  long field names. The structural `.cdx` is no longer deleted by these writes (its tag KEY names the long
-  fields), an `INSERT` naming the long fields no longer loses the row silently, and `APPEND FROM` matches the
-  source fields by their full names as VFP9 does (a free table's truncated `customer_n` no longer fills
-  `customer_name`).
-- microVFP `INDEX ON` (also `TO` an `.idx` and with `FOR`), `REINDEX`, `DELETE TAG`, `COPY TAG` and
-  `COPY INDEXES` on a DBC table use its long field names. `INDEX ON customer_name TAG x` built a tag that no
-  `SEEK` found, and the existing tags whose KEY names the long fields (`CUSTOMER_NAME`, as VFP9 stores it)
-  were no longer seekable after it or after `REINDEX`.
-- `GROUP BY` with a column ordinal (`SELECT p.id % 2 AS k, COUNT(*) FROM person p GROUP BY 1`) grouped by the
-  constant `1` and returned a single group; it now groups by that select item, as does `GROUP BY k` on a
-  select alias that is no source field. An ordinal outside the select list raises VFP error 1807, one that
-  names an aggregate column 1846, and an `ORDER BY` ordinal outside the select list 1808.
-- `ORDER BY` on a select alias (`SELECT id AS k FROM person ORDER BY k DESC`) left the rows unsorted outside
-  aggregate queries; it now sorts by that column. A source field of the same name still wins over the alias,
-  as in VFP9 (`SELECT name AS id, id AS name … ORDER BY id` sorts by the field `id`).
-- `HAVING` could not reference a select alias (`SELECT id AS k, COUNT(*) … GROUP BY k HAVING k > 3` returned
-  no rows; so did `COUNT(*) AS n … HAVING n > 1`). HAVING now sees the select aliases, aggregate aliases
-  included; a source field of the same name wins. A compound HAVING (`… HAVING COUNT(*) > 1 AND k > 0`, `OR`)
-  is evaluated instead of throwing `NotSupportedException`, and aggregates inside a function
-  (`HAVING BETWEEN(SUM(amount), 60, 80)`) are computed per group. A HAVING in a query without GROUP BY or
-  aggregates (`SELECT id AS k FROM person HAVING k > 4`) was ignored; it now filters the rows, as in VFP9,
-  and an aggregate in such a HAVING (`SELECT id FROM person HAVING COUNT(*) > 1`) raises VFP error 1807.
-
-### Changed
-
 - `GROUP BY`, `DISTINCT` and `UNION` results without `ORDER BY` come back in VFP9's order instead of the order
   the rows were first seen in (checked against VFP9). GROUP BY returns the groups sorted by the GROUP BY key
   in GROUP BY list order, also when the key is not selected (`SELECT id % 2 AS k, COUNT(*) … GROUP BY 1` gives
@@ -416,18 +207,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `UNION ALL` step appends its rows unsorted. Sorting uses the session collation (`SET COLLATE`); .NULL. comes
   first and .F. before .T. An `ORDER BY` re-sorts that order stably, so rows with equal ORDER BY keys stay in
   group-key or row order, as in VFP9. DISTINCT now runs before ORDER BY.
-
-- BREAKING: SQL result columns are named as VFP9 names them (checked against VFP9). Names are upper case (also
-  user aliases and DBC long field names: `customer_name` → `CUSTOMER_NAME`). An unaliased expression is `EXP_n`
-  with n its column position (`SELECT a, b, b * 2` → `EXP_3`, was `EXP_1`). An unaliased aggregate is `CNT`
-  for `COUNT(*)`, `CNT_FIELD` / `SUM_FIELD` / `AVG_FIELD` / `MIN_FIELD` / `MAX_FIELD` over a field and
-  `SUM_EXP_n` etc. over an expression (was `COUNT`, `SUM`, …). A name that occurs more than once, user aliases
-  included, becomes `NAME_A`, `NAME_B`, `NAME_C`, … in column order: `SELECT ca.account_number,
-  ao.account_number` gives `ACCOUNT_NUMBER_A` / `ACCOUNT_NUMBER_B` (was `ca_account_number` /
-  `ao_account_number`), and a single-table `SELECT id, id` no longer returns two columns named `id`. ADO.NET
-  lookups by name (`GetOrdinal`, `DataTable` columns) are case-insensitive and keep working for unchanged names.
-  `INTO TABLE` / `INTO CURSOR` still cut field names to 10 characters, so long result names there now become
-  e.g. `ACCOUNT_NU` / `ACCOUNT__2` (was `ca_account` / `ao_account`).
 - SQL `INSERT INTO t (a, b) VALUES (…)` wrote `.NULL.` into every NULL-able column the column list left out, so
   VFP9 read e.g. an omitted nullable memo as `.NULL.` instead of `''`. Omitted columns now follow `SET NULL` as
   in VFP9: under `SET NULL OFF` (the default) they are written blank with the null bit clear; under
@@ -471,6 +250,207 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   value stays `.NULL.` there. In microVFP `EMPTY(.NULL.)` now returns `.F.`, as in VFP9. `DbfRecord`,
   `VfpSession.Execute` and ADO.NET are unchanged: a blank N/F/D/T/M field still reads as `null` (`IsDBNull`
   true), and there `EMPTY()` still matches it.
+
+### Fixed
+
+- BREAKING: Failed structural-CDX maintenance now rolls back the DBF append/update and changed index
+  pages, including append batches, instead of leaving a row with stale keys. Tag definitions are preserved.
+  If rollback itself fails, a `.cdx.needs-reindex` marker blocks subsequent path-based table/index reads;
+  `DbfWriter.Open` exposes `ReindexNeeded`, and a successful `Reindex` clears the marker.
+- BREAKING: microVFP resolves the physical INSERT target before refusing SQL fallback writes with open compact
+  standalone indexes, including custom aliases and `FROM ARRAY`/`FROM MEMVAR`. These unsupported paths
+  now fail before changing the DBF or IDX instead of silently leaving stale index keys.
+- BREAKING: built-in function abbreviations resolve before user procedures, as in VFP9; a procedure
+  named `SUBST` no longer overrides `SUBSTR()` calls written as `SUBST()`.
+- BREAKING: SQL `ORDER BY` now compares stored projection values after character truncation and numeric
+  rounding. Non-aggregate `IIF` width and scale follow the branch selected for the first source row. `TOP n`
+  returns at most n rows even when boundary keys tie, matching VFP9's default ENGINEBEHAVIOR 90.
+- BREAKING: CDX creation rejects character keys wider than 240 characters under MACHINE or 120 under
+  GENERAL/SPANISH with VFP9 error 112, instead of writing oversized or truncated keys. Shorten the index
+  expression explicitly, for example with `LEFT()`, before creating the tag.
+- BREAKING: microVFP `INSERT` now propagates failures instead of silently dropping the row. A failing DBC
+  field `DEFAULT` raises a catchable VFP error and leaves no partial row. DEFAULTs also apply through custom
+  aliases and see the supplied field values, earlier DEFAULTs, and the new record in `RECCOUNT()`, as in VFP9.
+- BREAKING: microVFP character reads now share SQL's NOCPTRANS, VARCHAR length and null-bit handling. SQL character
+  expressions use the table code page even for bytes that happen to form valid UTF-8, preserving the
+  declared field width. The public DBF indexer's UTF-8 detection remains unchanged.
+- BREAKING: microVFP `KEY()` preserves the case of string literals in its expression text, matching VFP9.
+  VFP9 operator probes also confirm that `FILTER()`, `SET('FILTER')`, `NORMALIZE()`, `KEY()` and `FOR()`
+  canonicalize both `>=` and `=>` to `=>`, and both `<=` and `=<` to `<=`.
+- BREAKING: Mazovia (620) and Kamenicky (895) DBFs now decode and write using their own
+  lossless encodings instead of the fallback codepage. Unicode follows the published
+  tables with VFP9's agreeing, reversible CPCONVERT mappings taking precedence;
+  VFP9 itself has no Unicode conversion table for these two pages.
+- BREAKING: Character fields no longer auto-detect UTF-8 by default, matching VFP9.
+  Set `DbfOptions.DetectUtf8 = true` to opt in for non-VFP data; explicit `Encoding` still wins.
+- BREAKING: `NORMALIZE()` now returns VFP9's decompiled expression text, expanding function abbreviations,
+  canonicalizing operators and folding constant numeric subexpressions while preserving string literals.
+- BREAKING: microVFP `FILTER()` and `SET('FILTER')` return VFP9's canonical expression text, including
+  the dots around `.AND.`, `.OR.` and `.NOT.`.
+- BREAKING: microVFP `PACK DATABASE` compacts the DBC container and its memo/index sidecars, preserving
+  member tables and their deleted records. Open member tables raise VFP9 error 1566 before any rewrite.
+- BREAKING: SQL computed columns now expose VFP9 cursor widths and decimal scales (for example,
+  `LEN()` is N(10,0)). Character results are padded or truncated to their column width, including
+  IIF, DISTINCT and UNION results; numeric results use VFP9's rounding, types and decimal scales.
+  SUM over an all-NULL group returns `.NULL.`, and `INTO CURSOR/TABLE` preserves NULL character results.
+- BREAKING: SQL sizes previously unsized character expression columns from the first source record, before
+  filtering or sorting, as VFP9 does. In microVFP, `SELECT VARTYPE(...)` now creates C(1) instead of C(10);
+  `TRANSFORM()` and string UDF results likewise use their evaluated width, with longer later values truncated
+  when written to the result cursor.
+- BREAKING: microVFP `INDEX ON … TO … DESCENDING` now raises VFP9 error 1706 without creating an IDX,
+  for both compact and uncompressed indexes. `SET INDEX TO` without `ORDER` now selects the first listed
+  IDX (or natural order when a CDX is listed first), also with `ADDITIVE`, and moves to the top when files
+  are listed; closing the indexes clears the order while keeping the record pointer.
+- BREAKING: Writes to tables with structural CDX tags whose collation/code page or KEY/FOR expression
+  cannot be maintained exactly now fail before changing DBF, memo or index bytes, instead of deleting the
+  CDX or writing approximate weights. Errors identify the tag, collation and code page; open compact IDX
+  refusals now include the code page too. GENERAL/SPANISH without exact code-page weights can no longer
+  build an index or encode a SEEK key. microVFP `USE` reports VFP error 1 for unavailable index UDFs
+  (114 for a compact IDX KEY);
+  the read-only table API can still inspect these tables. Exact collation support and hosted UDF index
+  maintenance remain separate work; no destructive compatibility option is provided.
+- BREAKING: Unsupported compact IDX definitions or collations now raise before changing table data.
+  microVFP rejects standalone-index writes through transaction/candidate/RI rollback paths and SQL
+  INSERT fallback paths that cannot maintain them, instead of silently leaving stale indexes.
+- BREAKING: SQL aggregate queries take non-aggregated values from the last row of each group, as
+  VFP9 does, including expressions, HAVING aliases and joins. Under GENERAL, grouping `B` followed
+  by `b` now returns `b` rather than `B`; aggregate calculations still include every group member.
+- microVFP `TABLEUPDATE` persists buffered INSERTs addressed by a DBC table name even when the table
+  is open under a different alias, matching VFP9.
+- microVFP `USE` recognizes VFP9 built-ins in index KEY/FOR expressions even when they are not yet
+  implemented; genuine missing UDFs retain their VFP error. Unsupported index functions are named when
+  SEEK or write maintenance refuses the operation, before table or memo data is changed.
+- `DTOT()` converts dates to midnight DateTime values, including empty dates and NULL, in expressions
+  and index keys. microVFP rejects other argument types with VFP9 error 11.
+- CDX and IDX character keys now use the same decoder as field reads when `DetectUtf8` is enabled,
+  so SEEK and indexed filters find the decoded text. Explicit encodings and NOCPTRANS still bypass detection.
+- Direct Date/DateTime field indexes preserve a real `0001-01-01` from DBF bytes during creation,
+  reindexing and index maintenance, instead of merging its key with the empty-date key.
+- microVFP `INSERT` error handling is verified against VFP9: unknown column names (including truncated
+  DBC field names) raise error 12; a buffered INSERT omitting a NOT NULL field under `SET NULL ON` raises
+  1581. `TRY/CATCH` and `AERROR()` retain those numbers, `ERROR()` is 0 inside CATCH, and these failures
+  leave no new row, pending buffered change, or statement snapshot.
+- INSERT with an explicit column list now reports VFP9 error 94 for too few values and 1230 for too many;
+  writes through a read-only session report error 111, instead of generic error 1 in microVFP error handlers.
+- microVFP `SEEK` and `SEEK()` under a single-value `SET KEY` stop after one step past an out-of-scope
+  match, as VFP9 does; two such entries now give `FOUND() = .F.` and EOF instead of a later in-scope hit.
+- microVFP SQL resolves missing source fields through memory variables instead of the current work area's
+  fields, including in uncorrelated subqueries. Undefined variables raise VFP9 error 12 when evaluated.
+  Qualified references are checked before filtering: a field name is not an alias (error 13), and a scalar
+  memory variable, including `.NULL.`, is not an object (error 1924).
+- Recognize VFP9 codepage identifiers for Macintosh (10000/10006/10007/10029), Hebrew
+  (1255) and Arabic (1256).
+- Unknown or unavailable codepages retain their header identifier and use `DefaultEncoding`
+  for text. `DbfTable.CodePage` and microVFP `CPDBF()` report zero for these tables.
+- microVFP implements `INDEXSEEK(key [, move [, area [, index]]])` with VFP9's collation, EXACT,
+  deleted/filter/scope rules and `FOUND()` updates. The record pointer moves only on a requested hit.
+- SQL accepts `IS NULL` and `IS NOT NULL`, including compound WHERE predicates, joins and subqueries.
+- `PACK` and `ZAP` now preserve every structural CDX tag, including DBC long-field-name expressions.
+  PACK rebuilds the surviving records' keys; ZAP empties the tags. Both retain KEY/FOR definitions,
+  tag order, collation, descending and UNIQUE settings and recompute tag statistics as VFP9 does,
+  so indexed navigation, SEEK and subsequent writes continue to work without recreating the tags.
+- microVFP `COPY TAG` now writes a compact ascending IDX with the source tag's collation, including GENERAL,
+  independently of `SET COLLATE`. It keeps the source order active, leaves the pointer at EOF and does not
+  open the new IDX, matching VFP9.
+- Bulk `DbfWriter.AppendRecords` now preserves each CDX tag's last-build key statistics, as VFP9
+  `APPEND FROM` and incremental appends do, including empty, deleted-record and UNIQUE-tag cases.
+  Explicit `Reindex` still recalculates these statistics.
+- Open compact `.idx` files now stay current through microVFP INSERT/APPEND FROM, key and FOR-field
+  REPLACE, DELETE/RECALL and PACK (MACHINE and GENERAL). `SET INDEX TO` and `USE ... INDEX` register
+  the indexes; navigation and SEEK refresh after writes. The writer API maintains registered indexes
+  through single/batch appends, updates, delete/recall and compaction.
+- Raw DateTime fields now round stored milliseconds through VFP9's Julian-day conversion.
+  For example, `9998-12-30 23:59:59.500` reads as midnight on December 31, while the corresponding
+  2012 boundary still rounds down. DateTime index keys inherit the corrected field value.
+- DateTime CDX/IDX keys now match VFP9's last-bit rounding of the fractional day, including times such as
+  `12:30:00`. Bulk builds, row-by-row maintenance and SEEK use the same encoding, so exact seeks find
+  VFP9-created keys. Reindex existing indexes containing DateTime keys to replace the old key bytes.
+- Empty Date and DateTime index keys now use VFP9's `80 00 00 00 00 00 00 00` encoding in bulk builds
+  and row-by-row maintenance. Blank D/T fields retain their empty date type in KEY/FOR expressions;
+  `SEEK {}` / `SEEK CTOT('')` find them, including the first duplicate in descending order.
+  Reindex existing indexes containing empty dates to replace the old key bytes.
+- CDX tags built by `CreateTag`, `REINDEX` and microVFP `INDEX ON … TAG` now store VFP9's key statistics,
+  place tree pages in VFP9's allocation order, and preserve the first leaf's `0x04` bit on branch pages.
+  This applies to descending, UNIQUE, FOR and GENERAL tags as well. Unused node space remains zero-filled;
+  VFP9 can leave previous contents and process-memory bytes there, so those bytes are not reproducible.
+- microVFP `APPEND FROM` preserves blank numeric source fields as blank bytes instead of writing zero;
+  explicit zero values and `.NULL.` fields remain distinct, under `SET NULL OFF` and `ON`.
+- Expressions reject chained or mixed arrow qualifiers such as `person->name->x` and `m.person->name`,
+  including forms with spaces, as VFP9 does. Valid `alias->field` references still work.
+- Single-table SQL `SELECT`, `UPDATE` and `DELETE` now use the structural CDX for Rushmore candidate
+  selection, including open aliases and transaction working copies. UPDATE/DELETE collect their rows
+  before writing, so changing an indexed key cannot process a row twice. Results retain VFP9's
+  DELETED/EXACT/ANSI, ORDER BY, TOP and DISTINCT behavior. Under ANSI OFF, character predicates whose
+  operand may be shorter than the literal stay residual filters, preventing index bounds from losing
+  prefix matches (including `ALLTRIM(name)` and literals longer than a C field).
+- ADO.NET: a Memo column loaded with `DataTable.Load` (or `DbDataAdapter.Fill` with key info) got
+  `MaxLength = 4`, the width of the memo-block pointer in the record, so any memo longer than four characters
+  failed with a `ConstraintException` (#3, thanks @asmith-zinck for the report). `GetSchemaTable` now reports
+  what the Visual FoxPro OLE DB provider reports: `ColumnSize = 2147483647` and `IsLong = true` for M, G, P and
+  W columns, the declared width and `IsLong = false` for V and Q (Varbinary was wrongly flagged as long).
+  `GetSchema("Columns")` gives the same `CHARACTER_MAXIMUM_LENGTH` / `CHARACTER_OCTET_LENGTH`, and, as VFPOLEDB,
+  none for numeric, date and logical columns (previously their field width).
+- GENERAL and SPANISH (weighted) CDX keys are padded with 0x00 up to the key length, as VFP9 pads them; MACHINE
+  keys keep the blank (0x20) pad. The reader, the bulk build, incremental row maintenance (leaves and interior
+  keys), exact `SEEK`, microVFP `SET KEY` bounds and the Highlike key statistics use the tag's pad. Keys that are a
+  prefix of one another now sit in VFP9's order (`Aa` = `60 60` before `áa` = `60 60 01`, `Muller` before
+  `Müller`, the empty key first), and a trailing weight 0x20 (the head of `/`) is stored as data instead of being
+  taken for pad. Our bulk-built leaves now hold the same entries as VFP9's `INDEX ON`, VFP9 SEEKs on our CDX as on
+  its own, and our SEEK and Rushmore find VFP9's rows on its CDX. The "cut, then lose the trailing 0x00 tail
+  bytes" rule listed for 0.10.0 is this pad. GENERAL/SPANISH CDX files written by an earlier version keep the
+  old order and lose a trailing `/` on read: REINDEX them.
+- microVFP `SET KEY TO` a single character value uses VFP9's bound: under GENERAL/SPANISH and `SET EXACT OFF` the head
+  weights only, like SEEK (`SET KEY TO 'áa'` shows `Aa`, `aa`, `áa`, `Áa`, `Aab`); a MACHINE bound is cut to the key
+  length; `SET KEY TO ''` clears the scope. The relation reposition into a DESCENDING child tag lands on the first
+  match in descending order.
+- Expressions see a character field as VFP9 does, at its full declared width. A value with leading blanks no
+  longer matches as if they were not there (`name = 'A'` matched `' Á'` in a scan but not through an index), so
+  a plain scan and Rushmore return the same rows. The index window for `<` / `<=` on a GENERAL/SPANISH tag now
+  holds every key that starts with the literal's head weights (`'Ab' < 'Á'` under SET EXACT OFF).
+- SQL expressions over character fields keep the field's blanks: on a C(5) holding `'N'`, `SELECT p.region +
+  p.region` returns `'N    N    '` (it returned `'NN'`), also across a JOIN (`ca.region + ao.region`), `LEN(region)`
+  is 5, `SUBSTR`/`RIGHT` see the blanks, and `WHERE region + '|' = 'N    |'` matches, under SET ANSI OFF and ON.
+- A SQL `UPDATE` no longer strips the leading blanks of the character fields it does not assign (right-justified
+  keys such as TasTrade's `'     1'` turned into `'1'`).
+- microVFP `USE … ORDER TAG name` failed with "tag not found" even for an existing tag; `ORDER TAG … OF cdx`
+  and the `ASCENDING`/`DESCENDING` override now work too, and `DESCENDING()` reports the overridden
+  direction. An unknown tag raises error 12 and leaves the table open, as in VFP9.
+- SQL `UPDATE`, `DELETE` and `INSERT` on a DBC table use its long field names, as VFP9 does: in SET, WHERE,
+  `table.long_name`, the INSERT column list and through a work-area alias. Previously a field name longer than
+  10 characters was unknown (`UPDATE customer_accounts SET customer_name = …` failed with "does not exist", a
+  long name in WHERE matched no rows). The structural `.cdx` of such a table is now maintained by these
+  statements: VFP9 stores the tag KEY with the long names (`CUSTOMER_NAME`), which the write path could not
+  resolve, so an `UPDATE` or `INSERT` deleted the `.cdx` and VFP had to rebuild it.
+- microVFP `REPLACE` (also `GATHER`), `INSERT … VALUES` and `APPEND FROM` on a DBC table write through its
+  long field names. The structural `.cdx` is no longer deleted by these writes (its tag KEY names the long
+  fields), an `INSERT` naming the long fields no longer loses the row silently, and `APPEND FROM` matches the
+  source fields by their full names as VFP9 does (a free table's truncated `customer_n` no longer fills
+  `customer_name`).
+- microVFP `INDEX ON` (also `TO` an `.idx` and with `FOR`), `REINDEX`, `DELETE TAG`, `COPY TAG` and
+  `COPY INDEXES` on a DBC table use its long field names. `INDEX ON customer_name TAG x` built a tag that no
+  `SEEK` found, and the existing tags whose KEY names the long fields (`CUSTOMER_NAME`, as VFP9 stores it)
+  were no longer seekable after it or after `REINDEX`.
+- `GROUP BY` with a column ordinal (`SELECT p.id % 2 AS k, COUNT(*) FROM person p GROUP BY 1`) grouped by the
+  constant `1` and returned a single group; it now groups by that select item, as does `GROUP BY k` on a
+  select alias that is no source field. An ordinal outside the select list raises VFP error 1807, one that
+  names an aggregate column 1846, and an `ORDER BY` ordinal outside the select list 1808.
+- `ORDER BY` on a select alias (`SELECT id AS k FROM person ORDER BY k DESC`) left the rows unsorted outside
+  aggregate queries; it now sorts by that column. A source field of the same name still wins over the alias,
+  as in VFP9 (`SELECT name AS id, id AS name … ORDER BY id` sorts by the field `id`).
+- `HAVING` could not reference a select alias (`SELECT id AS k, COUNT(*) … GROUP BY k HAVING k > 3` returned
+  no rows; so did `COUNT(*) AS n … HAVING n > 1`). HAVING now sees the select aliases, aggregate aliases
+  included; a source field of the same name wins. A compound HAVING (`… HAVING COUNT(*) > 1 AND k > 0`, `OR`)
+  is evaluated instead of throwing `NotSupportedException`, and aggregates inside a function
+  (`HAVING BETWEEN(SUM(amount), 60, 80)`) are computed per group. A HAVING in a query without GROUP BY or
+  aggregates (`SELECT id AS k FROM person HAVING k > 4`) was ignored; it now filters the rows, as in VFP9,
+  and an aggregate in such a HAVING (`SELECT id FROM person HAVING COUNT(*) > 1`) raises VFP error 1807.
+
+### Known issues
+
+- microVFP does not implement every VFP9 built-in function (for example `CEILING()`). A table whose index KEY or FOR
+  uses such a function opens, but SEEK on that index and writes that would maintain it refuse with the function's
+  name, before anything is changed.
+- A date of 0001-01-01 inside an index expression (not a plain D/T field) is keyed like an empty date.
 
 ## [0.10.0] - 2026-10-22
 
