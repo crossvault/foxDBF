@@ -71,7 +71,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   at every batch size instead of rebuilding the index. Root splits preserve node-attribute history,
   and leaf maintenance retains existing unused bytes without carrying removed entries into free space.
   Index expressions using `RECCOUNT()` see each appended row's count rather than the final batch count.
-
 - microVFP `FILETOSTR()` and `STRTOFILE()` resolve relative names against the session's data
   directory, as VFP9 resolves them against SET DEFAULT. `FILETOSTR()` reads a table, CDX or memo
   file the session uses SHARED and raises VFP9's error 1705 for one it holds EXCLUSIVE or another
