@@ -22,15 +22,41 @@ public sealed partial class VfpInterpreter
     private void ExecInsert(InsertStmt ins)
     {
         var previous = Session.DbcDefaultEvaluator;
+        var previousValues = Session.InsertValueEvaluator;
         Session.DbcDefaultEvaluator = _dbcDefaultEvaluator ??= EvalDbcDefault;
-        try { ExecInsertCore(ins); }
-        finally { Session.DbcDefaultEvaluator = previous; }
+        Session.InsertValueEvaluator = _insertValueEvaluator ??=
+            expression => ParseExpressionCached(MicroVfpExprRewrite.Normalize(expression.Text)).Evaluate(_row, _ctx);
+        try
+        {
+            ExecInsertCore(ins);
+            if (ResolveInsertStatement(ins) is { } statement)
+            {
+                var wa = Session.FindInsertArea(statement.Table);
+                if (wa is null)
+                {
+                    // INSERT opens a closed target in a free area, retaining the selected area.
+                    Session.Use(statement.Table, inArea: 0);
+                    wa = Session.FindInsertArea(statement.Table)!;
+                }
+                int count = EffCount(wa.Area, wa);
+                if (wa.Table.SourcePath is { } path && _cachedWriters.TryGetValue(Path.GetFullPath(path), out var writer))
+                    count = Math.Max(count, writer.RecordCount);
+                PositionPointer(Meta(wa.Area), null, count);
+            }
+        }
+        finally
+        {
+            Session.DbcDefaultEvaluator = previous;
+            Session.InsertValueEvaluator = previousValues;
+        }
     }
 
     private Action<string, IReadOnlyList<(string Field, string Expression)>, Dictionary<string, object?>>? _dbcDefaultEvaluator;
+    private Func<VfpExpression, VfpValue>? _insertValueEvaluator;
 
-    private sealed record DefaultRow(int Area, int RecNo, Dictionary<string, object?> Values, DefaultRow? Previous);
+    private sealed record DefaultRow(int Area, int RecNo, Dictionary<string, object?> Values, DefaultRow? Previous, bool AppendBlank);
     private DefaultRow? _defaultRow;
+    private bool _appendBlankDefaults;
 
     private DefaultRow? DefaultRowFor(int area)
     {
@@ -47,6 +73,8 @@ public sealed partial class VfpInterpreter
     private void EvalDbcDefault(string table, IReadOnlyList<(string Field, string Expression)> defaults,
         Dictionary<string, object?> values)
     {
+        bool appendBlank = _appendBlankDefaults;
+        _appendBlankDefaults = false; // A nested INSERT in a DEFAULT UDF retains INSERT's own context.
         int saved = Session.CurrentArea;
         int opened = 0;
         try
@@ -69,7 +97,7 @@ public sealed partial class VfpInterpreter
             // VFP evaluates against the new row: supplied VALUES and earlier DEFAULTs are visible,
             // and RECCOUNT includes it. Keep that row in memory so a failed DEFAULT cannot half-append.
             int recno = EffCount(wa.Area, wa) + 1;
-            _defaultRow = new DefaultRow(wa.Area, recno, values, previous);
+            _defaultRow = new DefaultRow(wa.Area, recno, values, previous, appendBlank);
             meta.RecNo = recno;
             meta.Eof = meta.Bof = false;
             try
@@ -112,7 +140,10 @@ public sealed partial class VfpInterpreter
             && _meta.TryGetValue(bufWa.Area, out var bufMeta) && bufMeta.Buffering > 1)
         {
             VfpInsertProfile.Stop(VfpInsertProfileBucket.BufferingRiChecks, checkStart);
-            BufferAppend(bufWa, bufMeta, ins, bufStmt);
+            // INSERT moves off the preceding row, so row buffering must commit it before the new append.
+            MaybeAutoCommitRow(bufWa.Area);
+            bufWa = Session.AreaAt(bufWa.Area)!;
+            BufferAppend(bufWa, Meta(bufWa.Area), ins, bufStmt);
             return;
         }
         VfpInsertProfile.Stop(VfpInsertProfileBucket.BufferingRiChecks, checkStart);
@@ -261,6 +292,8 @@ public sealed partial class VfpInterpreter
         // the inserted row back here so VFP's "blocked INSERT" is matched and no orphan child survives.
         if (!ok && snap is not null) RestoreSnapshot(snap);
         if (openedHere && Session.AreaAt(area) is not null) { Session.CloseArea(area); _meta.Remove(area); }
+        // VFP9 reports the rejected INSERT only after removing the orphan row.
+        if (!ok) throw TriggerFailed(RiEvent.Insert, area, wa.Alias);
         }
         finally { snap?.Cleanup(); }
     }
@@ -381,10 +414,69 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── REPLACE / DELETE / RECALL / SUM ───────────────────────────
 
+    private void ExecAppendBlank(AppendBlankStmt command)
+    {
+        int area = command.In is null ? Session.CurrentArea : ResolveAreaRef(command.In);
+        FlushPendingAppends(area);
+        MaybeAutoCommitRow(area);
+        var wa = Session.AreaAt(area)
+            ?? throw new MicroVfpRuntimeException("No table is open in the current work area.", 52);
+        if (Session.ReadOnly || wa.NoUpdate)
+            throw new MicroVfpRuntimeException("Cannot update the cursor, since it is read-only.", 111);
+        string path = wa.Table.SourcePath!;
+        var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        var previous = Session.DbcDefaultEvaluator;
+        bool previousBlank = _appendBlankDefaults;
+        Session.DbcDefaultEvaluator = _dbcDefaultEvaluator ??= EvalDbcDefault;
+        _appendBlankDefaults = true;
+        try
+        {
+            // APPEND BLANK ignores SET NULL but still runs each field DEFAULT exactly once.
+            DmlExecutor.EvaluateDbcDefaults(Session, wa.Alias, wa.Table.Columns, values, honourSetNull: false);
+        }
+        finally
+        {
+            Session.DbcDefaultEvaluator = previous;
+            _appendBlankDefaults = previousBlank;
+        }
+        wa = Session.AreaAt(area)!;
+        var meta = Meta(area);
+        int recno;
+        if (meta.Buffering > 1)
+        {
+            var statement = new InsertStatement(null, wa.Alias, new List<string>(), new List<VfpExpression>());
+            var entry = new AppendEntry { Stmt = new InsertStmt(string.Empty, statement) };
+            foreach (var (field, value) in values) entry.Fields[ColumnIndex(wa.Table, field)] = value;
+            (meta.Buf ??= new TableBuffer()).Appends.Add(entry);
+            recno = EffCount(area, wa);
+        }
+        else
+        {
+            path = BeginTxWrite(path);
+            SnapshotForTxn(path);
+            using var lease = LeaseWriter(path);
+            var writer = lease.Writer;
+            writer.AppendRecord(values, DmlExecutor.OmittedColumnsBlankMask(Session, wa.Alias,
+                writer.Schema.Columns, values, honourSetNull: false));
+            recno = writer.RecordCount;
+            writer.Flush();
+            ReopenFileAreas(path);
+            meta = Meta(area);
+        }
+        PositionPointer(meta, null, recno);
+        meta.Ordered = null;
+        meta.KeyVisible = null;
+    }
+
     private void ExecReplace(ReplaceStmt rp)
     {
         if (rp.Scope is not null || rp.For is not null || rp.While is not null)
-            throw new MicroVfpRuntimeException("REPLACE: record scope/FOR/WHILE clauses are not supported.");
+        {
+            ExecReplaceScope(rp);
+            return;
+        }
+
+        if (_pendingAppendPaths is { Count: > 0 }) FlushPendingAppends();
 
         // Default scope = the CURRENT record of the target area (risk #4 — never the whole table).
         int area = rp.In is not null ? ResolveAreaRef(rp.In) : AreaOfClause(rp.Clauses[0]);
@@ -505,6 +597,97 @@ public sealed partial class VfpInterpreter
         }
     }
 
+    private void ExecReplaceScope(ReplaceStmt rp)
+    {
+        int savedArea = Session.CurrentArea;
+        int area = rp.In is not null ? ResolveAreaRef(rp.In) : AreaOfClause(rp.Clauses[0]);
+        FlushPendingAppends(area);
+        var wa = Session.AreaAt(area)
+            ?? throw new MicroVfpRuntimeException("No table is open in the current work area.", 52);
+        var (kind, count) = ResolveLocScope(rp.Scope);
+        if (rp.Scope is null && rp.While is not null) kind = LocScope.Rest;
+        var single = rp with { Scope = null, For = null, While = null };
+        Session.SelectArea(area);
+        try
+        {
+            if (kind == LocScope.Record)
+            {
+                GoRecord(area, count);
+                if ((rp.While is null || Truth(Eval(rp.While))) && (rp.For is null || Truth(Eval(rp.For))))
+                    ExecReplace(single);
+                return;
+            }
+
+            // ALL without WHILE uses physical order; bounded/WHILE scopes follow the controlling index.
+            // Snapshot before changing indexed fields, including the table buffer's unpublished keys.
+            var order = ReplaceOrder(wa, kind == LocScope.All && rp.While is null, out var keyVisible);
+            int start = kind == LocScope.All ? 0 : CurrentIndex(order, Meta(area));
+            if (start < 0) start = order.Count;
+            int remaining = kind == LocScope.Next ? count : int.MaxValue;
+            if (remaining <= 0) return;
+            for (int i = start; i < order.Count; i++)
+            {
+                wa = Session.AreaAt(area)!;
+                int rec = order[i];
+                if ((kind == LocScope.All || i != start) && !Visible(wa, rec, keyVisible)) continue;
+                GoRecord(area, rec);
+                if (rp.While is not null && !Truth(Eval(rp.While))) return;
+                if (rp.For is null || Truth(Eval(rp.For))) ExecReplace(single);
+                // VFP leaves a bounded scope ON its last examined record (unlike SCAN's final SKIP).
+                if (--remaining == 0) return;
+            }
+            GoRecord(area, EffCount(area, Session.AreaAt(area)!) + 1);
+        }
+        finally { Session.SelectArea(savedArea); }
+    }
+
+    private List<int> ReplaceOrder(VfpSession.WorkArea wa, bool physical, out HashSet<int>? keyVisible)
+    {
+        var m = Meta(wa.Area);
+        keyVisible = null;
+        using var src = OpenMasterOrder(wa.Area);
+        if (src is null) return Enumerable.Range(1, EffCount(wa.Area, wa)).ToList();
+        var entries = OrderedEntries(src).ToList();
+        if (m.Buf is { IsEmpty: false } buffer)
+        {
+            string key = src.CdxTag?.KeyExpression ?? src.Idx!.Header.KeyExpression;
+            string? condition = src.CdxTag?.ForExpression ?? src.Idx?.Header.ForExpression;
+            int savedRec = m.RecNo;
+            bool savedEof = m.Eof, savedBof = m.Bof;
+            var savedCache = m.Cached;
+            int savedCachedRec = m.CachedRec;
+            try
+            {
+                var changed = buffer.Rows.Keys.Concat(Enumerable.Range(wa.Table.RecordCount + 1, buffer.Appends.Count));
+                foreach (int rec in changed)
+                {
+                    entries.RemoveAll(e => e.Recno == rec);
+                    m.RecNo = rec; m.Eof = m.Bof = false; m.Cached = null;
+                    if (!string.IsNullOrWhiteSpace(condition) && !Truth(EvalTextLoud(condition))) continue;
+                    var value = EvalTextLoud(key);
+                    byte[] bytes = src.IsCharacterKey ? PaddedCharacterKey(src, value)
+                        : IndexKey.Encode(value.ToClr(), src.KeyType) ?? Array.Empty<byte>();
+                    entries.Add((bytes, rec));
+                }
+            }
+            finally
+            {
+                m.RecNo = savedRec; m.Eof = savedEof; m.Bof = savedBof;
+                m.Cached = savedCache; m.CachedRec = savedCachedRec;
+            }
+        }
+        if (m.KeySet) keyVisible = KeyVisibleFromEntries(m, src, entries);
+        if (physical) return Enumerable.Range(1, EffCount(wa.Area, wa)).ToList();
+        bool descending = src.Descending != m.OrderReversed;
+        entries.Sort((left, right) =>
+        {
+            int c = CompareBytesUnsigned(left.Key, right.Key);
+            if (c == 0) c = left.Recno.CompareTo(right.Recno);
+            return descending ? -c : c;
+        });
+        return entries.Select(e => e.Recno).ToList();
+    }
+
     private void ExecDelete(DeleteStmt del)
     {
         if (del.Scope is not null || del.For is not null || del.While is not null)
@@ -513,7 +696,8 @@ public sealed partial class VfpInterpreter
         var mdel = Meta(area);
         if (mdel.Buffering > 1 && Session.AreaAt(area) is { } wdel) { BufferDeleteFlag(area, wdel, mdel, deleted: true); return; }
         // P3b: a bound delete trigger fires BEFORE the mark; a RESTRICT rule returning .F. ABORTS it.
-        if (EnforceReferentialIntegrity && !FireDmlTrigger(RiEvent.Delete, area)) return;
+        if (EnforceReferentialIntegrity && !FireDmlTrigger(RiEvent.Delete, area))
+            throw TriggerFailed(RiEvent.Delete, area, Session.AreaAt(area)?.Alias ?? string.Empty);
         WriteFlag(area, recall: false);
     }
 
@@ -584,7 +768,8 @@ public sealed partial class VfpInterpreter
 
     /// <summary>The fields moved by a SCATTER/GATHER: an explicit FIELDS list (order preserved, unknown
     /// names skipped) or every non-system column. Memo-like columns (M/G/P/W) are excluded unless MEMO.</summary>
-    private static List<DbfColumn> ScatterFields(DbfTable table, IReadOnlyList<string> requested, bool memo)
+    private static List<DbfColumn> ScatterFields(DbfTable table, IReadOnlyList<string> requested, bool memo,
+        bool recordObject = false, string? pattern = null, bool except = false)
     {
         static bool IsMemoLike(char t) => t is 'M' or 'G' or 'P' or 'W';
         var cols = table.Columns;
@@ -594,9 +779,14 @@ public sealed partial class VfpInterpreter
             foreach (var name in requested)
             {
                 int idx = ColumnIndex(table, name);
-                if (idx < 0) continue;
+                if (idx < 0)
+                {
+                    if (recordObject) throw new MicroVfpRuntimeException($"Variable '{name.ToUpperInvariant()}' is not found.", 12);
+                    continue;
+                }
                 var c = cols[idx];
                 if (c.IsSystem) continue;
+                if (recordObject && c.Type is 'G' or 'P') continue;
                 if (!memo && IsMemoLike(c.Type)) continue;
                 result.Add(c);
             }
@@ -605,7 +795,15 @@ public sealed partial class VfpInterpreter
         foreach (var c in cols)
         {
             if (c.IsSystem) continue;
+            if (recordObject && c.Type is 'G' or 'P') continue;
             if (!memo && IsMemoLike(c.Type)) continue;
+            if (pattern is not null)
+            {
+                string regex = "^" + System.Text.RegularExpressions.Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$";
+                bool matches = System.Text.RegularExpressions.Regex.IsMatch(c.Name, regex,
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+                if (matches == except) continue;
+            }
             result.Add(c);
         }
         return result;
@@ -615,7 +813,33 @@ public sealed partial class VfpInterpreter
     {
         var wa = Session.AreaAt(Session.CurrentArea);
         if (wa is null) return;
-        var fields = ScatterFields(wa.Table, s.Fields, s.Memo);
+        var fields = ScatterFields(wa.Table, s.Fields, s.Memo, s.Kind == ScatterKind.Object, s.FieldPattern, s.Except);
+
+        if (s.Kind == ScatterKind.Object)
+        {
+            string name = s.Name!;
+            if (name.StartsWith("m.", StringComparison.OrdinalIgnoreCase)) name = name[2..];
+            VfpObject obj;
+            if (s.Additive && Memory.IsDefined(name))
+            {
+                if (!TryGetObject(Memory.Get(name), out var existing))
+                    throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
+                obj = existing;
+            }
+            else
+            {
+                obj = new VfpRecordObject();
+                AssignTo(name, NewObjectRef(obj));
+            }
+            foreach (var c in fields)
+            {
+                var value = s.Blank ? BlankValueFor(c) : VfpValue.FromClr(ReadField(wa, c.Name));
+                if (!value.IsNull && c.Type == 'Y') value = VfpValue.Currency(value.AsNumber);
+                if (s.Blank && c.Type is 'Q' or 'W') value = VfpValue.Varbinary(Array.Empty<byte>());
+                obj.Fields[c.Name] = value;
+            }
+            return;
+        }
 
         if (s.Kind == ScatterKind.Array)
         {
@@ -635,7 +859,7 @@ public sealed partial class VfpInterpreter
     {
         var wa = Session.AreaAt(Session.CurrentArea);
         if (wa is null) return;
-        var fields = ScatterFields(wa.Table, g.Fields, g.Memo);
+        var fields = ScatterFields(wa.Table, g.Fields, g.Memo, g.Kind == ScatterKind.Object, g.FieldPattern, g.Except);
 
         var clauses = new List<ReplaceClause>();
         if (g.Kind == ScatterKind.Array)
@@ -645,6 +869,21 @@ public sealed partial class VfpInterpreter
             int n = Math.Min(fields.Count, arr.Length);    // positional: element i → field i.
             for (int i = 0; i < n; i++)
                 clauses.Add(new ReplaceClause(NameRef.OfName(fields[i].Name), PrgExpr.Parse($"{g.Name}({i + 1})"), false));
+        }
+        else if (g.Kind == ScatterKind.Object)
+        {
+            string name = g.Name!;
+            if (name.StartsWith("m.", StringComparison.OrdinalIgnoreCase)) name = name[2..];
+            if (!Memory.IsDefined(name))
+                throw new MicroVfpRuntimeException($"Variable '{name.ToUpperInvariant()}' is not found.", 12);
+            if (!TryGetObject(EvalTextLoud(g.Name!), out var obj))
+                throw new MicroVfpRuntimeException($"{g.Name} is not an object.", 1924);
+            foreach (var c in fields)
+            {
+                try { obj.Get(c.Name); }
+                catch (MicroVfpRuntimeException ex) when (ex.VfpErrorNumber == 1734) { continue; }
+                clauses.Add(new ReplaceClause(NameRef.OfName(c.Name), PrgExpr.Parse($"{g.Name}.{c.Name}"), false));
+            }
         }
         else // MEMVAR: replace each field that has a matching visible memvar (missing ones are left unchanged).
         {

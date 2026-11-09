@@ -13,7 +13,7 @@ namespace CrossVault.FoxDbf.Tests;
 /// RECCOUNT(). Four letters at least; when a prefix fits several functions the older one wins (SUBS is SUBSTR,
 /// not SUBSTRC; MESS is MESSAGE, not MESSAGEBOX); some later functions need 10 letters or the full name. The
 /// engine resolves an abbreviation before dispatch, so it works in microVFP, in SQL and without a
-/// host. SCATTER NAME / GATHER NAME (record objects) are not modelled and raise error 36 instead of doing nothing.
+/// host. SCATTER NAME / GATHER NAME move fields through record objects.
 /// Expected values are VFP9's (pinned by the internal MicroVfpFunctionAbbreviationVfp9OracleTests run).
 /// </summary>
 public sealed class MicroVfpFunctionAbbreviationTests : IDisposable
@@ -179,17 +179,16 @@ public sealed class MicroVfpFunctionAbbreviationTests : IDisposable
     [InlineData("SCATTER NAME oRec BLANK")]
     [InlineData("GATHER NAME oRec")]
     [InlineData("GATHER NAME oRec FIELDS nm")]
-    public void ScatterGatherName_RaisesError36(string command)
+    public void ScatterGatherName_UsesRecordObject(string command)
     {
-        _i.Execute("USE ct");
-        var ex = Assert.Throws<MicroVfpRuntimeException>(() => _i.Execute(command));
-        Assert.Equal(36, ex.VfpErrorNumber);
-        Assert.Equal("Command contains unrecognized phrase/keyword.", ex.Message);
-        Assert.Equal(command, ex.Statement);
+        // MicroVfpDataCommandsVfp9OracleTests pins NAME and its flags against VFP9.
+        _i.Execute("USE ct\nSCATTER NAME oRec");
+        _i.Execute(command);
+        Assert.Equal("O", _i.EvalExpression("TYPE('oRec')").AsString);
     }
 
     [Fact]
-    public void ScatterName_IsCatchable_AndLeavesTheOtherFormsWorking()
+    public void ScatterName_LeavesTheOtherFormsWorking()
     {
         _i.Execute("""
             USE ct
@@ -203,7 +202,7 @@ public sealed class MicroVfpFunctionAbbreviationTests : IDisposable
             SCATTER TO laRow
             SCATTER MEMVAR
             """);
-        Assert.Equal("36|U|2|b|2", Show("lnErr") + "|" + _i.EvalExpression("TYPE('oRec')").AsString + "|"
+        Assert.Equal("0|O|2|b|2", Show("lnErr") + "|" + _i.EvalExpression("TYPE('oRec')").AsString + "|"
             + Show("laRow(1)") + "|" + _i.EvalExpression("ALLTRIM(laRow(2))").AsString + "|" + Show("m.id"));
     }
 }

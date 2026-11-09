@@ -344,10 +344,8 @@ internal sealed record RollbackStmt : PrgStatement;
 
 // ── P2 table/record movers + whole-table I/O ─────────────────────────────────
 
-/// <summary>The source/destination class of a GATHER / SCATTER: a memory ARRAY or the same-named MEMVARs.
-/// The NAME (object) form is not modelled — microVFP has no record objects — and parses to an
-/// <see cref="UnknownCommand"/> that raises error 36 when executed.</summary>
-internal enum ScatterKind { Array, Memvar }
+/// <summary>The source/destination class of a GATHER / SCATTER.</summary>
+internal enum ScatterKind { Array, Memvar, Object }
 
 /// <summary><c>GATHER FROM aArray | MEMVAR [FIELDS cList] [MEMO]</c> — REPLACE the current record's fields
 /// from the array (positional) or the same-named memvars. <see cref="Name"/> is the array name (null for
@@ -356,7 +354,9 @@ internal sealed record GatherStmt(
     ScatterKind Kind,
     string? Name,
     IReadOnlyList<string> Fields,
-    bool Memo) : PrgStatement;
+    bool Memo,
+    string? FieldPattern = null,
+    bool Except = false) : PrgStatement;
 
 /// <summary><c>SCATTER TO aArray | MEMVAR [BLANK] [FIELDS cList] [MEMO]</c> — read the current record's
 /// fields into a fresh 1-D array (one element per field) or the same-named memvars.
@@ -366,7 +366,10 @@ internal sealed record ScatterStmt(
     string? Name,
     IReadOnlyList<string> Fields,
     bool Memo,
-    bool Blank) : PrgStatement;
+    bool Blank,
+    bool Additive = false,
+    string? FieldPattern = null,
+    bool Except = false) : PrgStatement;
 
 /// <summary><c>APPEND FROM cFile [FIELDS cList] [FOR lExpr] [TYPE cType]</c> — append the matching-named
 /// fields of another DBF's rows to the CURRENT work area. Non-DBF <see cref="Type"/> formats are FLAGGED.</summary>
@@ -375,6 +378,8 @@ internal sealed record AppendFromStmt(
     IReadOnlyList<string> Fields,
     PrgExpr? For,
     string? Type) : PrgStatement;
+
+internal sealed record AppendBlankStmt(NameRef? In) : PrgStatement;
 
 /// <summary><c>COPY STRUCTURE [EXTENDED] TO cFile [FIELDS cList]</c> — create an EMPTY same-structure table
 /// (<see cref="Extended"/> = false) or a one-row-per-field structure-descriptor table (EXTENDED).</summary>

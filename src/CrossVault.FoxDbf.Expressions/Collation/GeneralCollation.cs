@@ -215,10 +215,16 @@ public sealed class GeneralCollation : IVfpCollation
             var a = tL[..tcL];
             var b = tR[..tcR];
             if (a.StartsWith(b)) return 0;
+            // VFP9 SWEFIN gives Æ one zero tail but AE two and ignores that difference.
+            // This is sequence-specific: SPANISH Æ < AE with EXACT OFF (golden oracle).
+            if (_name == "SWEFIN" && b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
             // VFP9 TURKISH equates dotted capital I (no tail) with i (zero tail).
             // An absent secondary weight compares as zero, including with EXACT OFF.
             if (_name == "TURKISH" && b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
             if (mode == StringCompareMode.Shorter && b.StartsWith(a)) return 0;
+            // HUNGARY H suppresses a tail that h retains as zero. VFP9 still compares CH = ch.
+            // This is sequence-specific: SPANISH's suppressed ligature tails compare differently.
+            if (_name == "HUNGARY" && b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
             d = a.SequenceCompareTo(b);
             return d < 0 ? -1 : 1;
         }

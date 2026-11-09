@@ -63,6 +63,26 @@ public static class VfpCollations
     internal static CollationSupport Resolve(string? name, int codePage, out IVfpCollation collation)
     {
         string n = name?.Trim() ?? string.Empty;
+        if (n.Equals("CZECH", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = CzechWeights.ForCodePage(codePage);
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+        if (n.Equals("SLOVAK", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = SlovakWeights.ForCodePage(codePage);
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+        if (n.Equals("POLISH", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = PolishWeights.ForCodePage(codePage);
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+        if (n.Equals("HUNGARY", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = HungaryWeights.ForCodePage(codePage);
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
         if (n.Length == 0 || n.Equals("MACHINE", StringComparison.OrdinalIgnoreCase))
         {
             collation = Machine;
@@ -76,6 +96,47 @@ public static class VfpCollations
                 1252 => GeneralCollation.German1252,
                 437 => GeneralCollation.German437,
                 10000 => GeneralCollation.German10000,
+                _ => Machine,
+            };
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+
+        if (n.Equals("NORDAN", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = codePage switch
+            {
+                1252 => NordanWeights.Cp1252,
+                437 => NordanWeights.Cp437,
+                850 => NordanWeights.Cp850,
+                865 => NordanWeights.Cp865,
+                10000 => NordanWeights.Cp10000,
+                _ => Machine,
+            };
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+
+        if (n.Equals("SWEFIN", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = codePage switch
+            {
+                1252 => SwefinWeights.Cp1252,
+                437 => SwefinWeights.Cp437,
+                850 => SwefinWeights.Cp850,
+                865 => SwefinWeights.Cp865,
+                10000 => SwefinWeights.Cp10000,
+                _ => Machine,
+            };
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+
+        if (n.Equals("ICELAND", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = codePage switch
+            {
+                1252 => IcelandWeights.Cp1252,
+                437 => IcelandWeights.Cp437,
+                850 => IcelandWeights.Cp850,
+                861 => IcelandWeights.Cp861,
                 _ => Machine,
             };
             return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;

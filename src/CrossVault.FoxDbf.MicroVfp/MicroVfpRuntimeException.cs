@@ -32,6 +32,10 @@ public sealed class MicroVfpRuntimeException : Exception, IVfpErrorCode
     /// <c>name.prg</c> of error 1 for an unknown function; <see langword="null"/> when VFP reports none.</summary>
     public string? Details { get; init; }
 
+    // The failing DML's area/type survive rollback, work-area changes and rethrow to AERROR().
+    internal int TriggerArea { get; init; }
+    internal int TriggerType { get; init; }
+
     /// <summary>The <c>eUserExpression</c> of a user <c>THROW</c> (error 2071), or null for any other error.</summary>
     internal Expressions.VfpValue? UserValue { get; init; }
 

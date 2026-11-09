@@ -94,8 +94,7 @@ public sealed partial class VfpInterpreter
         {
             int idx = cols is not null && i < cols.Count ? ColumnIndex(wa.Table, cols[i]) : i;
             if (idx < 0 || idx >= wa.Table.Columns.Count) continue;
-            VfpValue v;
-            try { v = stmt.Values[i].Evaluate(_row, _ctx); } catch { v = VfpValue.Null; }
+            var v = ParseExpressionCached(MicroVfpExprRewrite.Normalize(stmt.Values[i].Text)).Evaluate(_row, _ctx);
             var col = wa.Table.Columns[idx];
             ae.Fields[idx] = v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
         }

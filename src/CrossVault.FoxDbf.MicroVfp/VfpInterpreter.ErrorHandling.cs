@@ -235,8 +235,9 @@ public sealed partial class VfpInterpreter
             Runtime.LastErrorMessage = obj.Message;
             Runtime.LastErrorDetail = obj.Details.Length > 0 ? obj.Details : null;
         }
-        Runtime.LastErrorArea = 0;
-        Runtime.LastErrorTrigger = 0;
+        Runtime.LastErrorArea = caught is MicroVfpRuntimeException { TriggerType: > 0 } trigger
+            ? trigger.TriggerArea : 0;
+        Runtime.LastErrorTrigger = caught is MicroVfpRuntimeException ri ? ri.TriggerType : 0;
         Runtime.LastErrorField = 0;
         _errNo = 0;
         _errMsg = Runtime.LastErrorMessage ?? string.Empty;
@@ -289,23 +290,23 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── the Exception object (CATCH TO oErr) ───────────────────────────
     //
-    // microVFP has no general object model; the caught Exception object is the one object a .prg can hold.
+    // Record and Exception objects share property access and reference identity.
     // It lives in a memvar as an opaque reference string (a fresh instance per object, so the weak table
     // keys on reference identity and the object dies with the last memvar that holds it). VARTYPE()/TYPE()
     // report "O"; `oErr.Prop` (and `oErr.UserValue.Prop` for a wrapped THROW) resolves through ResolveName.
 
     private const string ObjectRefPrefix = "\0microvfp.object#";
-    private readonly ConditionalWeakTable<string, VfpErrorObject> _objects = new();
+    private readonly ConditionalWeakTable<string, VfpObject> _objects = new();
     private int _objectSeq;
 
-    private VfpValue NewObjectRef(VfpErrorObject obj)
+    private VfpValue NewObjectRef(VfpObject obj)
     {
         string key = ObjectRefPrefix + (++_objectSeq).ToString(System.Globalization.CultureInfo.InvariantCulture);
         _objects.Add(key, obj);
         return VfpValue.Character(key);
     }
 
-    internal bool TryGetObject(VfpValue v, out VfpErrorObject obj)
+    internal bool TryGetObject(VfpValue v, out VfpObject obj)
     {
         obj = null!;
         return _objectSeq > 0 && v.Type == VfpType.Character && v.AsString.StartsWith(ObjectRefPrefix, StringComparison.Ordinal)
@@ -319,53 +320,70 @@ public sealed partial class VfpInterpreter
         if (_objectSeq == 0 || !Memory.IsDefined(head)) return false;
         var cur = Memory.Get(head);
         if (!TryGetObject(cur, out var first)) return false;
-        VfpErrorObject? obj = first;
+        VfpObject? obj = first;
         foreach (var prop in rest.Split('.'))
         {
             if (obj is null) throw new MicroVfpRuntimeException("Object is not found.", 1923);
             cur = obj.Get(prop);
             obj = TryGetObject(cur, out var inner) ? inner : null;
         }
-        value = cur.ToClr();
+        // Keep field types such as currency and varbinary across the expression host boundary.
+        value = cur;
         return true;
     }
 
-    internal sealed class VfpErrorObject
+    internal abstract class VfpObject
     {
-        public int ErrorNo { get; }
-        public string Message { get; }
-        public int LineNo { get; }
-        public string Details { get; }
-        public string Procedure { get; }
-        public int StackLevel { get; }
-        public VfpValue UserValue { get; }
-        public string LineContents { get; }
+        internal Dictionary<string, VfpValue> Fields { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public abstract VfpValue Get(string property);
+        public abstract void Set(string property, VfpValue value);
+    }
+
+    private sealed class VfpRecordObject : VfpObject
+    {
+        public override VfpValue Get(string property) => Fields.TryGetValue(property, out var value) ? value
+            : throw new MicroVfpRuntimeException($"Property {property.ToUpperInvariant()} is not found.", 1734);
+        public override void Set(string property, VfpValue value)
+        {
+            Get(property); // Assignment cannot invent a property (VFP error 1734).
+            Fields[property] = value;
+        }
+    }
+
+    internal sealed class VfpErrorObject : VfpObject
+    {
+        public int ErrorNo => (int)Get("ErrorNo").AsNumber;
+        public string Message => Get("Message").AsString;
+        public int LineNo => (int)Get("LineNo").AsNumber;
+        public string Details => Get("Details").AsString;
+        public VfpValue UserValue => Get("UserValue");
 
         public VfpErrorObject(Exception ex, VfpInterpreter it)
         {
-            ErrorNo = ErrorNumberOf(ex);
-            Message = ex.Message ?? string.Empty;
-            LineNo = ex.Data[DataLine] is int l ? l : 0;
-            Procedure = (ex.Data[DataProc] as string ?? it.CurrentCall.Name).ToLowerInvariant();
-            StackLevel = ex.Data[DataLevel] is int s ? s : it._callStack.Count;
-            Details = ex is MicroVfpRuntimeException { Details: { } d } ? d : string.Empty;
-            LineContents = ex.Data[DataSource] as string ?? string.Empty;
-            UserValue = ex is MicroVfpRuntimeException { UserValue: { } uv } ? uv : VfpValue.Character(string.Empty);
+            Fields["ErrorNo"] = VfpValue.Integer(ErrorNumberOf(ex));
+            Fields["Message"] = VfpValue.Character(ex.Message ?? string.Empty);
+            Fields["LineNo"] = VfpValue.Integer(ex.Data[DataLine] is int l ? l : 0);
+            Fields["Procedure"] = VfpValue.Character((ex.Data[DataProc] as string ?? it.CurrentCall.Name).ToLowerInvariant());
+            Fields["StackLevel"] = VfpValue.Integer(ex.Data[DataLevel] is int s ? s : it._callStack.Count);
+            Fields["Details"] = VfpValue.Character(ex is MicroVfpRuntimeException { Details: { } d } ? d : string.Empty);
+            Fields["LineContents"] = VfpValue.Character(ex.Data[DataSource] as string ?? string.Empty);
+            Fields["UserValue"] = ex is MicroVfpRuntimeException { UserValue: { } uv } ? uv : VfpValue.Character(string.Empty);
         }
 
-        public VfpValue Get(string prop) => prop.Trim().ToUpperInvariant() switch
+        public override void Set(string property, VfpValue value)
         {
-            "ERRORNO" => VfpValue.Integer(ErrorNo),
-            "MESSAGE" => VfpValue.Character(Message),
-            "LINENO" => VfpValue.Integer(LineNo),
-            "LINECONTENTS" => VfpValue.Character(LineContents),
-            "DETAILS" => VfpValue.Character(Details),
-            "PROCEDURE" => VfpValue.Character(Procedure),
-            "STACKLEVEL" => VfpValue.Integer(StackLevel),
-            "USERVALUE" => UserValue,
-            "CLASS" or "BASECLASS" => VfpValue.Character("Exception"),
-            _ => throw new MicroVfpRuntimeException($"Property {prop.Trim().ToUpperInvariant()} is not found.", 1734),
-        };
+            Get(property);
+            if (!Fields.ContainsKey(property)) throw new MicroVfpRuntimeException("Property is read-only.", 1743);
+            Fields[property] = value;
+        }
+
+        public override VfpValue Get(string property)
+        {
+            if (Fields.TryGetValue(property, out var value)) return value;
+            if (property.Equals("Class", StringComparison.OrdinalIgnoreCase)
+                || property.Equals("BaseClass", StringComparison.OrdinalIgnoreCase)) return VfpValue.Character("Exception");
+            throw new MicroVfpRuntimeException($"Property {property.ToUpperInvariant()} is not found.", 1734);
+        }
 
         /// <summary>AERROR()[3] after a user THROW — the object's property dump (VFP9 layout, CRLF-separated).</summary>
         public string Describe()
@@ -375,7 +393,7 @@ public sealed partial class VfpInterpreter
             sb.Append("Message: ").Append(Message).Append("\r\n");
             sb.Append("UserValue: ").Append(UserValue.Type == VfpType.Character ? UserValue.AsString : FormatScalar(UserValue)).Append("\r\n");
             sb.Append("Details: ").Append(Details).Append("\r\n");
-            sb.Append("Procedure: ").Append(Procedure).Append("\r\n");
+            sb.Append("Procedure: ").Append(Get("Procedure").AsString).Append("\r\n");
             sb.Append("LineNo: ").Append(LineNo);
             return sb.ToString();
         }
