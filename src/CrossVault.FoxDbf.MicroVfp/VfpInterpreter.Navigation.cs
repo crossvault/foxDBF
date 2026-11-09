@@ -150,10 +150,30 @@ public sealed partial class VfpInterpreter
     /// at EOF/BOF (or on a record absent from the active index).</summary>
     private static int CurrentIndex(List<int> order, AreaMeta m)
     {
-        if (ReferenceEquals(order, m.Ordered) && m.OrderSlots is not null)
-            return m.OrderSlots.GetValueOrDefault(m.RecNo, -1);
+        if (ReferenceEquals(order, m.Ordered)) return OrderSlot(m, m.RecNo);
         int slot = order.IndexOf(m.RecNo);
         return slot >= 0 ? slot : order.IndexOf(-m.RecNo);
+    }
+
+    private static int OrderSlot(AreaMeta m, int rec)
+    {
+        var order = m.Ordered!;
+        int pos = m.OrderPos;
+        if (pos >= 0 && pos < order.Count && Math.Abs(order[pos]) == rec) return pos;
+        // Scope walkers normally advance one entry; keep COUNT/SUM linear without a dictionary.
+        if (pos + 1 >= 0 && pos + 1 < order.Count && Math.Abs(order[pos + 1]) == rec) return pos + 1;
+        if (m.OrderSlots is not null) return m.OrderSlots.GetValueOrDefault(rec, -1);
+        int slot = order.IndexOf(rec);
+        return slot >= 0 ? slot : order.IndexOf(-rec);
+    }
+
+    private static void EnsureOrderSlots(AreaMeta m)
+    {
+        if (m.OrderSlots is not null) return;
+        var slots = new Dictionary<int, int>(m.Ordered!.Count);
+        for (int i = 0; i < m.Ordered.Count; i++)
+            slots.TryAdd(Math.Abs(m.Ordered[i]), i); // Damaged or mid-write indexes may repeat a recno.
+        m.OrderSlots = slots;
     }
 
     private static List<int> SubListFrom(List<int> order, int from)
@@ -952,12 +972,12 @@ public sealed partial class VfpInterpreter
 
         using var src = OpenOrderSource(area, m.Order!);   // structural cdx, extra cdx, or standalone idx.
         if (src is null) return null;
-        var entries = OrderedEntries(src).ToList();
-        // A SET ORDER … DESCENDING|ASCENDING override reverses the order's own traversal direction.
-        if (m.OrderReversed) entries.Reverse();
-        var ordered = entries.Select(e => e.Recno).ToList();
-        m.OrderKeys = entries.Select(e => e.Key).ToList();
-        m.OrderSlots = entries.Select((e, i) => (e.Recno, i)).ToDictionary(e => e.Recno, e => e.i);
+        // Ordinary traversal needs only recnos. Retaining every key and a dictionary here
+        // dwarfs the order itself; materialize them only for removed-entry navigation.
+        var ordered = OrderedEntries(src).Select(e => e.Recno).ToList();
+        if (m.OrderReversed) ordered.Reverse();
+        m.OrderKeys = null;
+        m.OrderSlots = null;
         m.OrderDescending = src.Descending != m.OrderReversed;
         m.Ordered = ordered;
         m.OrderedFor = m.Order;
@@ -1031,7 +1051,7 @@ public sealed partial class VfpInterpreter
         m.OldVals = null;                 // a record move re-bases the OLDVAL() buffer (per-record buffering).
         // Re-anchor the index position to this physical record (so a following SKIP walks index order).
         var ord = ActiveOrder(area);
-        if (ord is not null) m.OrderPos = m.OrderSlots!.GetValueOrDefault(rec, -1);
+        if (ord is not null) m.OrderPos = OrderSlot(m, rec);
     }
 
     private static bool InRange(VfpSession.WorkArea wa, int rec) => rec >= 1 && rec <= wa.Table.RecordCount;
@@ -1050,15 +1070,17 @@ public sealed partial class VfpInterpreter
         {
             int dirO = count > 0 ? 1 : -1, stepsO = Math.Abs(count);
             int pos = m.OrderPos;
+            if (pos >= 0 && pos < ord.Count && ord[pos] < 0) EnsureOrderSlots(m);
             if (pos < 0 || (pos < ord.Count && ord[pos] < 0 && !m.OrderKeyIsField))
             {
-                pos = m.OrderSlots!.GetValueOrDefault(m.RecNo, -1);
+                pos = OrderSlot(m, m.RecNo);
                 if (pos >= 0 && ord[pos] < 0 && !m.OrderKeyIsField) pos = -1;
                 if (pos < 0 && m.RecNo >= 1 && m.RecNo <= EffCount(area, wa))
                 {
                     // A deletion-dependent FOR can remove the current entry. VFP resumes at
                     // its key's insertion point, in either direction, rather than going to TOP.
                     pos = MissingOrderInsertionPoint(area, m) - (dirO > 0 ? 1 : 0);
+                    ord = m.Ordered!;
                 }
                 else if (pos < 0 && m.Eof) pos = ord.Count;
                 else if (pos < 0) { GoTopCore(area); pos = m.OrderPos; }
@@ -1088,6 +1110,19 @@ public sealed partial class VfpInterpreter
 
     private int MissingOrderInsertionPoint(int area, AreaMeta m)
     {
+        if (m.OrderKeys is null)
+        {
+            // Read the refreshed live tree: removed expression keys may have changed value,
+            // so their old tombstones cannot take part in this binary search.
+            using var src = OpenOrderSource(area, m.Order!, resolveHosted: false);
+            var entries = OrderedEntries(src!).ToList();
+            if (m.OrderReversed) entries.Reverse();
+            m.Ordered = entries.Select(e => e.Recno).ToList();
+            m.OrderKeys = entries.Select(e => e.Key).ToList();
+            m.OrderSlots = null;
+            m.OrderPos = -1;
+            EnsureOrderSlots(m);
+        }
         int selected = Session.CurrentArea;
         VfpValue value;
         try
@@ -1129,16 +1164,19 @@ public sealed partial class VfpInterpreter
             foreach (var change in writer.DeletionIndexChanges ?? [])
             {
                 if (!change.Tag.Equals(m.Order, StringComparison.OrdinalIgnoreCase)) continue;
-                int slot = m.OrderSlots!.GetValueOrDefault(change.Recno, -1);
+                int slot = OrderSlot(m, change.Recno);
                 if (change.Key is null)
                 {
                     if (slot >= 0) m.Ordered[slot] = -change.Recno;
                 }
-                else if (slot >= 0 && m.OrderKeys![slot].AsSpan().SequenceEqual(change.Key))
+                else if (slot >= 0 && (m.OrderKeyIsField ||
+                    m.OrderKeys is not null && m.OrderKeys[slot].AsSpan().SequenceEqual(change.Key)))
                     m.Ordered[slot] = change.Recno;
                 else
                 {
                     m.Ordered = null;
+                    m.OrderKeys = null;
+                    m.OrderSlots = null;
                     m.OrderPos = -1;
                     break;
                 }

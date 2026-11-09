@@ -426,7 +426,7 @@ public sealed partial class VfpInterpreter
     /// <summary>Resolve an ORDER identity (tag name or standalone-IDX stem) to a live <see cref="OrderSource"/>
     /// across the FULL open index set (structural <c>.cdx</c>, then extra <c>.idx</c>/<c>.cdx</c>), or null
     /// when unresolved. The caller MUST dispose the result.</summary>
-    private OrderSource? OpenOrderSource(int area, string identity)
+    private OrderSource? OpenOrderSource(int area, string identity, bool resolveHosted = true)
     {
         var wa = Session.AreaAt(area);
         if (wa is null || string.IsNullOrEmpty(identity)) return null;
@@ -435,7 +435,7 @@ public sealed partial class VfpInterpreter
         if (wa.Cdx is not null)
         {
             var t = wa.Cdx.Tag(identity) ?? wa.Cdx.Tag(identity.ToUpperInvariant());
-            if (t is not null) ResolveHostedTag(t, wa.Table);
+            if (t is not null && resolveHosted) ResolveHostedTag(t, wa.Table);
             if (t is not null) return new OrderSource(null) { CdxTag = t, Descending = t.Descending, Name = t.Name };
         }
 
@@ -451,13 +451,13 @@ public sealed partial class VfpInterpreter
                     // A compact .idx is one CDX-format tree: it reads (collation, SEEK, key decoding) as a tag.
                     if (idx.CompactTag is { } compactTag)
                     {
-                        ResolveHostedTag(compactTag, wa.Table);
+                        if (resolveHosted) ResolveHostedTag(compactTag, wa.Table);
                         return new OrderSource(idx) { CdxTag = compactTag, Name = IdxOrderName(p) };
                     }
                     return new OrderSource(idx)
                     {
                         Idx = idx, Name = IdxOrderName(p),
-                        IdxKeyType = VfpRuntime.UnsupportedIndexFunction(idx.Header.KeyExpression) is not null
+                        IdxKeyType = resolveHosted && VfpRuntime.UnsupportedIndexFunction(idx.Header.KeyExpression) is not null
                             ? CdxIndexBuilder.ResolveKey(wa.Table, idx.Header.KeyExpression, _ctx).Type
                             : IndexKey.ResolveType(idx.Header.KeyExpression.Trim(), wa.Table),
                         IdxKeyPad = IndexKey.IsBinaryExpression(idx.Header.KeyExpression, wa.Table) ? (byte)0 : (byte)0x20,
@@ -470,7 +470,7 @@ public sealed partial class VfpInterpreter
             {
                 var cdx = CdxFile.Open(p, wa.Table);
                 var t = cdx.Tag(identity) ?? cdx.Tag(identity.ToUpperInvariant());
-                if (t is not null) ResolveHostedTag(t, wa.Table);
+                if (t is not null && resolveHosted) ResolveHostedTag(t, wa.Table);
                 if (t is not null)
                     return new OrderSource(cdx) { CdxTag = t, Descending = t.Descending, Name = t.Name };
                 cdx.Dispose();
