@@ -91,9 +91,50 @@ public sealed partial class VfpInterpreter
         if (buf.IsEmpty) m.Buf = null;
     }
 
+    private void BufferMemoryInsert(InsertStmt ins, InsertStatement statement, VfpSession.WorkArea wa)
+    {
+        var columns = wa.Table.Columns.Where(c => !c.IsSystem).ToArray();
+        var bridge = Session.MemoryBridge!;
+        bool array = statement.SourceKind == InsertSourceKind.Array;
+        var names = new List<string>();
+        var values = new List<object?>();
+        if (!array)
+        {
+            foreach (var column in columns)
+                if (bridge.TryReadMemvar(column.Name, out var value))
+                {
+                    names.Add(column.Name);
+                    values.Add(value);
+                }
+        }
+        var rows = array ? bridge.ReadArrayRows(statement.SourceName!)
+            ?? throw new MicroVfpRuntimeException("Variable is not found.", 12)
+            : new List<IReadOnlyList<object?>> { values };
+        foreach (var row in rows)
+        {
+            int count = Math.Min(row.Count, columns.Length);
+            var candidate = statement with
+            {
+                Columns = array ? columns.Take(count).Select(c => c.Name).ToArray() : names,
+                Values = row.Take(count).Select(v => VfpExpression.Constant(VfpValue.FromClr(v))).ToArray(),
+                SourceKind = InsertSourceKind.Values,
+                SourceName = null
+            };
+            bool previousArrayRow = Session.InsertArrayRow;
+            Session.InsertArrayRow = array;
+            try
+            {
+                // Reuse VALUES buffering, including row-buffer auto-commit between array rows.
+                // The original SQL is never replayed: CommitAppend uses these captured values.
+                ExecInsert(new InsertStmt(ins.Sql, candidate));
+            }
+            finally { Session.InsertArrayRow = previousArrayRow; }
+        }
+    }
+
     /// <summary>Buffer an INSERT (append) into the target area's buffer: the row is VISIBLE on the live
     /// cursor immediately (its field values are evaluated now) but is not written to disk until TABLEUPDATE
-    /// replays the statement through the ordinary INSERT path (so RI fires deferred).</summary>
+    /// commits those values and fires the deferred insert trigger.</summary>
     private void BufferAppend(VfpSession.WorkArea wa, AreaMeta m, InsertStmt ins, InsertStatement stmt)
     {
         var ae = new AppendEntry { Stmt = ins };
@@ -102,7 +143,8 @@ public sealed partial class VfpInterpreter
         {
             int idx = cols is not null && i < cols.Count ? ColumnIndex(wa.Table, cols[i]) : i;
             if (idx < 0 || idx >= wa.Table.Columns.Count) continue;
-            var v = ParseExpressionCached(MicroVfpExprRewrite.Normalize(stmt.Values[i].Text)).Evaluate(_row, _ctx);
+            var expression = stmt.Values[i];
+            var v = Session.InsertValueEvaluator is { } evaluate ? evaluate(expression) : expression.Evaluate(_row, _ctx);
             var col = wa.Table.Columns[idx];
             ae.Fields[idx] = v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
         }
@@ -110,7 +152,7 @@ public sealed partial class VfpInterpreter
         // INSERT does: blank under OFF (left out of Fields, written blank at commit), .NULL. in a NULL-able
         // column under ON (an explicit null in Fields). An omitted NOT NULL column under ON is VFP error
         // 1581 and no row, before any later field DEFAULT is evaluated.
-        // (A buffered FROM MEMVAR / FROM ARRAY reads none of its values here, so it does not apply SET NULL.)
+        // FROM ARRAY is normalized to VALUES with InsertArrayRow set, preserving omitted blank fields.
         var columns = wa.Table.Columns;
         var provided = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         foreach (var (idx, v) in ae.Fields) provided[columns[idx].Name] = v;
@@ -508,8 +550,8 @@ public sealed partial class VfpInterpreter
     // (TABLEREVERT). While buffered, field reads/DELETED()/OLDVAL()/GETFLDSTATE() reflect the buffer;
     // CURVAL() reads the ON-DISK value. Single-process ⇒ CURVAL == disk and optimistic-vs-pessimistic
     // conflict is moot (no fabricated conflict errors). Buffered appends are VISIBLE on the live cursor
-    // (RECCOUNT/GO n) but not on disk until TABLEUPDATE, which replays them through the ordinary INSERT
-    // path (so the DBC RULE/TRIGGER/RI pipeline fires DEFERRED, per hackfox s4g346).
+    // (RECCOUNT/GO n) but not on disk until TABLEUPDATE. Field rules run when values change;
+    // record rules and insert triggers run at commit, matching the VFP9 oracle.
 
     private sealed class TableBuffer
     {
@@ -531,7 +573,7 @@ public sealed partial class VfpInterpreter
 
     private sealed class AppendEntry : RowEdit
     {
-        public InsertStmt Stmt = null!;                                        // replayed through ExecInsert at commit.
+        public InsertStmt Stmt = null!;                                        // identifies the commit target.
         public bool Deleted;                                                   // a buffered DELETE on the appended row.
     }
 

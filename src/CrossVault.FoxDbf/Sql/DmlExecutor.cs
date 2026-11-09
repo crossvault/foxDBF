@@ -188,19 +188,21 @@ internal sealed partial class DmlExecutor
             ?? throw new FoxDbfSqlException($"INSERT … FROM ARRAY: '{st.SourceName}' is not a memory array.")
                 { VfpErrorNumber = 12 };
 
-        using var target = _session.OpenWritableTarget(st.Table);
-        var writer = target.Writer;
-        var columns = writer.Schema.Columns;
-
+        var target = _session.OpenWritableTarget(st.Table);
+        var columns = target.Writer.Schema.Columns;
         int count = 0;
-        foreach (var row in rows)
+        try
         {
-            var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            int k = Math.Min(row.Count, columns.Count);   // excess elements ignored; short row → blanks.
-            for (int i = 0; i < k; i++) map[columns[i].Name] = row[i];
-            writer.AppendRecord(map, OmittedColumnsBlankMask(_session, st.Table, columns, map, honourSetNull: false));
-            count++;
+            foreach (var row in rows)
+            {
+                var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                int k = Math.Min(row.Count, columns.Count);   // excess elements ignored; short row → blanks.
+                for (int i = 0; i < k; i++) map[columns[i].Name] = row[i];
+                AppendMemoryRow(st.Table, ref target, map, honourSetNull: false);
+                count++;
+            }
         }
+        finally { target.Dispose(); }
         return SqlResult.Dml(count);
     }
 
@@ -222,10 +224,26 @@ internal sealed partial class DmlExecutor
             foreach (var col in columns)
                 if (bridge.TryReadMemvar(col.Name, out var v)) map[col.Name] = v;
             FillDbcDefaults(_session, st.Table, ref target, map);
-            target.Writer.AppendRecord(map, OmittedColumnsBlankMask(_session, st.Table, columns, map, honourSetNull: true));
+            AppendMemoryRow(st.Table, ref target, map, honourSetNull: true);
         }
         finally { target.Dispose(); }
         return SqlResult.Dml(1);
+    }
+
+    private void AppendMemoryRow(string table, ref VfpSession.WritableTarget target,
+        Dictionary<string, object?> map, bool honourSetNull)
+    {
+        var schema = target.Writer.Schema;
+        var blank = OmittedColumnsBlankMask(_session, table, schema.Columns, map, honourSetNull);
+        if (_session.InsertRowValidator is { } validate)
+        {
+            int recno = target.Writer.RecordCount + 1;
+            // PRG rules need the live work area restored, as on the VALUES fallback path.
+            target.Dispose();
+            validate(table, schema, map, blank, recno);
+            target = _session.OpenWritableTarget(table);
+        }
+        target.Writer.AppendRecord(map, blank);
     }
 
     // ---- omitted INSERT columns -----------------------------------------------------------

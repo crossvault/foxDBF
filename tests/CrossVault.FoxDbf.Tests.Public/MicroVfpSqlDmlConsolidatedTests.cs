@@ -86,7 +86,6 @@ public sealed class MicroVfpSqlDmlConsolidatedTests(ITestOutputHelper output)
     public void Navigation_KeyEvaluation() => Assert.Equal("1", Run(NavigationSetup("duplicate"), KeyEvaluation, RuleProcedure));
     internal static string RulesScenario(string kind, int buffering, bool record)
     {
-        string rule = kind == "retry" ? "gate()" : kind == "cross" ? "n<=m" : "n>0";
         string prefix = $"SET TABLEPROMPT OFF\nPUBLIC limit\nlimit=100\nUSE t EXCLUSIVE\nSET MULTILOCKS ON\n=CURSORSETPROP('Buffering',{buffering})\nGO 1\n";
         string command = kind switch
         {
@@ -95,6 +94,8 @@ public sealed class MicroVfpSqlDmlConsolidatedTests(ITestOutputHelper output)
             "bad" => "UPDATE t SET n=-1, k='X' WHERE id=1",
             "onerror" => "UPDATE t SET n=-1, k='X' WHERE id=1",
             "insert" => "INSERT INTO t (id,n) VALUES (3,-1)",
+            "array" => "DIMENSION laInput[4]\nlaInput[1]=3\nlaInput[2]=-1\nlaInput[3]=0\nlaInput[4]=''\nINSERT INTO t FROM ARRAY laInput",
+            "memvar" => "m.id=3\nm.n=-1\nm.m=0\nm.k=''\nINSERT INTO t FROM MEMVAR",
             "append" => "APPEND BLANK\nREPLACE n WITH -1",
             "retry" => "REPLACE n WITH 15\nGO 2\nREPLACE n WITH 25\nlimit=20",
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
@@ -115,7 +116,7 @@ public sealed class MicroVfpSqlDmlConsolidatedTests(ITestOutputHelper output)
     // Expected strings are pinned by the matching VFP9 oracle, including retained bad buffers.
     public static IEnumerable<object[]> RuleCases()
     {
-        foreach (string kind in new[] { "cross", "replacecross", "bad", "insert", "append" })
+        foreach (string kind in new[] { "cross", "replacecross", "bad", "insert", "append", "array", "memvar" })
         foreach (int buffering in new[] { 1, 3, 5 })
         foreach (bool record in new[] { false, true })
             yield return new object[] { kind, buffering, record };
@@ -165,7 +166,8 @@ public sealed class MicroVfpSqlDmlConsolidatedTests(ITestOutputHelper output)
     {
         string actual = Run(RulesSetup(kind, record), RulesScenario(kind, buffering, record), RuleProcedure, true);
         output.WriteLine($"{kind}/{buffering}/{record}: {actual}");
-        Assert.Equal(RuleExpected[$"{kind}/{buffering}/{record}"], actual);
+        string expectedKind = kind is "array" or "memvar" ? "insert" : kind;
+        Assert.Equal(RuleExpected[$"{expectedKind}/{buffering}/{record}"], actual);
     }
 
     [Theory]
@@ -177,6 +179,17 @@ public sealed class MicroVfpSqlDmlConsolidatedTests(ITestOutputHelper output)
     [InlineData(5, true)]
     public void Rules_OnError(int buffering, bool record) => Assert.Equal(RuleExpected[$"bad/{buffering}/{record}"],
         Run(RulesSetup("bad", record), RulesScenario("onerror", buffering, record), RuleProcedure, true));
+
+    [Theory]
+    [InlineData("array", 1)]
+    [InlineData("array", 3)]
+    [InlineData("array", 5)]
+    [InlineData("memvar", 1)]
+    [InlineData("memvar", 3)]
+    [InlineData("memvar", 5)]
+    public void Rules_MemorySourcesKeepValues(string kind, int buffering) =>
+        Assert.Equal("7,0,|" + (buffering > 1 ? ".T.|0" : ""), Run(RulesSetup(kind, false),
+            RulesScenario(kind, buffering, false).Replace("=-1", "=7"), RuleProcedure, true));
 
     [Theory]
     [InlineData("DELETE FOR from = 1", "ERR:36|")]

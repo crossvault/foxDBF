@@ -185,6 +185,11 @@ public sealed partial class VfpInterpreter
             && _meta.TryGetValue(bufWa.Area, out var bufMeta) && bufMeta.Buffering > 1)
         {
             VfpInsertProfile.Stop(VfpInsertProfileBucket.BufferingRiChecks, checkStart);
+            if (bufStmt.SourceKind is InsertSourceKind.Array or InsertSourceKind.Memvar)
+            {
+                BufferMemoryInsert(ins, bufStmt, bufWa);
+                return;
+            }
             // INSERT moves off the preceding row, so row buffering must commit it before the new append.
             MaybeAutoCommitRow(bufWa.Area);
             bufWa = Session.AreaAt(bufWa.Area)!;
@@ -287,7 +292,7 @@ public sealed partial class VfpInterpreter
             openedHere = wa is not null;
         }
 
-        // No resolvable target / no bound insert trigger ⇒ plain DML, no enforcement (free table or no rule).
+        // No resolvable target / no bound insert trigger ⇒ plain DML; the validator still checks DBC rules.
         if (wa is null || ResolveTriggerProc(RiEvent.Insert, wa) is null)
         {
             string? insertPath = ResolveInsertWritePath(table);
@@ -884,7 +889,7 @@ public sealed partial class VfpInterpreter
             }
             finally { lease?.Dispose(); }
             // A DELETE-dependent key/FOR can change index membership even though no field changed.
-            // Reopen only after the writer flushes its index pages; otherwise SEEK sees stale keys.
+            // Refresh only after the writer flushes its index pages; otherwise SEEK sees stale keys.
             // Other indexes are unchanged by a deletion flip, so SCAN … DELETE keeps its per-row cost.
             if (writePath is not null && rekeyed)
             {
