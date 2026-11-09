@@ -8,6 +8,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- CZECH and SLOVAK collations on code pages 1250, 852 and 895; POLISH on 1250, 852 and 620;
+  HUNGARY on 1250 and 852. VFP9-exact keys support bulk and incremental index creation, existing-tag
+  maintenance, SEEK with EXACT OFF/ON, Rushmore ranges and microVFP `SET COLLATE TO` / `INDEX ON`.
+  Contractions follow measured VFP9 behavior, including HUNGARY's `ozs`/`dzs` equivalence and prefix
+  ranges whose contracted key sorts below the literal.
+- NORDAN and SWEFIN collations with VFP9-exact index keys on code pages 1252, 437, 850, 865
+  and 10000; ICELAND on 1252, 437, 850 and 861. Includes NORDAN's case-insensitive `aa`
+  contraction, index creation and maintenance of VFP-made tags, SEEK with EXACT OFF/ON,
+  Rushmore prefix filtering and microVFP `SET COLLATE TO` / `INDEX ON` / `SEEK`.
 - microVFP `APPEND BLANK`, including buffered appends, index maintenance and DBC DEFAULTs evaluated once.
   DEFAULTs see the new record's fields and physical record number, while `RECCOUNT()` still excludes it,
   matching VFP9's distinction between APPEND BLANK and INSERT.
