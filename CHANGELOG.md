@@ -6,16 +6,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
-### Fixed
-
-- BREAKING: microVFP `BEGIN TRANSACTION` now raises VFP error 1548 before opening a transaction
-  when any open database member has a non-structural IDX or CDX. Free tables and indexes opened
-  after BEGIN remain accepted there; existing standalone-index write safety restrictions still apply.
-
-- DELETE/RECALL re-key an index only when its KEY/FOR directly calls `DELETED()`, matching
-  VFP9's persisted indexes. `EVALUATE`/`EVAL`, random/date/time functions, `SYS` and UDFs
-  alone no longer cause a flag-only change to replace stored keys or FOR membership.
-
 ### Changed
 
 - BREAKING: character, Varchar and memo writes now use VFP9's session-to-table best-fit bytes
@@ -112,6 +102,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `SET COLLATE TO "GERMAN"` use the table's code page. GERMAN on code page 850 remains unsupported.
 
 ### Fixed
+
+- BREAKING: microVFP `BEGIN TRANSACTION` now raises VFP error 1548 before opening a transaction
+  when any open database member has a non-structural IDX or CDX. Free tables and indexes opened
+  after BEGIN remain accepted there; existing standalone-index write safety restrictions still apply.
+
+- DELETE/RECALL re-key an index only when its KEY/FOR directly calls `DELETED()`, matching
+  VFP9's persisted indexes. `EVALUATE`/`EVAL`, random/date/time functions, `SYS` and UDFs
+  alone no longer cause a flag-only change to replace stored keys or FOR membership.
 
 - `DELETE` / `RECALL` no longer re-key an index whose KEY/FOR reaches `DELETED()` only through a UDF
   (`INDEX ON id FOR livefn()`); VFP9 keeps such entries, and the record stays findable by `SEEK`.

@@ -170,10 +170,11 @@ public sealed partial class VfpInterpreter
         {
             foreach (var area in Session.OpenAreas)
             {
-                if (area.Table.SourcePath is not { } path || !HasAdditionalIndexesOnTable(path)) continue;
+                if (area.Table.SourcePath is not { } path
+                    || !_meta.TryGetValue(area.Area, out var meta)
+                    || meta.ExtraIndexes is not { Count: > 0 } indexes) continue;
                 string structural = SidecarFile.ChangeExtension(path, ".cdx");
-                if (!OpenAdditionalIndexPaths(path).Any(index =>
-                    !SamePath(index, structural))) continue;
+                if (!indexes.Any(index => !SamePath(index, structural))) continue;
                 string livePath = Session.TxLivePath is { } toLive ? toLive(path) : path;
                 if (database.TableNames.Any(member => SamePath(database.GetTablePath(member), livePath)))
                     throw new MicroVfpRuntimeException("Cannot start a transaction with non-structural indexes open.", 1548);
