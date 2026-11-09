@@ -131,6 +131,14 @@ public sealed partial class VfpInterpreter
         if (recIndex < 0 || recIndex >= wa.Table.RecordCount) return true;
         var m = Meta(area);
         bool hasFields = edit.Fields.Count > 0;
+        try { ValidateBufferedRow(wa, recno, edit); }
+        catch (FoxDbfSqlException error)
+        {
+            SetErrorState(error, 0);
+            _errNo = 0;
+            if (throwOnDeleteFailure) throw;
+            return false;
+        }
 
         // The buffer exposes the candidate deletion to the trigger; a RESTRICT keeps it pending.
         if (EnforceReferentialIntegrity && edit.DeletedOverride == true)
@@ -204,12 +212,34 @@ public sealed partial class VfpInterpreter
                 {
                     if (parentImg is { } pRev) RestoreRecordImage(pRev);
                     else if (parentSnap is not null) RestoreSnapshot(parentSnap);
+                    var error = TriggerFailed(RiEvent.Update, area, wa.Alias);
+                    SetErrorState(error, 0);
+                    _errNo = 0;
+                    if (throwOnDeleteFailure) throw error;
                     return false;
                 }
             }
             return true;
         }
         finally { parentSnap?.Cleanup(); }
+    }
+
+    private void ValidateBufferedRow(VfpSession.WorkArea wa, int recno, RowEdit edit)
+    {
+        if (!EnforceReferentialIntegrity || edit.Fields.Count == 0 || Session.Database is null) return;
+        var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        var record = wa.Table.GetRecord(recno - 1, includeDeleted: true);
+        for (int i = 0; i < wa.Table.Columns.Count; i++)
+        {
+            var column = wa.Table.Columns[i];
+            if (!column.IsSystem)
+                map[column.Name] = edit.Fields.TryGetValue(i, out var value) ? value : record?[column.Name];
+        }
+        WithImportRow(wa, recno, map, () =>
+        {
+            DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, map, EvalTextLoud);
+            return true;
+        });
     }
 
     /// <summary>TABLEUPDATE core — commit the current row (allRows=false) or every buffered row + append
@@ -233,14 +263,27 @@ public sealed partial class VfpInterpreter
         string path = BeginTxWrite(livePath);
         wa = Session.AreaAt(area) ?? wa;                        // BeginTxWrite may have reopened the area on the copy.
         var buf = m.Buf;
+        // VFP checks invalid buffered field/record values before publishing any row. Trigger
+        // rejection, in contrast, happens while committing and retains earlier successful rows.
+        try
+        {
+            foreach (var (rec, edit) in buf.Rows)
+                if (allRows || rec == m.RecNo) ValidateBufferedRow(wa, rec, edit);
+        }
+        catch (FoxDbfSqlException error)
+        {
+            SetErrorState(error, 0);
+            _errNo = 0;
+            return false;
+        }
         bool ok = true;
         _inBufferCommit = true;
         try
         {
-            if (allRows && (buf.Rows.Values.Any(e => e.DeletedOverride is not null) || buf.Appends.Any(e => e.Deleted)))
+            if (allRows && (buf.Rows.Count > 0 || buf.Appends.Any(e => e.Deleted)))
             {
-                // VFP commits deletion buffers record by record, including mixed field edits/appends.
-                // A rejected delete retains that row and the remaining edits; earlier commits survive.
+                // VFP commits existing rows in record order, including field edits and deletion flags.
+                // A rejected trigger retains that row and later edits; earlier commits survive.
                 foreach (int rec in buf.Rows.Keys.OrderBy(r => r).ToArray())
                 {
                     wa = Session.AreaAt(area)!;

@@ -624,6 +624,7 @@ public sealed partial class VfpInterpreter
             case DisplayStructureStmt ds: ExecDisplayStructure(ds); break;
             case DisplayTablesStmt dtb: ExecDisplayTables(dtb); break;
             case SqlPassthroughStmt sp: ExecSqlPassthrough(sp); break;
+            case SqlDmlStmt sd: ExecSqlDml(sd); break;
             case FlushStmt: break;                           // write-through model — persisted already; no-op.
             case ClearStmt cl: ExecClear(cl); break;
             case MacroSubstStmt ms: ExecMacroSubst(ms); break;

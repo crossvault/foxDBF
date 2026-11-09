@@ -44,7 +44,6 @@ public sealed class MicroVfpLoudUnsupportedTests
     [InlineData("CANCEL")]
     [InlineData("RETRY")]
     [InlineData("DEFINE CLASS foo AS Custom")]
-    [InlineData("UPDATE t SET a = 1")]
     [InlineData("REPL a WITH 1")]          // 4-letter verb abbreviations are not modelled
     public void NotModelled_Raises16(string command)
         => Assert.Equal(16, Raises(New(), command).VfpErrorNumber);

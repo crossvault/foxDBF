@@ -57,6 +57,9 @@ public sealed class VfpExpression
 
     private VfpExpression(string text, AstNode root) { Text = text; _root = root; }
 
+    // Hosts can pass already evaluated values without a lossy text/encoding round trip.
+    internal static VfpExpression Constant(VfpValue value) => new(string.Empty, new LiteralNode(value));
+
     /// <summary>
     /// Parses <paramref name="text"/> into an immutable expression. Throws
     /// <see cref="ExpressionException"/> on malformed input.
