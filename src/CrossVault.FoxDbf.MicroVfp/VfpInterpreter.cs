@@ -962,6 +962,9 @@ public sealed partial class VfpInterpreter
         string arg = set.Arguments.Trim();
         switch (set.Setting)
         {
+            case "DATE": Session.ImportDateFormat = arg.ToUpperInvariant(); break;
+            case "CENTURY": Session.ImportCentury = OnOff(arg); break;
+            case "AUTOINCERROR": Session.ImportAutoIncError = OnOff(arg); break;
             case "REPROCESS": SetReprocess(arg); break;
             case "DELETED": _ctx.Deleted = OnOff(arg); break;
             case "EXACT": _ctx.Exact = OnOff(arg); break;

@@ -68,6 +68,44 @@ public sealed partial class DbfWriter
         return AppendCoreBatch(positional);
     }
 
+    /// <summary>Prepare the import's stored row for FOR, rules and key validation, including autoincrement.</summary>
+    internal byte[] EncodeImportRow(object?[] values, bool[] blanks, int precedingRows = 0)
+    {
+        var preview = (object?[])values.Clone();
+        for (int i = 0; i < _schema.Columns.Count; i++)
+        {
+            if (!_schema.Columns[i].IsAutoIncrement) continue;
+            long offset = _version.HeaderSize + (long)i * _version.DescriptorWidth;
+            preview[i] = unchecked((int)(ReadU32LittleEndian(offset + 19) + precedingRows * ReadByteAt(offset + 23)));
+        }
+        return EncodeImportValues(preview, blanks);
+    }
+
+    private byte[] EncodeImportValues(object?[] values, bool[] blanks)
+    {
+        var safe = (object?[])values.Clone();
+        var overflow = new List<DbfColumn>();
+        for (int i = 0; i < _schema.Columns.Count; i++)
+        {
+            var column = _schema.Columns[i];
+            if (column.Type != 'I' || column.IsAutoIncrement || values[i] is null) continue;
+            decimal value = values[i] is double d && !double.IsFinite(d) ? decimal.MaxValue
+                : System.Convert.ToDecimal(values[i], System.Globalization.CultureInfo.InvariantCulture);
+            if (decimal.Truncate(value) >= -2147483647m && decimal.Truncate(value) <= 2147483647m) continue;
+            overflow.Add(column);
+            safe[i] = 0;
+        }
+        byte[] record = RecordEncoder.Encode(_schema, safe, false, blanks);
+        // External imports use VFP's integer-overflow sentinel. VALUES/REPLACE retain
+        // FieldEncoder's strict error-39 behavior; only this import batch uses it.
+        foreach (var column in overflow)
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(record.AsSpan(column.Offset + 1, 4), int.MinValue);
+        return record;
+    }
+
+    internal IReadOnlyList<int> AppendImportRows(List<object?[]> rows, List<bool[]> blanks)
+        => AppendCoreBatch(rows, blanks);
+
     /// <summary>
     /// One-lock / one-flush batch append. Mirrors <see cref="AppendCore(object?[], bool[])"/> exactly so the
     /// on-disk result is byte-identical to N per-row appends, but re-reads the count ONCE, writes
@@ -76,7 +114,7 @@ public sealed partial class DbfWriter
     /// RecordEncoder encoding/conversion failures are raised during a prepare pass before any
     /// PatchMemoPointers call or DBF/FPT mutation.
     /// </summary>
-    private System.Collections.Generic.IReadOnlyList<int> AppendCoreBatch(List<object?[]> rows)
+    private System.Collections.Generic.IReadOnlyList<int> AppendCoreBatch(List<object?[]> rows, List<bool[]>? blanks = null)
     {
         // Empty batch: a true no-op — no lock, no header stamp, no flush, file left byte-identical.
         if (rows.Count == 0)
@@ -144,7 +182,7 @@ public sealed partial class DbfWriter
                     aiRunning[a] += aiStep[a];
                 }
 
-                byte[] record = RecordEncoder.Encode(_schema, positional, deleted: false);
+                byte[] record = blanks is null ? RecordEncoder.Encode(_schema, positional, deleted: false) : EncodeImportValues(positional, blanks[r]);
                 indices[r] = diskCount + r;
                 appended.Add((diskCount + r + 1, record));   // 1-based recno + exact written bytes
             }

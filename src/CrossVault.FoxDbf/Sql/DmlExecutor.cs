@@ -16,7 +16,7 @@ namespace CrossVault.FoxDbf.Sql;
 /// <para>
 /// VFP semantics: DELETE is a SOFT delete (deletion flag only — never a pack); UPDATE/DELETE with no
 /// WHERE affect ALL live rows; <c>SET DELETED ON</c> excludes already-deleted rows from the candidate
-/// set; INSERT is single-row VALUES only; <c>=</c> in WHERE follows SQL/ANSI semantics like SELECT.
+/// set; INSERT supports VALUES, memory sources and SELECT; <c>=</c> in WHERE follows SQL/ANSI semantics like SELECT.
 /// </para>
 /// <para>
 /// Each handler resolves the target table via <see cref="VfpSession.OpenWritableTarget"/> (reusing an
@@ -26,7 +26,7 @@ namespace CrossVault.FoxDbf.Sql;
 /// <see cref="DbfWriter"/>. Affected-record counts come back via <see cref="SqlResult.Dml"/>.
 /// </para>
 /// </summary>
-internal sealed class DmlExecutor
+internal sealed partial class DmlExecutor
 {
     private readonly VfpSession _session;
 
@@ -51,6 +51,7 @@ internal sealed class DmlExecutor
         // Memory-source forms (VFP idioms heavily used in real SPs) map through the ACTIVE session's memvar
         // store via the bound interpreter's bridge, then append through the SAME writer path as VALUES — so
         // index maintenance, the COW transaction seam and buffering all apply unchanged.
+        if (st.SourceKind == InsertSourceKind.Select) return InsertSelect(st);
         if (st.SourceKind == InsertSourceKind.Array) return InsertFromArray(st);
         if (st.SourceKind == InsertSourceKind.Memvar) return InsertFromMemvar(st);
 

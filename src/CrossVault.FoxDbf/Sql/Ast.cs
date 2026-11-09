@@ -160,6 +160,8 @@ public enum InsertSourceKind
     /// <summary><c>FROM MEMVAR</c> — a single row whose fields map by NAME from the same-named
     /// <c>m.&lt;field&gt;</c> memory variables (a field with no matching memvar is left blank).</summary>
     Memvar,
+    /// <summary><c>SELECT ...</c> — materialized query rows mapped positionally.</summary>
+    Select,
 }
 
 /// <summary>
@@ -168,6 +170,7 @@ public enum InsertSourceKind
 /// <c>INSERT INTO table FROM ARRAY name</c> / <c>INSERT INTO table FROM MEMVAR</c>. For the memory-source
 /// forms <see cref="Values"/> is empty and <see cref="Columns"/> is <see langword="null"/>;
 /// <see cref="SourceName"/> is the array name for the ARRAY form (and <see langword="null"/> for MEMVAR).
+/// With <see cref="InsertSourceKind.Select"/>, <see cref="Query"/> supplies the rows and VALUES is empty.
 /// </summary>
 public sealed record InsertStatement(
     string? Database,
@@ -175,7 +178,8 @@ public sealed record InsertStatement(
     IReadOnlyList<string>? Columns,
     IReadOnlyList<VfpExpression> Values,
     InsertSourceKind SourceKind = InsertSourceKind.Values,
-    string? SourceName = null) : SqlStatement;
+    string? SourceName = null,
+    SelectStatement? Query = null) : SqlStatement;
 
 /// <summary>One <c>col = expr</c> assignment in an UPDATE.</summary>
 public sealed record SetClause(

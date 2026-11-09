@@ -841,6 +841,10 @@ public static class SqlParser
                 throw Err("Expected ARRAY or MEMVAR after INSERT ... FROM.");
             }
 
+            if (IsKw("SELECT"))
+                return new InsertStatement(db, table, cols, System.Array.Empty<VfpExpression>(),
+                    InsertSourceKind.Select, Query: ParseSubquerySelect());
+
             ExpectKw("VALUES");
             if (Current.Kind != TokKind.LParen) throw Err("Expected '(' after VALUES.");
             Advance();

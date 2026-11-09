@@ -23,7 +23,7 @@ the rest of this project (byte-compatible reads/writes, the same Rushmore-optimi
   stored procedures straight from a `.dbc`.
 - **Data access**: `USE`/`SELECT` work areas, `SEEK`/`GO`/`SKIP`, `LOCATE`/`CONTINUE` (full
   `FOR`/`WHILE` + scope, in the current index order, with per-area `CONTINUE` state),
-  `REPLACE`/`DELETE`/`RECALL`/`INSERT`, `GATHER`/`SCATTER`, `APPEND FROM`/`COPY TO` (`.dbf`), `PACK`,
+  `REPLACE`/`DELETE`/`RECALL`/`INSERT`, `GATHER`/`SCATTER`, `APPEND FROM` (`.dbf`, arrays, SDF and delimited text)/`COPY TO` (`.dbf`), `PACK`,
   `SUM`/`TOTAL`/`COUNT`, `BEGIN`/`END TRANSACTION`/`ROLLBACK` (copy-on-write), and an embedded VFP-SQL `SELECT`.
 - **Low-level file I/O**: the `FOPEN`/`FCREATE`/`FREAD`/`FGETS`/`FPUTS`/`FWRITE`/`FSEEK`/`FEOF`/
   `FCLOSE`/`FFLUSH`/`FCHSIZE`/`FERROR` handle family, plus `FILETOSTR()`/`STRTOFILE()` and `ADIR()`.
@@ -58,12 +58,45 @@ that coordinates via `RLOCK` is mutually exclusive with a concurrent VFP client 
 TO … SECONDS` wait timing is approximated (a headless library cannot block a UI thread indefinitely).
 
 What is still out: the **form/class/visual object model**, **`.mem`
-variable-file interop**, **non-DBF import/export formats** (Excel/other office types), the
+variable-file interop**, **spreadsheet import/export formats** (Excel/other office types), the
 **GUI-bound functions** (`MESSAGEBOX()`, `AFONT()`, font-extent queries), **view buffering**, and
 **multi-user optimistic conflict detection** (a buffered `TABLEUPDATE()` is not diffed against a
 concurrent writer). This targets running the
 data side of real-world VFP9 business-logic stored procedures correctly, not 100% coverage of the
 IDE-facing language surface.
+
+## Data imports
+
+```foxpro
+APPEND FROM ARRAY rows FIELDS code,amount FOR amount > 0
+APPEND FROM ARRAY rows FIELDS LIKE item*
+APPEND FROM input.txt TYPE SDF FIELDS code,amount
+APPEND FROM input.txt DELIMITED WITH CHARACTER ";" AS 1252
+APPEND FROM input.txt DELIMITED WITH TAB FOR amount > 0
+INSERT INTO target (code,amount) SELECT code,amount FROM source WHERE amount > 0
+```
+
+A one-dimensional array appends one record; a two-dimensional array appends one record
+per row. Array columns map to the selected fields in order. Extra columns are ignored;
+missing columns are blank. APPEND skips memo/general/blob fields. `FIELDS EXCEPT pattern`
+is also supported. `FOR` sees each candidate row after field conversion, including
+truncation and generated autoincrement values. The measured VFP9 text/array imports
+filter per row.
+
+Delimited input supports the default double-quote/comma pair, `WITH <quote>`, `WITH BLANK`,
+`WITH TAB`, and `WITH CHARACTER <separator>` (also combined with a custom quote).
+VFP's quoting is not RFC CSV: doubled quotes are not escaped quotes, and quoted values
+cannot span lines. CR, LF, CRLF and DOS EOF bytes follow VFP9 record boundaries.
+`AS nCodePage` specifies the source encoding. Dates follow `SET DATE`; SDF date fields
+consume eight characters even with `SET CENTURY ON`, preserving VFP9's century/offset quirk.
+
+`INSERT ... SELECT` is available through `VfpSession.Execute` and ADO.NET as well. The
+source is materialized before appending, so selecting from the destination is finite.
+Explicit target columns use DBC defaults for omitted fields; APPEND leaves omitted fields
+blank. Imports maintain indexes and autoincrement through the existing writer and keep
+successful preceding rows on a later NULL, rule or duplicate-key error. `_TALLY` reflects
+that successful prefix. ARRAY integer overflow writes VFP's overflow marker and reports
+error 39 after processing; INSERT SELECT writes the marker without that error.
 
 ## Quick start
 
