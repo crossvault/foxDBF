@@ -35,7 +35,7 @@ public sealed class SqlDdlCreateClausesTests
     {
         using var dir = new SqlTestSupport.TempDir();
         DbfDatabaseBuilder.Create(dir.File("catalog.dbc"), Array.Empty<DbcTableSpec>());
-        string[] files = ["catalog.dbc", "catalog.dct", "catalog.dcx"];
+        string[] files = ["catalog.dbc", "catalog.DCT", "catalog.DCX"];
         var before = files.Select(f => File.ReadAllBytes(dir.File(f))).ToArray();
         using var connection = new FoxDbfConnection($"Data Source={dir.File("catalog.dbc")}");
         connection.Open();

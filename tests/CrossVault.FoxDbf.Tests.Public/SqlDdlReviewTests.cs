@@ -55,7 +55,7 @@ public sealed class SqlDdlReviewTests
     {
         using var dir = new SqlTestSupport.TempDir();
         DbfDatabaseBuilder.Create(dir.File("catalog.dbc"), []);
-        string[] files = ["catalog.dbc", "catalog.dct", "catalog.dcx"];
+        string[] files = ["catalog.dbc", "catalog.DCT", "catalog.DCX"];
         var before = files.Select(f => File.ReadAllBytes(dir.File(f))).ToArray();
         using var reader = new VfpSession();
         reader.OpenDatabase(dir.File("catalog.dbc"));
@@ -64,8 +64,11 @@ public sealed class SqlDdlReviewTests
         DbfDatabaseBuilder.AddTableFaultForTests = point =>
         {
             if (point != phase) return;
-            using var contender = DbfWriter.Open(dir.File("catalog.dbc"), new DbfOptions { LockMode = LockMode.Shared });
-            Assert.ThrowsAny<IOException>(() => contender.LockFile());
+            if (OperatingSystem.IsWindows())   // in-process lock exclusion needs Windows byte-range lock semantics
+            {
+                using var contender = DbfWriter.Open(dir.File("catalog.dbc"), new DbfOptions { LockMode = LockMode.Shared });
+                Assert.ThrowsAny<IOException>(() => contender.LockFile());
+            }
             throw new InvalidOperationException("Injected DBC fault");
         };
         try
@@ -141,16 +144,16 @@ public sealed class SqlDdlReviewTests
         Assert.Contains("t", writer.Database!.TableNames);
     }
 
-    [Fact]
+    [WindowsOnlyFact]   // FileShare denial is mandatory only on Windows
     public void Create_Dcx_Write_Failure_Preserves_Container_And_Removes_New_Files()
     {
         using var dir = new SqlTestSupport.TempDir();
         DbfDatabaseBuilder.Create(dir.File("catalog.dbc"), []);
-        string[] files = ["catalog.dbc", "catalog.dct", "catalog.dcx"];
+        string[] files = ["catalog.dbc", "catalog.DCT", "catalog.DCX"];
         var before = files.Select(f => File.ReadAllBytes(dir.File(f))).ToArray();
         using var session = new VfpSession();
         session.OpenDatabase(dir.File("catalog.dbc"));
-        using (var deny = new FileStream(dir.File("catalog.dcx"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (var deny = new FileStream(dir.File("catalog.DCX"), FileMode.Open, FileAccess.Read, FileShare.Read))
             Assert.ThrowsAny<Exception>(() => session.Execute("CREATE TABLE t (id I PRIMARY KEY, note M)"));
         for (int i = 0; i < files.Length; i++) Assert.True(before[i].SequenceEqual(File.ReadAllBytes(dir.File(files[i]))), files[i] + " changed");
         foreach (string ext in new[] { "dbf", "fpt", "cdx" }) Assert.False(File.Exists(dir.File("t." + ext)));
