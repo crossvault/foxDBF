@@ -69,15 +69,7 @@ internal sealed partial class DmlExecutor
                 if (st.Columns is not null) FillDbcDefaults(_session, st.Table, ref target, candidate);
                 var blank = st.Columns is null ? new bool[columns.Count]
                     : OmittedColumnsBlankMask(_session, st.Table, columns, candidate, honourSetNull: true);
-                var schema = target.Writer.Schema;
-                var stored = StoredInsertValues(target.Writer, candidate, blank);
-                int recno = target.Writer.RecordCount + 1;
-                // The fallback writer temporarily owns an exclusive work area's handle.
-                // Restore that area before invoking PRG rules, as with DEFAULT evaluation.
-                target.Dispose();
-                validate(st.Table, schema, stored, blank, recno);
-                target = _session.OpenWritableTarget(st.Table);
-                target.Writer.AppendRecord(candidate, blank);
+                AppendWithRestoredArea(st.Table, ref target, candidate, blank, validate);
                 return SqlResult.Dml(1);
             }
             if (st.Columns is null) { AppendAllColumns(_session, st.Table, target.Writer, columns, values); return SqlResult.Dml(1); }
@@ -162,6 +154,7 @@ internal sealed partial class DmlExecutor
     private static void AppendAllColumns(VfpSession session, string table, DbfWriter writer, IReadOnlyList<DbfColumn> columns, object?[] values)
     {
         CheckInsertValueCount(columns, values);
+        using var appendLock = session.InsertRowValidator is null ? null : writer.LockAppendScope();
         if (session.InsertRowValidator is { } validate)
         {
             var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
@@ -175,6 +168,7 @@ internal sealed partial class DmlExecutor
         Dictionary<string, object?> map, bool honourSetNull)
     {
         var blank = OmittedColumnsBlankMask(session, table, writer.Schema.Columns, map, honourSetNull);
+        using var appendLock = session.InsertRowValidator is null ? null : writer.LockAppendScope();
         if (session.InsertRowValidator is { } validate)
             validate(table, writer.Schema, StoredInsertValues(writer, map, blank), blank, writer.RecordCount + 1);
         writer.AppendRecord(map, blank);
@@ -244,14 +238,41 @@ internal sealed partial class DmlExecutor
         var blank = OmittedColumnsBlankMask(_session, table, schema.Columns, map, honourSetNull);
         if (_session.InsertRowValidator is { } validate)
         {
-            int recno = target.Writer.RecordCount + 1;
-            var stored = StoredInsertValues(target.Writer, map, blank);
-            // PRG rules need the live work area restored, as on the VALUES fallback path.
+            AppendWithRestoredArea(table, ref target, map, blank, validate);
+            return;
+        }
+        target.Writer.AppendRecord(map, blank);
+    }
+
+    private void AppendWithRestoredArea(string table, ref VfpSession.WritableTarget target,
+        Dictionary<string, object?> map, bool[] blank,
+        Action<string, DbfTable, Dictionary<string, object?>, bool[], int> validate)
+    {
+        // Exclusive work areas must be restored while PRG rules run. After reopening the writer,
+        // verify the candidate under the append lock; only contention repeats rule evaluation.
+        while (true)
+        {
+            var schema = target.Writer.Schema;
+            byte[] preview;
+            int recno;
+            var values = schema.Columns.Select(c => map.GetValueOrDefault(c.Name)).ToArray();
+            using (target.Writer.LockAppendScope())
+            {
+                preview = target.Writer.EncodeRuleRow(values, blank);
+                recno = target.Writer.RecordCount + 1;
+            }
+            var stored = StoredImportValues(schema, new DbfRecord(schema, preview), map);
             target.Dispose();
             validate(table, schema, stored, blank, recno);
             target = _session.OpenWritableTarget(table);
+            using (target.Writer.LockAppendScope())
+            {
+                if (target.Writer.RecordCount + 1 != recno
+                    || !preview.AsSpan().SequenceEqual(target.Writer.EncodeRuleRow(values, blank))) continue;
+                target.Writer.AppendRecord(map, blank);
+                return;
+            }
         }
-        target.Writer.AppendRecord(map, blank);
     }
 
     // ---- omitted INSERT columns -----------------------------------------------------------
