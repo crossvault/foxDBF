@@ -67,7 +67,8 @@ public sealed partial class VfpInterpreter
             var v = Eval(clause.Value);
             var col = wa.Table.Columns[idx];
             target[idx] = normalize ? NormalizeUpdateValue(col, v, col.Type == 'Q' ? wa.Table.BinaryTextEncoding : wa.Table.Encoding)
-                : v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
+                : DmlExecutor.StoredFieldValue(wa.Table, col,
+                    v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr()));
             if (edit is not null)
             {
                 if (normalize) buf.Rows[recno] = edit;
@@ -200,6 +201,8 @@ public sealed partial class VfpInterpreter
         for (int i = 0; i < columns.Count; i++)
             if (!columns[i].IsSystem && !columns[i].IsAutoIncrement && !blank[i] && !ae.Fields.ContainsKey(i))
                 ae.Fields[i] = null;
+        foreach (int idx in ae.Fields.Keys.ToArray())
+            ae.Fields[idx] = DmlExecutor.StoredFieldValue(wa.Table, columns[idx], ae.Fields[idx]);
         // INSERT rejects invalid fields before keeping the append; record rules are deferred.
         try { ValidateBufferedRow(wa, EffCount(wa.Area, wa) + 1, ae, validateRecord: false); }
         catch
@@ -318,6 +321,8 @@ public sealed partial class VfpInterpreter
     {
         bool append = edit is AppendEntry;
         if (!EnforceReferentialIntegrity || (!append && edit.Fields.Count == 0) || Session.Database is null) return;
+        var rules = DmlExecutor.ValidationRules(Session, wa.Alias);
+        if (rules is null) return;
         var fields = changedField.HasValue ? new[] { changedField.Value }
             : (append ? Enumerable.Range(0, wa.Table.Columns.Count).Where(i => !wa.Table.Columns[i].IsSystem) : edit.Fields.Keys)
                 .Where(i => !edit.ValidatedFields.Contains(i)).ToArray();
@@ -328,14 +333,15 @@ public sealed partial class VfpInterpreter
         for (int i = 0; i < wa.Table.Columns.Count; i++)
         {
             var column = wa.Table.Columns[i];
+            // Rules need VFP field values: the public indexer trims leading spaces and maps numeric blanks to null.
             if (!column.IsSystem)
-                map[column.Name] = edit.Fields.TryGetValue(i, out var value) ? value : append ? BlankFor(column) : record?[column.Name];
+                map[column.Name] = edit.Fields.TryGetValue(i, out var value) ? value : append ? BlankFor(column) : record?.GetVfpValue(column.Name);
         }
         WithImportRow(wa, recno, map, () =>
         {
             DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, map, EvalTextLoud,
                 fieldsToValidate: fields.Select(i => wa.Table.Columns[i].Name).ToHashSet(StringComparer.OrdinalIgnoreCase),
-                validateRecord: checkRecord);
+                validateRecord: checkRecord, rules: rules);
             return true;
         });
         edit.ValidatedFields.UnionWith(fields);
@@ -789,6 +795,17 @@ public sealed partial class VfpInterpreter
         if (m.Buffering <= 1)
             throw new MicroVfpRuntimeException("Function requires row or table buffering mode.", 1586);
         if (m.Eof) return VfpValue.Null;
+        if (IsNumeric(a[0]) && a[0].AsNumber == -1m)
+        {
+            // VFP prefixes the field-state string with the deletion state. DBC rules such as
+            // TasTrade's ValOrder use this to distinguish a paid-only change from other edits.
+            var states = new System.Text.StringBuilder();
+            states.Append(FnGetFldState(new[] { VfpValue.Integer(0), VfpValue.Integer(area) }).AsInteger);
+            for (int i = 0; i < wa.Table.Columns.Count; i++)
+                if (!wa.Table.Columns[i].IsSystem)
+                    states.Append(FnGetFldState(new[] { VfpValue.Integer(i + 1), VfpValue.Integer(area) }).AsInteger);
+            return VfpValue.Character(states.ToString());
+        }
         bool isField0 = IsNumeric(a[0]) && a[0].AsNumber == 0m;
         int colIdx = IsNumeric(a[0]) ? (int)a[0].AsNumber - 1 : ColumnIndex(wa.Table, StripQualifier(a[0].AsString));
         // -1 is reserved for numeric field 0 (the record delete-state). An unresolved character

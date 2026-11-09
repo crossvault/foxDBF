@@ -74,6 +74,19 @@ public sealed partial class DbfDatabase
         return true;
     }
 
+    private readonly Dictionary<string, DbcTableRules?> _rulesByPath = new(StringComparer.OrdinalIgnoreCase);
+
+    // Metadata belongs to this open DBC snapshot; DDL opens a new snapshot after rewriting it.
+    internal DbcTableRules? RulesForPath(string path)
+    {
+        if (_rulesByPath.TryGetValue(path, out var rules)) return rules;
+        foreach (string member in TableNames)
+            if (string.Equals(GetTablePath(member), path, StringComparison.OrdinalIgnoreCase))
+                return _rulesByPath[path] = GetTableRules(member);
+        _rulesByPath[path] = null;
+        return null;
+    }
+
     /// <summary>Decode one table node's Table + per-field <c>PROPERTY</c> blobs into a <see cref="DbcTableRules"/>.</summary>
     private DbcTableRules DecodeTableRules(TableNode node)
     {

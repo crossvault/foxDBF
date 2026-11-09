@@ -110,6 +110,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- ADO.NET `EnforceRules=on` validates generated AUTOINC and rounded numeric values as VFP9 stores them,
+  and reuses the target work area across INSERT/UPDATE statements instead of opening another copy each time.
+- microVFP `GETFLDSTATE(-1)` returns the deletion and field-state string needed by DBC record rules.
+- INSERT without a column list reports VFP9's value-count errors consistently with and without rule enforcement.
+
 - BREAKING: microVFP with rule enforcement enabled now checks DBC field and record rules for INSERT,
   REPLACE and buffered appends at VFP9's validation points. Invalid buffered REPLACE values
   remain editable, invalid INSERT field values are rejected, and TABLEUPDATE cannot publish
