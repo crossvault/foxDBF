@@ -596,7 +596,8 @@ public sealed partial class VfpInterpreter
                 RememberOldVal(m, field, ReadField(wa, field));
                 var v = Eval(clause.Value);
                 char type = wa.Table.Columns[idx].Type;
-                values[idx] = v.IsNull ? null : (type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
+                values[idx] = v.IsNull ? null : (type == 'M' && v.IsBinary ? v.ToClr()
+                    : type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
             }
             writer.UpdateRecord(recIndex, values);
             writer.Flush();
@@ -1118,7 +1119,14 @@ public sealed partial class VfpInterpreter
                     if (fieldFilter is not null && !fieldFilter.Contains(col.Name)) continue;
                     // Copy the stored value, not the runtime's blank-to-empty conversion: a blank N/F
                     // reads as 0 in expressions but APPEND FROM must preserve its blank bytes.
-                    object? value = raw?.GetExpressionValue(col.Name);
+                    object? value = raw?.GetStoredExpressionValue(col.Name);
+                    if (value is string text && col.Type is 'C' or 'V' or 'M')
+                    {
+                        // APPEND FROM converts directly between tables, bypassing the current session.
+                        value = col.IsBinary
+                            ? targetWa.Table.Encoding.GetString(Encoding.Latin1.GetBytes(text))
+                            : VfpSessionText.ForTable(text, srcWa.Table.Encoding, targetWa.Table.Encoding);
+                    }
                     bool isNull = raw is { } r && r.IsNullFlagSet(col);
                     if (!isNull && (value is null || (col.Type == 'L' && raw is { } l && l.GetRawField(col)[0] == (byte)' ')))
                     {
@@ -1147,6 +1155,7 @@ public sealed partial class VfpInterpreter
             using var lease = LeaseWriter(targetPath);
             var writer = lease.Writer;
             var columns = writer.Schema.Columns;
+            writer.Schema.SetTextSession(targetWa.Table.Encoding.CodePage);
             try
             {
                 // Row by row, as VFP9: a row that would put .NULL. into a NOT NULL field raises 1581 and
@@ -1154,7 +1163,11 @@ public sealed partial class VfpInterpreter
                 foreach (var (values, blank) in rows)
                     writer.AppendRecord(values, AppendFromBlankMask(targetWa.Alias, columns, values, blank));
             }
-            finally { writer.Flush(); }
+            finally
+            {
+                writer.Schema.SetTextSession(SessionCodePage);
+                writer.Flush();
+            }
         }
         finally { ReopenFileAreas(targetPath); }   // appended rows changed the count ⇒ rebuild the order cache.
     }
@@ -1192,7 +1205,7 @@ public sealed partial class VfpInterpreter
             var cols = ScatterFields(wa.Table, s.Fields, memo: true);
             var defs = cols.Select(ToColumnDef).ToList();
             if (defs.Count == 0) return;
-            using (DbfWriter.Create(targetPath, defs, new DbfCreateOptions { Overwrite = true })) { }
+            using (DbfWriter.Create(targetPath, defs, Session.NewTableOptions with { Overwrite = true })) { }
             return;
         }
 
@@ -1207,7 +1220,7 @@ public sealed partial class VfpInterpreter
             new DbfColumnDef("FIELD_NOCP", 'L'),
         };
         var srcCols = ScatterFields(wa.Table, s.Fields, memo: true);
-        using (var writer = DbfWriter.Create(targetPath, descCols, new DbfCreateOptions { Overwrite = true }))
+        using (var writer = DbfWriter.Create(targetPath, descCols, Session.NewTableOptions with { Overwrite = true }))
         {
             foreach (var c in srcCols)
                 writer.AppendRecord(c.Name, c.Type.ToString(), (decimal)c.Length, (decimal)c.Decimal, c.IsNullable, c.IsBinary);
@@ -1240,7 +1253,7 @@ public sealed partial class VfpInterpreter
         }
         if (defs.Count == 0) return;
         string targetPath = TargetDbfPath(NameOf(s.Table));
-        using (DbfWriter.Create(targetPath, defs, new DbfCreateOptions { Overwrite = true })) { }
+        using (DbfWriter.Create(targetPath, defs, Session.NewTableOptions with { Overwrite = true })) { }
         OpenCreatedTable(NameOf(s.Table));
     }
 
@@ -1263,7 +1276,7 @@ public sealed partial class VfpInterpreter
         try
         {
             // SET BLOCKSIZE feeds the .fpt block size of the memo file this COPY TO creates.
-            using var writer = DbfWriter.Create(targetPath, defs, new DbfCreateOptions { Overwrite = true, MemoBlockSize = MemoBlockBytes() });
+            using var writer = DbfWriter.Create(targetPath, defs, Session.NewTableOptions with { Overwrite = true, MemoBlockSize = MemoBlockBytes() });
             int rc = wa.Table.RecordCount;
             for (int rec = 1; rec <= rc; rec++)
             {
@@ -1294,10 +1307,9 @@ public sealed partial class VfpInterpreter
             ? target
             : Path.Combine(Session.DataDirectory ?? Directory.GetCurrentDirectory(), target);
         if (!Path.HasExtension(path)) path += ".txt";
-        // VFP writes the memo's bytes as stored: re-encode with the encoding the value was decoded with
-        // (the table code page, or Latin-1 byte identity for a binary / NOCPTRANS memo), never UTF-8.
+        // VFP COPY MEMO writes the field's session bytes; NOCPTRANS preserves the original bytes.
         var column = wa.Table.Columns.FirstOrDefault(c => string.Equals(c.Name, field, StringComparison.OrdinalIgnoreCase));
-        var encoding = column is { IsBinary: true } ? Encoding.Latin1 : wa.Table.Encoding;
+        var encoding = column is { IsBinary: true } ? wa.Table.BinaryTextEncoding : ConnectionEncoding();
         byte[] bytes = encoding.GetBytes(content);
         if (s.Additive)
         {
@@ -1367,7 +1379,7 @@ public sealed partial class VfpInterpreter
             m.RecNo = savRec; m.Eof = savEof; m.Bof = savBof; m.Cached = null;
         }
 
-        using (var writer = DbfWriter.Create(targetPath, defs, new DbfCreateOptions { Overwrite = true }))
+        using (var writer = DbfWriter.Create(targetPath, defs, Session.NewTableOptions with { Overwrite = true }))
         {
             foreach (var g in groups) writer.AppendRecord(g);
             writer.Flush();

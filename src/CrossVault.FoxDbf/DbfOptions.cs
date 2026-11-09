@@ -17,9 +17,10 @@ namespace CrossVault.FoxDbf;
 /// </remarks>
 public sealed record DbfOptions
 {
-    /// <summary>Session code page for UPPER/LOWER in index KEY/FOR expressions.
-    /// Null uses the table's own code page. Does not change the DBF encoding or
-    /// restrict maintenance of existing tags from another language session.</summary>
+    /// <summary>Session code page for field/memo text reads and writes and for UPPER/LOWER in
+    /// index expressions. Text crosses the session/table boundary using VFP9's measured best-fit
+    /// maps. Binary fields preserve bytes. Null keeps table-native text and Latin1 binary strings.
+    /// Does not change the DBF's declared encoding or restrict maintenance of existing tags.</summary>
     public int? SessionCodePage { get; init; }
 
     /// <summary>

@@ -62,7 +62,7 @@ internal sealed class DdlExecutor
 
         // DbfWriter.Create writes the .dbf (+ .fpt) and reopens it as a ready writer; close it
         // immediately — the new table is then resolved on disk by subsequent INSERT / SELECT.
-        using (DbfWriter.Create(path, defs))
+        using (DbfWriter.Create(path, defs, _session.NewTableOptions))
         {
         }
 

@@ -99,6 +99,10 @@ Multibyte conversion and the Phase 4 collations remain deferred.
 For the writer, use `DbfOptions.SessionCodePage` when opening or
 `DbfCreateOptions.SessionCodePage` when creating a table. Null means the table's own code-page
 session; an explicit `EvaluationContext.SessionCodePage` on a build overrides that default.
+The option also controls character/Varchar/memo reads and writes: VFP9's byte maps perform
+the conversion in both directions, including lossy best fits. NOCPTRANS strings use the
+session encoding while their bytes remain unchanged; without a session option they keep
+their Latin1 representation. ADO.NET accepts `SessionCodePage=1250` in its connection string.
 Use the same session code page when reopening a writer to maintain or rebuild expression tags:
 VFP does not persist CPCURRENT in a CDX/IDX header. OEM/Mac sessions have their own case maps;
 select the corresponding Windows page explicitly to reproduce a Windows-session-built tag.

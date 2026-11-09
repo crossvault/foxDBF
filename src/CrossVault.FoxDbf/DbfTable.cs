@@ -27,7 +27,7 @@ public sealed partial class DbfTable : IDisposable
 
     // The sidecar memo reader (.fpt/.dbt/.dct), auto-opened beside the .dbf when present
     // (plan §A6). Owned by this table and disposed with it.
-    private readonly MemoFile? _memo;
+    private MemoFile? _memo;
 
     // The opt-in query accelerator (Highlike) attached to this table, if any. The ONLY
     // Core surface the accelerator sub-project plugs into. Null → the Core QueryOptimizer
@@ -51,6 +51,9 @@ public sealed partial class DbfTable : IDisposable
     /// </summary>
     public MemoFile? Memo => _memo;
 
+    // A writer's schema shares its DBF stream; attach the resolved sidecar without reopening the DBF.
+    internal void AttachMemo(string path) => _memo ??= MemoFile.Open(string.Empty, Version, path);
+
     /// <summary>
     /// Decode an <c>M</c> (memo) field's pointer and resolve it against <see cref="Memo"/>
     /// (plan §A6). Pointer decode: VFP <c>0x30/0x31/0x32</c> store a 4-byte LITTLE-endian
@@ -59,7 +62,7 @@ public sealed partial class DbfTable : IDisposable
     /// the block is read and, for a text memo, transcoded via <see cref="Encoding"/>
     /// (binary/NOCPTRANS memo → raw <c>byte[]</c>). Read errors → <see langword="null"/>.
     /// </summary>
-    internal object? ReadMemoValue(DbfColumn column, ReadOnlySpan<byte> raw)
+    internal object? ReadMemoValue(DbfColumn column, ReadOnlySpan<byte> raw, bool storedText = false)
     {
         try
         {
@@ -81,12 +84,11 @@ public sealed partial class DbfTable : IDisposable
             // Latin1 (byte↔char passthrough) instead of the table code page. A VFP .dbc
             // flags its CODE and PROPERTY memos NOCPTRANS yet they hold readable text
             // (e.g. the StoredProceduresSource CODE memo IS the stored-procedure source) —
-            // returning raw bytes there made every GetString() read empty. Latin1 round-
-            // trips byte-exactly with the writer's EncodeMemoText, so a binary memo stays
-            // lossless (a caller can recover the bytes via Encoding.Latin1.GetBytes).
+            // returning raw bytes there made every GetString() read empty. An explicit session
+            // represents these same bytes in its encoding; the table-native API keeps Latin1.
             return column.IsBinary
-                ? System.Text.Encoding.Latin1.GetString(bytes)
-                : Encoding.GetString(bytes);
+                ? (storedText ? System.Text.Encoding.Latin1 : BinaryTextEncoding).GetString(bytes)
+                : (storedText ? Encoding : TextEncoding).GetString(bytes);
         }
         catch
         {
@@ -198,6 +200,21 @@ public sealed partial class DbfTable : IDisposable
         => _bitMap.TryGetValue(column, out var bits) ? bits : (-1, -1);
 
     internal int? IndexSessionCodePage { get; }
+    internal System.Text.Encoding TextEncoding { get; private set; } = null!;
+    internal System.Text.Encoding BinaryTextEncoding { get; private set; } = null!;
+    internal bool NeedsStoredText { get; private set; }
+    private int? _textSessionCodePage;
+
+    internal void SetTextSession(int? codePage)
+    {
+        if (TextEncoding is not null && _textSessionCodePage == codePage) return;
+        var session = codePage is int cp ? VfpSessionText.ResolveSession(cp) : null;
+        TextEncoding = VfpSessionText.ForFields(Encoding, session);
+        BinaryTextEncoding = session ?? System.Text.Encoding.Latin1;
+        NeedsStoredText = TextEncoding != Encoding || (session is not null
+            && Columns is not null && Columns.Any(c => c.IsBinary && c.Type is 'C' or 'V' or 'M'));
+        _textSessionCodePage = codePage;
+    }
 
     private DbfTable(Stream stream, bool leaveOpen, DbfHeader header, IReadOnlyList<DbfColumn> physical, DbfOptions options, string? dbfPath)
     {
@@ -263,6 +280,7 @@ public sealed partial class DbfTable : IDisposable
         Columns = options.ExposeSystemColumns
             ? physical
             : physical.Where(c => !c.IsSystem).ToList();
+        SetTextSession(options.SessionCodePage);
     }
 
     /// <summary>

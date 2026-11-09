@@ -188,6 +188,7 @@ public sealed partial class DbfWriter : IDisposable
                     // read path (MemoFile.cs), so the byte-range-lock multi-writer design holds for memo
                     // tables too.
                     fpt = new FileStream(fptPath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+                    schema.AttachMemo(fptPath);
                     var head = new byte[8];
                     fpt.Seek(0, SeekOrigin.Begin);
                     int read = fpt.ReadAtLeast(head, 8, throwOnEndOfStream: false);
@@ -920,8 +921,8 @@ public sealed partial class DbfWriter : IDisposable
 
     private byte[] EncodeMemoText(DbfColumn col, string s)
     {
-        // A binary (NOCPTRANS) memo round-trips 1:1 via Latin1; a text memo via the table code page.
-        Encoding enc = col.IsBinary ? Encoding.Latin1 : _schema.Encoding;
+        // Text uses VFP session/table maps; NOCPTRANS preserves the session's bytes.
+        Encoding enc = col.IsBinary ? _schema.BinaryTextEncoding : _schema.TextEncoding;
         return enc.GetBytes(s);
     }
 

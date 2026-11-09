@@ -354,7 +354,7 @@ public sealed partial class VfpInterpreter
     }
 
     /// <summary>CPCONVERT(nCurrentCP, nNewCP, cExpr): transcode cExpr between code pages. Same CP ⇒ identity;
-    /// otherwise best-effort via the registered code-page provider, degrading to the input on any failure.</summary>
+    /// otherwise use the measured VFP9 byte maps (including lossy best-fit substitutions).</summary>
     private string FnCpConvert(VfpValue[] a)
     {
         if (a.Length < 3) return a.Length > 2 ? a[2].AsString : string.Empty;
@@ -363,33 +363,8 @@ public sealed partial class VfpInterpreter
         if (from == to) return s;
         try
         {
-            var srcEnc = Encoding.GetEncoding(from);
-            var dstEnc = Encoding.GetEncoding(to);
             var valueEncoding = a[2].IsBinary ? Encoding.Latin1 : _ctx.Encoding ?? ConnectionEncoding();
-            byte[] raw = valueEncoding.GetBytes(s);
-            byte[] converted = Encoding.Convert(srcEnc, dstEnc, raw);
-            // VFP's legacy translation tables predate Unicode best-fit mappings. These deviations
-            // are pinned over all 256 bytes for 1252->850, 850->1252 and 1252->437 by the VFP9 oracle.
-            for (int i = 0; i < raw.Length && i < converted.Length; i++)
-                converted[i] = (from, to, raw[i]) switch
-                {
-                    (1252, 850, 0x80 or 0x81 or 0x88 or 0x8d or 0x8e or 0x8f or 0x90 or 0x98 or 0x99) => raw[i],
-                    (1252, 850, 0x82 or 0x84) => 0x2c,
-                    (1252, 850, 0x85 or 0x97) => 0x5f,
-                    (1252, 850, 0x86) => 0xfd,
-                    (1252, 850, 0x87) => 0xba,
-                    (1252, 850, 0x91) => 0x60,
-                    (1252, 850, 0x95) => 0xcc,
-                    (1252, 850, 0x9d) => 0xbe,
-                    (1252, 850, 0x9e) => 0xf2,
-                    (1252, 437, 0x80 or 0x81 or 0x88 or 0x8d or 0x8e or 0x8f or 0x90 or 0x98 or 0x99 or 0x9d or 0x9e) => raw[i],
-                    (1252, 437, 0x85 or 0x97) => 0x5f,
-                    (1252, 437, 0x86) => 0xfd,
-                    (1252, 437, 0x87) => 0xfc,
-                    (1252, 437, 0x95) => 0xf9,
-                    (850, 1252, 0xb0 or 0xb1 or 0xb2 or 0xdb or 0xdf or 0xf2 or 0xfe) => 0x5f,
-                    _ => converted[i],
-                };
+            byte[] converted = VfpSessionText.ConvertBytes(valueEncoding.GetBytes(s), from, to);
             return valueEncoding.GetString(converted);
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException)

@@ -349,9 +349,8 @@ public sealed partial class VfpInterpreter
     /// <summary>APPEND MEMO mField FROM cFile [OVERWRITE] [AS nCodePage] — copy the file's content into the
     /// current record's memo field (additive by default; replacing on OVERWRITE — verified vs the VFP9 runtime). The
     /// source is read as RAW BYTES and copied 1:1 (binary-safe — hackfox s4g066: works for .FXP / arbitrary
-    /// binary, not just text): the bytes are decoded with the SAME single-byte encoding the memo write path
-    /// re-encodes with (Latin1 for a NOCPTRANS/binary memo, else the table code page), so the round-trip is
-    /// byte-exact — never the BOM-stripping / replacement-char corruption a UTF-8 text read caused. Routes
+    /// binary, not just text). A binary value carries the bytes through the memo write path without a
+    /// lossy table/session round trip. Routes
     /// the write through the REPLACE pipeline via a scratch memvar. FLAG: the AS nCodePage source-codepage
     /// conversion is unsupported and rejected (without AS, VFP copies 1:1 — hackfox s4g066 point 3).</summary>
     private void ExecAppendMemo(AppendMemoStmt am)
@@ -371,18 +370,20 @@ public sealed partial class VfpInterpreter
         if (!File.Exists(path))
             throw new MicroVfpRuntimeException($"APPEND MEMO: file '{src}' not found.");
 
-        // Decode the raw file bytes with the field's own memo encoding so the ExecReplace re-encode is a
-        // byte-for-byte round-trip (Latin1 is fully bijective; the table code page is symmetric for the
-        // field, matching DbfTable.ReadColumn ⇄ DbfWriter's memo write).
+        // APPEND MEMO copies file bytes verbatim, even into a foreign-page text memo.
         byte[] bytes = File.ReadAllBytes(path);
-        var enc = wa.Table.Columns[ci].IsBinary ? Encoding.Latin1 : wa.Table.Encoding;
-        string content = enc.GetString(bytes);
-
-        string existing = am.Overwrite ? string.Empty : (ReadField(wa, field)?.ToString() ?? string.Empty);
-        string result = existing + content;
-
+        byte[] existing = [];
+        if (!am.Overwrite)
+        {
+            var record = wa.Table.GetRecord(Meta(wa.Area).RecNo - 1, includeDeleted: true);
+            if (record is { } stored && stored.GetStoredExpressionValue(ci) is string text)
+            {
+                var encoding = wa.Table.Columns[ci].IsBinary ? Encoding.Latin1 : wa.Table.Encoding;
+                existing = encoding.GetBytes(text);
+            }
+        }
         const string tmp = "__am_memo_tmp__";
-        Memory.Set(tmp, VfpValue.Character(result));
+        Memory.Set(tmp, VfpValue.Varbinary([.. existing, .. bytes]));
         try
         {
             ExecReplace(new ReplaceStmt(
