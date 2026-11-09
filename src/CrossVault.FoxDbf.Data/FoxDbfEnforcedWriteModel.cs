@@ -158,9 +158,8 @@ internal sealed class FoxDbfEnforcedWriteModel
 
         // Open the target so a DEFAULT UDF that reads the table state (e.g. createid()'s RECCOUNT())
         // evaluates in the right work area; harmless when the default is a constant / DATETIME().
-        if (_connection.Session.FindInsertArea(ins.Table) is null)
-            TryExecute($"USE {ins.Table} IN 0");
-        TryExecute($"SELECT {ins.Table}");
+        int area = EnsureWriteArea(ins.Table);
+        _interp.Execute($"SELECT {area}");
 
         var provided = new HashSet<string>(cols, StringComparer.OrdinalIgnoreCase);
         var candidates = new Dictionary<string, VfpValue>(StringComparer.OrdinalIgnoreCase);
@@ -208,8 +207,7 @@ internal sealed class FoxDbfEnforcedWriteModel
     private int Update(UpdateStatement upd)
     {
         var recs = MatchingRecords(upd.Table, upd.Where?.Text);
-        if (_connection.Session.FindInsertArea(upd.Table) is null)
-            TryExecute($"USE {upd.Table} IN 0");
+        int area = EnsureWriteArea(upd.Table);
 
         foreach (int rec in recs)
         {
@@ -217,7 +215,7 @@ internal sealed class FoxDbfEnforcedWriteModel
             // row's own fields, e.g. SET qty = qty + 1) BEFORE any SELECT that could move the current area.
             // Each assignment is evaluated EXACTLY ONCE and re-injected as a literal in the REPLACE (so a
             // side-effecting value UDF fires once, == VFP9 / mirrors Insert()).
-            TryExecute($"SELECT {upd.Table}\nGO {rec}");
+            _interp.Execute($"SELECT {area}\nGO {rec}");
             var setLits = new List<string>(upd.Assignments.Count);
             foreach (var a in upd.Assignments)
             {
@@ -230,7 +228,7 @@ internal sealed class FoxDbfEnforcedWriteModel
             //    parent key back ⇒ raise VFP err 1539 (don't report a phantom success); the multi-row loop
             //    stops on the first blocked row (rows before it already committed — matching VFP's behaviour).
             _interp.LastDmlTriggerAborted = false;
-            _interp.Execute($"SELECT {upd.Table}\nGO {rec}\nREPLACE {string.Join(", ", setLits)}");
+            _interp.Execute($"SELECT {area}\nGO {rec}\nREPLACE {string.Join(", ", setLits)}");
             ThrowIfTriggerAborted(upd.Table);
         }
         return recs.Count;
@@ -285,6 +283,14 @@ internal sealed class FoxDbfEnforcedWriteModel
         if (!_interp.LastDmlTriggerAborted) return;
         _interp.LastDmlTriggerAborted = false;
         throw new FoxDbfException($"Trigger failed in {table}. (Visual FoxPro error 1539)", 1539); // VFP err 1539 trigger-.F. (oracle-pinned).
+    }
+
+    private int EnsureWriteArea(string table)
+    {
+        var area = _connection.Session.FindInsertArea(table);
+        if (area is not null) return area.Area;
+        _interp.Execute($"USE {table} IN 0");
+        return _connection.Session.FindInsertArea(table)!.Area;
     }
 
     private void TryExecute(string prg)
