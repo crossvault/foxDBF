@@ -67,8 +67,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
-- microVFP `FILETOSTR()` reads a file the session holds open, such as a used table, as VFP9 does;
-  it used to fail with error 1.
+- microVFP `FILETOSTR()` and `STRTOFILE()` resolve relative names against the session's data
+  directory, as VFP9 resolves them against SET DEFAULT. `FILETOSTR()` reads a table, CDX or memo
+  file the session uses SHARED and raises VFP9's error 1705 for one it holds EXCLUSIVE or another
+  process locks; it used to fail with error 1 in all these cases.
 - microVFP builds and maintains index KEY/FOR expressions that call loaded UDFs, arrays or interpreter
   functions, including existing VFP9-created tags. Missing functions are rejected before writes by default; plain
   library access remains readable and refuses unsupported maintenance. Native scalar keys retain their

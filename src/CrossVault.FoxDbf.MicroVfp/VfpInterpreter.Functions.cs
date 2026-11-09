@@ -217,7 +217,7 @@ public sealed partial class VfpInterpreter
     {
         if (a.Length < 2)
             throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11); // VFP err 11.
-        string path = a[1].AsString;
+        string path = ResolveDataPath(a[1].AsString);   // relative to the session's data directory (SET DEFAULT)
         byte[] data = LlEncoding.GetBytes(a[0].AsString);
         bool additive = false;
         byte[] bom = Array.Empty<byte>();
@@ -286,21 +286,50 @@ public sealed partial class VfpInterpreter
     {
         if (a.Length < 1)
             throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11); // VFP err 11.
-        // VFP9 reads a file this session holds open (a USEd table, an FCREATE handle): share read AND write, as
-        // VFP does; another process's exclusive lock still refuses the read (enforced by the OS share mode).
+        // A relative name resolves against the session's data directory (VFP's SET DEFAULT), like FILE().
+        string path = ResolveDataPath(a[0].AsString);
+        // VFP9 (oracle-verified): a table this session USEs SHARED is readable; one it holds EXCLUSIVE (the DBF,
+        // its structural CDX and memo) raises 1705 "File access is denied".
+        if (HeldExclusively(path))
+            throw FileAccessDenied(path);
         try
         {
-            using var stream = new FileStream(a[0].AsString, FileMode.Open, FileAccess.Read,
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);
             using var buffer = new MemoryStream();
             stream.CopyTo(buffer);
             return VfpValue.Character(LlEncoding.GetString(buffer.GetBuffer(), 0, (int)buffer.Length));
+        }
+        catch (IOException ex) when (ex is not (FileNotFoundException or DirectoryNotFoundException) && File.Exists(path))
+        {
+            throw FileAccessDenied(path);   // locked by another process
+        }
+        catch (UnauthorizedAccessException) when (File.Exists(path))
+        {
+            throw FileAccessDenied(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             throw new MicroVfpRuntimeException("File does not exist.", 1);   // VFP err 1 (verified against VFP9).
         }
     }
+
+    private bool HeldExclusively(string path)
+    {
+        string full;
+        try { full = Path.GetFullPath(path); } catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
+        foreach (var wa in Session.OpenAreas)
+        {
+            if (!wa.Exclusive || wa.Table.SourcePath is not { } dbf) continue;
+            string stem = Path.ChangeExtension(Path.GetFullPath(dbf), null);
+            foreach (string ext in new[] { Path.GetExtension(dbf), ".cdx", ".fpt" })
+                if (string.Equals(stem + ext, full, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    private static MicroVfpRuntimeException FileAccessDenied(string path)
+        => new("File access is denied " + Path.GetFullPath(path).ToLowerInvariant() + ".", 1705);
 
     // PROGRAM([n]): no arg / n==0 ⇒ current proc name; n<0 ⇒ stack depth; n>0 ⇒ the program
     // n levels up the call stack ("" when out of range). _callStack[0] is the "(main)" frame, so the
