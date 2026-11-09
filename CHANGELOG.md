@@ -36,7 +36,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   validate destination types and normalize numeric precision and Varbinary width/type before the
   next expression; qualified fields, trailing RANDOM, key-width/type errors, FOUND() and reported
   buffering follow VFP9. Replacing another field preserves untouched Varchar/Varbinary lengths,
-  including empty keys.
+  including empty keys. Field and record rules run once, with table-buffered record rules deferred
+  until TABLEUPDATE.
 - microVFP runs UPDATE-SQL and DELETE-SQL (`UPDATE … SET … WHERE`, `DELETE [target] FROM … WHERE`) in
   programs with VFP9's row expressions (memvars, UDFs), left-to-right SET, `_TALLY`, final pointers and work
   areas, error numbers, field/record rules and triggers, buffering, index maintenance and transactions.

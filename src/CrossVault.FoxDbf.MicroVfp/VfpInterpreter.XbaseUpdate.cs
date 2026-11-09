@@ -144,7 +144,7 @@ public sealed partial class VfpInterpreter
             var current = Meta(target);
             if (current.Buf?.Rows.TryGetValue(current.RecNo, out var edit) == true)
             {
-                ValidateBufferedRow(Session.AreaAt(target)!, current.RecNo, edit);
+                if (buffering <= 3) ValidateBufferedRow(Session.AreaAt(target)!, current.RecNo, edit);
                 if (buffering == 1)
                 {
                     // Publish through the normal REPLACE writer so candidate uniqueness and RI
@@ -154,7 +154,7 @@ public sealed partial class VfpInterpreter
                         PrgExpr.Constant(VfpValue.FromClr(field.Value)), false)).ToArray();
                     current.Buf = null;
                     current.Buffering = 1;
-                    try { ExecReplace(new ReplaceStmt(clauses, null, null, null, null)); }
+                    try { ExecReplace(new ReplaceStmt(clauses, null, null, null, null), rulesValidated: true); }
                     finally { Meta(target).Buffering = 3; }
                     return;
                 }
