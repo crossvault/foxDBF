@@ -42,6 +42,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: Bulk CDX/compact IDX creation now reproduces VFP9's blank-head compression at leaf
+  boundaries, including NORDAN/ICELAND NBSP keys. Weighted `SEEK` follows VFP9's tree descent and
+  trailing blank-weight comparisons, including TAB. This also reproduces native misses on those
+  bulk-compressed keys; row-by-row index maintenance retains the original key weights.
+
 - **BREAKING:** With `EnforceReferentialIntegrity = true`, microVFP now raises VFP error 1539
   when a DELETE or unbuffered INSERT trigger rejects a row, instead of silently returning.
   Rejected rows remain unchanged or rolled back. TRY/CATCH and ON ERROR retain the trigger type
