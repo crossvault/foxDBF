@@ -1477,6 +1477,9 @@ public static class PrgParser
                 {
                     scope = first + " " + tail;
                     head = "";
+                    // A tail that is one complete count expression (`NEXT 1 + 1`) leaves no aggregate
+                    // expression: VFP9 reports the syntax error instead of splitting it.
+                    if (!PrgExpr.Parse(tail).IsParsed)
                     for (int split = 1; split < tail.Length; split++)
                     {
                         if (!char.IsWhiteSpace(tail[split])) continue;

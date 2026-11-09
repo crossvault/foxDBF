@@ -49,6 +49,12 @@ public sealed class MicroVfpDeletionScanSumReviewTests
     [InlineData("SUM NEXT (1 + 1) (id) TO x", "7.00|0|4|.F.|.F.")]
     [InlineData("AVERAGE NEXT 2 (id) TO x", "3.50|0|4|.F.|.F.")]
     [InlineData("AVERAGE NEXT (1 + 1) (id) TO x", "3.50|0|4|.F.|.F.")]
+    [InlineData("SUM NEXT 1 + 1 TO x", "-99.00|10|3|.F.|.F.")]
+    [InlineData("SUM NEXT 1 + 1 id TO x", "7.00|0|4|.F.|.F.")]
+    [InlineData("SUM RECORD 1 + 1 TO x", "-99.00|10|2|.F.|.F.")]
+    [InlineData("AVERAGE NEXT 1 + 1 TO x", "-99.00|10|3|.F.|.F.")]
+    [InlineData("AVERAGE NEXT 1 + 1 id TO x", "3.50|0|4|.F.|.F.")]
+    [InlineData("AVERAGE RECORD 1 + 1 TO x", "-99.00|10|2|.F.|.F.")]
     public void ExpressionsAndScope(string command, string expected) =>
         Assert.Equal(expected, MicroVfpSqlDmlConsolidatedTests.Run(Setup, Scenario(command)));
 }
