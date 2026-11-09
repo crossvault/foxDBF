@@ -69,6 +69,20 @@ public static class VfpCollations
             return CollationSupport.Exact;
         }
 
+        switch ((n.ToUpperInvariant(), codePage))
+        {
+            case ("SPANISH", 437): collation = GeneralCollation.Spanish437; return CollationSupport.Exact;
+            case ("SPANISH", 10000): collation = GeneralCollation.Spanish10000; return CollationSupport.Exact;
+            case ("UNIQWT", 1252): collation = GeneralCollation.Uniqwt1252; return CollationSupport.Exact;
+            case ("UNIQWT", 437): collation = GeneralCollation.Uniqwt437; return CollationSupport.Exact;
+            case ("UNIQWT", 850): collation = GeneralCollation.Uniqwt850; return CollationSupport.Exact;
+            case ("UNIQWT", 10000): collation = GeneralCollation.Uniqwt10000; return CollationSupport.Exact;
+            case ("DUTCH", 1252): collation = GeneralCollation.Dutch1252; return CollationSupport.Exact;
+            case ("DUTCH", 437): collation = GeneralCollation.Dutch437; return CollationSupport.Exact;
+            case ("DUTCH", 850): collation = GeneralCollation.Dutch850; return CollationSupport.Exact;
+            case ("DUTCH", 10000): collation = GeneralCollation.Dutch10000; return CollationSupport.Exact;
+        }
+
         if (n.Equals("GERMAN", StringComparison.OrdinalIgnoreCase))
         {
             collation = codePage switch

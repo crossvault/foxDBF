@@ -8,6 +8,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- VFP9-derived SPANISH index weights on code pages 437 and 10000, and UNIQWT and DUTCH weights on
+  1252, 437, 850 and 10000. These combinations support index creation, maintenance of VFP-made tags,
+  SEEK, Rushmore and microVFP `SET COLLATE TO` / `INDEX ON`. UNIQWT preserves case and accent distinctions.
+- **BREAKING:** SPANISH expression and SQL comparisons now reproduce VFP9's ligature truncation rules,
+  including `ß = s` with EXACT OFF, `ßx > ss`, and the asymmetric SQL ANSI OFF comparison `s < ß`.
+
 - **BREAKING:** `DATETIME(year, month, day [, hour [, minute [, second]]])` in expressions, SQL and microVFP,
   including fractional-component truncation, NULL component defaults and empty results for impossible
   calendar dates, as in VFP9. Invalid arguments now raise VFP errors 11, 1229 or 1230

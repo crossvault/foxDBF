@@ -39,7 +39,7 @@ public sealed class IndexSafetyTests
 
     [Theory]
     [InlineData("approximate")]
-    [InlineData("dutch")]
+    [InlineData("czech")]
     [InlineData("udf")]
     public void UnmaintainableTag_AlterPreservesFiles(string kind)
     {
@@ -68,7 +68,7 @@ public sealed class IndexSafetyTests
 
     [Theory]
     [InlineData("approximate")]
-    [InlineData("dutch")]
+    [InlineData("czech")]
     [InlineData("udf")]
     public void UnmaintainableTag_AppendPreservesDbfMemoAndAllTags(string kind)
     {
@@ -80,8 +80,8 @@ public sealed class IndexSafetyTests
         {
             var error = Assert.Throws<DbfWriteException>(() => writer.AppendRecord("DELTA", "new memo"));
             Assert.Contains("BAD", error.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains(kind == "approximate" ? "437" : "1252", error.Message);
-            Assert.Contains(kind == "approximate" ? "SPANISH" : kind == "dutch" ? "DUTCH" : "MACHINE", error.Message);
+            Assert.Contains(kind is "approximate" or "czech" ? "1250" : "1252", error.Message);
+            Assert.Contains(kind == "approximate" ? "SPANISH" : kind == "czech" ? "CZECH" : "MACHINE", error.Message);
             Assert.Equal(1, writer.RecordCount);
         }
         foreach (var (path, bytes) in before) Assert.Equal(bytes, File.ReadAllBytes(path));
@@ -100,8 +100,8 @@ public sealed class IndexSafetyTests
     [Theory]
     [InlineData(false, "GENERAL", 0xC9)]
     [InlineData(true, "GENERAL", 0xC9)]
-    [InlineData(false, "SPANISH", 0x01)]
-    [InlineData(true, "SPANISH", 0x01)]
+    [InlineData(false, "SPANISH", 0xC8)]
+    [InlineData(true, "SPANISH", 0xC8)]
     public void ApproximateBuild_RefusesBeforeCreatingIndex(bool compact, string collation, byte mark)
     {
         using var temp = new IndexMaintTestSupport.TempDir();
@@ -133,13 +133,13 @@ public sealed class IndexSafetyTests
         byte[] bytes = File.ReadAllBytes(cdx);
         if (kind == "udf") Replace(bytes, "UPPER(k)", "e1udf(k)");
         if (kind == "builtin") Replace(bytes, "UPPER(k)", "CEIL(1) ");
-        if (kind == "dutch") Replace(bytes, "GENERAL", "DUTCH\0\0");
+        if (kind == "czech") Replace(bytes, "GENERAL", "CZECH\0\0");
         File.WriteAllBytes(cdx, bytes);
-        if (kind == "approximate")
+        if (kind is "approximate" or "czech")
         {
             bytes = File.ReadAllBytes(dbf);
-            // GENERAL/852 is now exact; SPANISH/437 still exercises the approximate guard.
-            bytes[29] = 0x01;
+            // SPANISH/1250 remains approximate; CZECH/1250 is an unsupported E5 sequence.
+            bytes[29] = 0xC8;
             File.WriteAllBytes(dbf, bytes);
         }
         return dbf;
