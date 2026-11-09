@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using CrossVault.FoxDbf.Expressions;
 using CrossVault.FoxDbf.MicroVfp;
 using CrossVault.FoxDbf.Sql;
@@ -187,7 +186,7 @@ internal sealed class FoxDbfEnforcedWriteModel
                 provided.Add(f.FieldName);
             }
 
-            // 2) field RULEs (set fields) + 3) record/table RULE — a failure rejects the whole INSERT,
+            // Field and record RULEs — a failure rejects the whole INSERT,
             //    BEFORE any row lands, so the table is left byte-for-byte unchanged (atomic).
             // Validation belongs to the interpreter and sees the converted, stored candidate.
         }

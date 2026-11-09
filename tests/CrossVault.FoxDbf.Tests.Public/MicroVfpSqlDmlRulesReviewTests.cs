@@ -50,6 +50,25 @@ public sealed class MicroVfpSqlDmlRulesReviewTests
         Assert.Single(connection.Session.OpenAreas);
     }
 
+    [Fact]
+    public void Rules_ClosedQualifiedTargetIsValidated() => Assert.Equal("ERR:1582|",
+        Run("CREATE TABLE t (n I CHECK n>0)", MicroVfpSqlDmlTests.Catch("INSERT INTO probe!t VALUES (-1)")));
+
+    internal const string StateSetup = "CREATE TABLE t (id I, paid L)\nINSERT INTO t VALUES (1,.F.)";
+    internal const string StateScenario = "SET MULTILOCKS ON\nUSE t\n=CURSORSETPROP('Buffering',5)\nresult=GETFLDSTATE(-1)\nREPLACE paid WITH .T.\nresult=result+'|'+GETFLDSTATE(-1)\nDELETE\nresult=result+'|'+GETFLDSTATE(-1)\n=TABLEREVERT(.T.)";
+    [Fact]
+    public void Rules_FieldStateSummaryIncludesDeleteAndFields() => Assert.Equal("111|112|212", Run(StateSetup, StateScenario));
+
+    internal static string StoredRowSetup(bool blanks) => blanks
+        ? "CREATE TABLE t (n I, x N(4,0), CHECK NOT ISNULL(x))\nAPPEND BLANK"
+        : "CREATE TABLE t (n I, k C(3), CHECK k=='  A')\nINSERT INTO t VALUES (0,'  A')";
+    internal const string StoredRowScenario = "SET MULTILOCKS ON\nUSE t\n=CURSORSETPROP('Buffering',5)\nREPLACE n WITH 1\nresult=TRANSFORM(TABLEUPDATE(.T.))\n=TABLEREVERT(.T.)";
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Rules_BufferedCandidatesPreserveStoredValues(bool blanks) =>
+        Assert.Equal(".T.", Run(StoredRowSetup(blanks), StoredRowScenario));
+
     public static IEnumerable<object[]> PrecisionCases()
     {
         foreach (int buffer in new[] { 1, 3, 5 })
@@ -107,10 +126,12 @@ public sealed class MicroVfpSqlDmlRulesReviewTests
     private static string CountError(bool enforce)
     {
         using var dir = new MicroVfpTestSupport.TempDir("count_error");
+        DbfDatabaseBuilder.Create(dir.File("probe.dbc"), Array.Empty<DbcTableSpec>());
         using var session = new VfpSession();
         session.OpenDirectory(dir.Path);
+        session.OpenDatabase(dir.File("probe.dbc"));
         using var vfp = new VfpInterpreter(session) { EnforceReferentialIntegrity = enforce };
-        vfp.Execute("CREATE TABLE t (n I)");
+        vfp.Execute("CREATE TABLE t (n I CHECK n>0)");
         return Assert.ThrowsAny<Exception>(() => vfp.Execute("INSERT INTO t VALUES (1,2)")).Message;
     }
 

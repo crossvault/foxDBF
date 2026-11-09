@@ -302,7 +302,7 @@ public sealed partial class VfpInterpreter
         {
             var column = wa.Table.Columns[i];
             if (!column.IsSystem)
-                map[column.Name] = edit.Fields.TryGetValue(i, out var value) ? value : append ? BlankFor(column) : record?[column.Name];
+                map[column.Name] = edit.Fields.TryGetValue(i, out var value) ? value : append ? BlankFor(column) : record?.GetVfpValue(column.Name);
         }
         WithImportRow(wa, recno, map, () =>
         {
@@ -762,6 +762,17 @@ public sealed partial class VfpInterpreter
         if (m.Buffering <= 1)
             throw new MicroVfpRuntimeException("Function requires row or table buffering mode.", 1586);
         if (m.Eof) return VfpValue.Null;
+        if (IsNumeric(a[0]) && a[0].AsNumber == -1m)
+        {
+            // VFP prefixes the field-state string with the deletion state. DBC rules such as
+            // TasTrade's ValOrder use this to distinguish a paid-only change from other edits.
+            var states = new System.Text.StringBuilder();
+            states.Append(FnGetFldState(new[] { VfpValue.Integer(0), VfpValue.Integer(area) }).AsInteger);
+            for (int i = 0; i < wa.Table.Columns.Count; i++)
+                if (!wa.Table.Columns[i].IsSystem)
+                    states.Append(FnGetFldState(new[] { VfpValue.Integer(i + 1), VfpValue.Integer(area) }).AsInteger);
+            return VfpValue.Character(states.ToString());
+        }
         bool isField0 = IsNumeric(a[0]) && a[0].AsNumber == 0m;
         int colIdx = IsNumeric(a[0]) ? (int)a[0].AsNumber - 1 : ColumnIndex(wa.Table, StripQualifier(a[0].AsString));
         // -1 is reserved for numeric field 0 (the record delete-state). An unresolved character

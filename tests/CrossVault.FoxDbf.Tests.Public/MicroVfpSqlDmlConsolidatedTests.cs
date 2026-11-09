@@ -216,6 +216,8 @@ public sealed class MicroVfpSqlDmlConsolidatedTests(ITestOutputHelper output)
                 vfp.Execute("SCAN\nhits=hits+1\n" + (delete ? "DELETE\n" : "") + "ENDSCAN");
                 watch.Stop();
                 Assert.Equal(2000, vfp.Memory.Get("hits").AsInteger);
+                Assert.True(watch.Elapsed < TimeSpan.FromSeconds(60),
+                    $"A 2,000-row SCAN exceeded the generous 60-second regression bound: {watch.Elapsed}.");
                 times.Add(watch.Elapsed.TotalMilliseconds);
             }
             output.WriteLine($"SCAN {(delete ? "DELETE" : "plain")}: {string.Join(", ", times.Select(t => t.ToString("F1")))} ms; median {times.Order().ElementAt(1):F1} ms");

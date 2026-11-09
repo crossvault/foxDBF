@@ -425,11 +425,8 @@ public sealed partial class VfpInterpreter
 
         string fullPath = Path.GetFullPath(sourcePath);
         if (CandidateTagsFor(fullPath) is not null) return false;    // needs post-append dup re-check.
-        // RI-ENFORCED writes (the ADO.NET EnforceRules=on model drives the interpreter with this flag set) read
-        // the appended row back through EXTERNAL handles — a follow-up SQL SELECT / ADO.NET reader that bypasses
-        // the interpreter's lazy refresh — so a DEFERRED append would be invisible to them. Keep the whole
-        // RI-enforced path on the durable per-row route (it already fires per-row DEFAULT/RULE/trigger, so the
-        // INSERT open was never its bottleneck). This also subsumes the bound-insert-trigger enforcement.
+        // Bound triggers need the rollback-capable fallback. Rules alone can validate against
+        // this writer; enforced appends are flushed below so external ADO readers see them.
         if (EnforceReferentialIntegrity && ResolveTriggerProc(RiEvent.Insert, wa) is not null) return false;
 
         // STRUCTURAL pre-validation against the read view's columns (identical geometry to the writer's): an
