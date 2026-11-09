@@ -214,7 +214,10 @@ internal sealed class ExpressionLexer
             val = VfpValue.Number(db);
         else
             throw new ExpressionException($"Invalid numeric literal '{span.ToString()}'.", start);
-        return new(TokenType.Number, start, span.ToString(), val);
+        int dot = span.IndexOf('.');
+        int exponent = span.IndexOfAny('e', 'E');
+        int scale = dot < 0 ? 0 : (exponent < 0 ? span.Length : exponent) - dot - 1;
+        return new(TokenType.Number, start, span.ToString(), val.WithDisplayDecimals(scale));
     }
 
     private static Token ReadIdentifier(ReadOnlySpan<char> s, ref int i)

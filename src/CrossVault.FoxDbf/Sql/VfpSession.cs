@@ -539,6 +539,7 @@ public sealed class VfpSession : IDisposable
     /// (ANSI-governed) <c>=</c> semantics enabled for WHERE / HAVING predicates.</summary>
     internal EvaluationContext SqlContext() => new()
     {
+        NumericDecimals = Context.NumericDecimals,
         Exact = Context.Exact,
         Deleted = Context.Deleted,
         Optimize = Context.Optimize,

@@ -1,3 +1,5 @@
+using CrossVault.FoxDbf.Expressions;
+
 namespace CrossVault.FoxDbf;
 
 /// <summary>
@@ -185,6 +187,15 @@ public readonly struct DbfRecord
     /// <see cref="this[int]"/> keeps mapping blank → <see langword="null"/> (the ADO.NET IsDBNull contract);
     /// this accessor is the read the microVFP runtime and its SQL engine use.
     /// </summary>
+    internal VfpValue GetScaledValue(string name, bool blanks)
+    {
+        int index = IndexOfColumn(name);
+        if (index < 0) return VfpValue.Null;
+        var column = _table.Columns[index];
+        return VfpValue.FromClr(blanks ? GetVfpValue(index) : GetExpressionValue(index))
+            .WithFieldScale(column.Type, column.Decimal);
+    }
+
     internal object? GetVfpValue(int index)
     {
         var value = GetExpressionValue(index);   // a C field at its full width, as VFP reads it.

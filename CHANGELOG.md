@@ -8,6 +8,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- Numeric expressions retain VFP9 display scale through literals, arithmetic, scalar functions and
+  assignments. `TRANSFORM` preserves trailing zeroes and `STR()` keeps its default zero decimals.
+  SQL computed cursor widths/scales honor operand metadata and `SET DECIMALS`.
+
 - microVFP `UPDATE ON` propagates NULL keys like VFP9, including its distinct sequential and RANDOM behavior.
   NULL `SEEK`/`INDEXSEEK`/`KEYMATCH` probes use stored NULL keys and honor visibility. Nullable fields
   retain VFP9's NULL marker in CDX and legacy/compact IDX keys, including write maintenance.

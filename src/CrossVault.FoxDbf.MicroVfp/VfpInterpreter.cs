@@ -1245,12 +1245,12 @@ public sealed partial class VfpInterpreter
     /// <summary>Resolve a name for the expression engine: qualified <c>alias.field</c> → that area's
     /// current record (blank at EOF; an unknown field is error 12, an unknown alias error 13);
     /// <c>m.var</c> → memvar; bare → CURRENT area field, else memvar, else #DEFINE.</summary>
-    internal object? ResolveName(string name)
+    internal VfpValue ResolveName(string name)
     {
         if (_indexRow is ISchema indexSchema && indexSchema.TryGetColumn(name, out _, out _, out _))
-            return _indexRow.GetField(name);
+            return VfpRuntime.GetField(_indexRow, name);
         if (name.Equals("_triggerlevel", StringComparison.OrdinalIgnoreCase))
-            return (decimal)TriggerLevel;     // P2 RI seam — the trigger gate (see TriggerLevel).
+            return VfpValue.Integer(TriggerLevel);     // P2 RI seam — the trigger gate (see TriggerLevel).
 
         int dot = name.IndexOf('.');
         if (dot >= 0)
@@ -1260,7 +1260,7 @@ public sealed partial class VfpInterpreter
             {
                 int memberDot = rest.IndexOf('.');
                 if (memberDot > 0 && TryResolveObjectMember(rest[..memberDot], rest[(memberDot + 1)..], out var property))
-                    return property;
+                    return VfpValue.FromClr(property);
                 if (_requireDmlNames && !Memory.IsDefined(rest))
                     throw new MicroVfpRuntimeException($"Variable '{rest.ToUpperInvariant()}' is not found.", 12);
                 return Memory.Get(rest);
@@ -1271,15 +1271,15 @@ public sealed partial class VfpInterpreter
                 // Batch 4: an alias.field read observes this area — flush any deferred fast-append refresh
                 // first (and re-fetch, since the reopen replaces the WorkArea). No-op when nothing pending.
                 if (_pendingAppendPaths is { Count: > 0 }) { FlushPendingAppends(wa.Area); wa = Session.FindAreaByAlias(head); }
-                if (wa is null) return null;
+                if (wa is null) return VfpValue.Null;
                 if (ColumnIndex(wa.Table, rest) < 0 && rest.IndexOf('.') < 0)
                     throw new MicroVfpRuntimeException($"Variable '{rest.ToUpperInvariant()}' is not found.", 12);
-                return ReadField(wa, rest);
+                return ReadExpressionField(wa, rest);
             }
-            if (TryResolveObjectMember(head, rest, out var member)) return member;   // CATCH TO oErr → oErr.ErrorNo
+            if (TryResolveObjectMember(head, rest, out var member)) return VfpValue.FromClr(member);   // CATCH TO oErr → oErr.ErrorNo
             // An object reference (a defined variable) or THIS/THISFORM member: not modeled → undefined.
             if (Memory.IsDefined(head) || Memory.FindArray(head) is not null || ObjectHeads.Contains(head))
-                return null;
+                return VfpValue.Null;
             // VFP9: alias.field / alias->field naming no open work area is error 13, never a silent .NULL.
             throw new MicroVfpRuntimeException($"Alias '{head.ToUpperInvariant()}' is not found.", 13);
         }
@@ -1289,17 +1289,23 @@ public sealed partial class VfpInterpreter
         {
             // Batch 4: a bare field read of the current area — flush any deferred fast-append refresh first.
             if (_pendingAppendPaths is { Count: > 0 }) { FlushPendingAppends(cur.Area); cur = Session.AreaAt(Session.CurrentArea); }
-            return cur is not null ? ReadField(cur, name) : null;
+            return cur is not null ? ReadExpressionField(cur, name) : VfpValue.Null;
         }
         // A bare ARRAY name in scalar context = element (1,1)/(1), per VFP.
         // Expression evaluation accepts VfpValue directly. A CLR round trip loses currency
         // identity and aggregate display decimals even for a simple TRANSFORM(memvar).
         if (Memory.FindArray(name) is { } arr) return arr.First;
         if (Memory.IsDefined(name)) return Memory.Get(name);
-        if (_defines.TryGetValue(name, out var d)) return d;
+        if (_defines.TryGetValue(name, out var d)) return VfpValue.FromClr(d);
         if (_requireDmlNames)
             throw new MicroVfpRuntimeException($"Variable '{name.ToUpperInvariant()}' is not found.", 12);
-        return null;
+        return VfpValue.Null;
+    }
+
+    private VfpValue ReadExpressionField(VfpSession.WorkArea area, string name)
+    {
+        var column = area.Table.Columns[ColumnIndex(area.Table, name)];
+        return VfpValue.FromClr(ReadField(area, name)).WithFieldScale(column.Type, column.Decimal);
     }
 
     // Field read WITH the buffer overlay: a buffered edit to the current record shadows the on-disk value,
@@ -1601,12 +1607,13 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── the engine row/host bridge ───────────────────────────
 
-    private sealed class Row : IRowContext, IVfpFunctionHost
+    private sealed class Row : IRowContext, IVfpFunctionHost, IVfpValueRow
     {
         private readonly VfpInterpreter _it;
         public Row(VfpInterpreter it) => _it = it;
 
         public object? GetField(string name) => _it.ResolveName(name);
+        public VfpValue GetValue(string name) => _it.ResolveName(name);
 
         public int RecNo
         {

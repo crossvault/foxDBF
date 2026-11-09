@@ -3,6 +3,12 @@ using System.Globalization;
 
 namespace CrossVault.FoxDbf.Expressions;
 
+// Internal typed reads carry display metadata without boxing a second value per field.
+internal interface IVfpValueRow
+{
+    VfpValue GetValue(string name);
+}
+
 /// <summary>
 /// Per-record data source the expression engine reads fields from. The engine is
 /// SELF-CONTAINED and never references the main library; the host adapts its own

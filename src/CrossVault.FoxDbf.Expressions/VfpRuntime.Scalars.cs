@@ -34,7 +34,7 @@ internal static partial class VfpRuntime
             case "EXP": return VfpValue.Number(Math.Exp(x));
             case "LOG": return VfpValue.Number(Math.Log(x));
             case "LOG10": return VfpValue.Number(Math.Log10(x));
-            case "SQRT": return VfpValue.Number(Math.Sqrt(x));
+            case "SQRT": return VfpValue.Number(Math.Sqrt(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals));
             case "SIGN": return VfpValue.Number((double)Math.Sign(x));
             case "FV": return VfpValue.Number(y == 0 ? 0 : x * (Math.Pow(1 + y, Arg(args, 2).AsDouble) - 1) / y);
             case "PV": return VfpValue.Number(y == 0 ? x * Arg(args, 2).AsDouble : x * (1 - Math.Pow(1 + y, -Arg(args, 2).AsDouble)) / y);

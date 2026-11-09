@@ -489,7 +489,7 @@ internal sealed class SelectExecutor
         var schema = new TableSchema(table, alias);
 
         // Size unknown character expressions before filtering or sorting the source rows.
-        var columns = BuildColumns(table, alias, schema, sel.Items);
+        var columns = BuildColumns(table, alias, new SqlInferenceSchema(schema, null, ctx), sel.Items);
         Func<SelectItem, int> starWidth = _ => table.Columns.Count;
         Func<string, bool> isSourceField = f => FindColumn(table, f) is not null;
         var order = new OrderScope(sel.Items, starWidth, isSourceField, columns.Count);
@@ -982,7 +982,7 @@ internal sealed class SelectExecutor
                 .CheckSelect(sel);
 
             var schema = new CompositeSchema(src);
-            var columns = BuildJoinColumns(src, schema, sel.Items);
+            var columns = BuildJoinColumns(src, new SqlInferenceSchema(schema, null, ctx), sel.Items);
             Func<SelectItem, int> starWidth = it => StarWidthJoin(it, src);
             Func<string, bool> isSourceField = f => Array.Exists(src, s => s.ColNames.Contains(f));
             var order = new OrderScope(sel.Items, starWidth, isSourceField, columns.Count);
@@ -2044,7 +2044,7 @@ internal sealed class SelectExecutor
     // ---- schema (single table) ------------------------------------------------------------
 
     private static IReadOnlyList<SqlColumn> BuildColumns(
-        DbfTable table, string alias, TableSchema schema, IReadOnlyList<SelectItem> items)
+        DbfTable table, string alias, ISchema schema, IReadOnlyList<SelectItem> items)
     {
         var cols = new List<SqlColumn>();
         foreach (var it in items)
@@ -2097,7 +2097,7 @@ internal sealed class SelectExecutor
     // ---- schema (join) --------------------------------------------------------------------
 
     private static IReadOnlyList<SqlColumn> BuildJoinColumns(
-        JoinSource[] src, CompositeSchema schema, IReadOnlyList<SelectItem> items)
+        JoinSource[] src, ISchema schema, IReadOnlyList<SelectItem> items)
     {
         var cols = new List<SqlColumn>();
         foreach (var it in items)
@@ -2530,7 +2530,7 @@ internal sealed class SelectExecutor
     /// <summary>Adapts a <see cref="DbfRecord"/> to <see cref="IRowContext"/>, stripping a leading
     /// <c>alias.</c> qualifier so <c>SELECT a.id FROM person a</c> resolves field <c>id</c>. Character fields read at
     /// full width (<see cref="DbfRecord.GetExpressionValue(string)"/>), as in a VFP cursor.</summary>
-    private sealed class RowContext : IRowContext
+    private sealed class RowContext : IRowContext, IVfpValueRow
     {
         private readonly DbfRecord _rec;
         private readonly string _alias;
@@ -2581,6 +2581,25 @@ internal sealed class SelectExecutor
             if (_cols.Contains(name)) return ReadField(_rec, name, _vfpBlanks);
             return _outer?.GetField(name);
         }
+        public VfpValue GetValue(string name)
+        {
+            if (_cols is null)
+            {
+                int d = name.LastIndexOf('.');
+                return _rec.GetScaledValue(d >= 0 ? name[(d + 1)..] : name, _vfpBlanks);
+            }
+
+            int dot = name.IndexOf('.');
+            if (dot >= 0)
+            {
+                string alias = name[..dot], field = name[(dot + 1)..];
+                if (string.Equals(alias, _alias, StringComparison.OrdinalIgnoreCase) && _cols.Contains(field))
+                    return _rec.GetScaledValue(field, _vfpBlanks);
+                return _outer is null ? VfpValue.Null : VfpRuntime.GetField(_outer, name); // correlated reference to an outer source
+            }
+            if (_cols.Contains(name)) return _rec.GetScaledValue(name, _vfpBlanks);
+            return _outer is null ? VfpValue.Null : VfpRuntime.GetField(_outer, name);
+        }
     }
 
     /// <summary>A row of a query microVFP runs: the scan row answers fields, <c>RECNO()</c>, <c>RECCOUNT()</c>,
@@ -2588,7 +2607,7 @@ internal sealed class SelectExecutor
     /// other name — a UDF, a memvar array, a microVFP function, an unknown name — goes to the interpreter, so
     /// a UDF runs and an unknown function raises VFP's error 1 instead of reading <c>.NULL.</c>. Functions the
     /// interpreter answers see its work areas, not the scan row (VFP9 scans through hidden work areas too).</summary>
-    private sealed class HostedRow : IRowContext, IVfpFunctionHost
+    private sealed class HostedRow : IRowContext, IVfpFunctionHost, IVfpValueRow
     {
         private readonly IRowContext _row;
         private readonly IVfpFunctionHost _host;
@@ -2598,6 +2617,7 @@ internal sealed class SelectExecutor
         public int RecCount => _row.RecCount;
         public bool Deleted => _row.Deleted;
         public object? GetField(string name) => _row.GetField(name);
+        public VfpValue GetValue(string name) => VfpRuntime.GetField(_row, name);
 
         public bool TryInvoke(string upperName, VfpValue[] args, EvaluationContext ctx, out VfpValue result)
         {

@@ -176,7 +176,9 @@ internal sealed partial class BinaryNode : AstNode
 {
     private readonly BinOp _op;
     private readonly AstNode _left, _right;
-    public BinaryNode(BinOp op, AstNode left, AstNode right) { _op = op; _left = left; _right = right; }
+    private readonly bool _constant;
+    public BinaryNode(BinOp op, AstNode left, AstNode right)
+    { _op = op; _left = left; _right = right; _constant = left.IsSqlConstant && right.IsSqlConstant; }
 
     // AND / OR short-circuit like VFP9: a logical .F. on the left of AND (.T. on the left of OR) decides the
     // result and the right operand is NOT evaluated — no UDF call, no error from it (VFP9-verified:
@@ -185,7 +187,7 @@ internal sealed partial class BinaryNode : AstNode
     {
         var l = _left.Eval(row, ctx);
         if (_op is BinOp.And or BinOp.Or && VfpRuntime.Decides(_op, l)) return l;
-        return VfpRuntime.Binary(_op, l, _right.Eval(row, ctx), ctx);
+        return VfpRuntime.Binary(_op, l, _right.Eval(row, ctx), ctx, IsSqlConstant);
     }
 
     internal override VfpValue Eval(
@@ -193,7 +195,7 @@ internal sealed partial class BinaryNode : AstNode
     {
         var l = _left.Eval(row, ctx, functionResolver);
         if (_op is BinOp.And or BinOp.Or && VfpRuntime.Decides(_op, l)) return l;
-        return VfpRuntime.Binary(_op, l, _right.Eval(row, ctx, functionResolver), ctx);
+        return VfpRuntime.Binary(_op, l, _right.Eval(row, ctx, functionResolver), ctx, IsSqlConstant);
     }
 
     internal override bool ContainsFunction(Func<string, int, bool> predicate)
@@ -203,7 +205,7 @@ internal sealed partial class BinaryNode : AstNode
     {
         if (_op is not (BinOp.And or BinOp.Or))
             return Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.Binary), null,
-                Expression.Constant(_op), _left.Build(b), _right.Build(b), b.Ctx);
+                Expression.Constant(_op), _left.Build(b), _right.Build(b), b.Ctx, Expression.Constant(IsSqlConstant));
 
         // Same short-circuit as Eval: the left value is computed once into a local, the right operand only
         // when the left one does not decide.
@@ -214,7 +216,7 @@ internal sealed partial class BinaryNode : AstNode
                 Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.Decides), null, Expression.Constant(_op), l),
                 l,
                 Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.Binary), null,
-                    Expression.Constant(_op), l, _right.Build(b), b.Ctx)));
+                    Expression.Constant(_op), l, _right.Build(b), b.Ctx, Expression.Constant(false))));
     }
 
     public override VfpTypeInfo Infer(ISchema schema)

@@ -5,9 +5,9 @@ namespace CrossVault.FoxDbf.Expressions;
 
 // SQL chooses an IIF branch's storage width/scale from the first source record,
 // before WHERE or ORDER BY. Keep that sampling out of index type inference.
-internal sealed class SqlInferenceSchema(ISchema schema, IRowContext row, EvaluationContext context) : ISchema
+internal sealed class SqlInferenceSchema(ISchema schema, IRowContext? row, EvaluationContext context) : ISchema
 {
-    internal IRowContext Row => row;
+    internal IRowContext? Row => row;
     internal EvaluationContext Context => context;
     public bool TryGetColumn(string name, out char type, out int length, out int decimals)
         => schema.TryGetColumn(name, out type, out length, out decimals);
@@ -52,7 +52,7 @@ internal sealed partial class UnaryNode
 
 internal sealed partial class BinaryNode
 {
-    internal override bool IsSqlConstant => _left.IsSqlConstant && _right.IsSqlConstant;
+    internal override bool IsSqlConstant => _constant;
 
     internal override VfpTypeInfo InferSql(ISchema schema)
     {
@@ -69,6 +69,7 @@ internal sealed partial class BinaryNode
         l = NumericStorage(l);
         r = NumericStorage(r);
         int decimals = Math.Max(l.Decimals, r.Decimals);
+        int setting = schema is SqlInferenceSchema sample ? sample.Context.NumericDecimals : 2;
         // VFP retains the literal scale for a constant quotient (1/2 is N(1,0)),
         // whereas a quotient involving a field gets at least four decimals.
         if (IsSqlConstant && _op == BinOp.Div)
@@ -89,12 +90,17 @@ internal sealed partial class BinaryNode
                 decimals = l.Decimals + r.Decimals;
                 break;
             case BinOp.Div:
-                decimals = Math.Max(4, decimals);
+                decimals = Math.Max(setting + 2, decimals);
                 length = l.Length + r.Length - l.Decimals - r.Decimals + decimals
                     - (l.Decimals > 0 || r.Decimals > 0 ? 1 : 0);
                 break;
             case BinOp.Pow:
-                length = l.Length + 5;
+                decimals = Math.Max(setting, decimals);
+                length = l.Length + 5 + decimals - l.Decimals;
+                break;
+            case BinOp.Mod:
+                decimals = l.Decimals;
+                length = l.Length + 1;
                 break;
             default:
                 length = Math.Max(l.Length - l.Decimals, r.Length - r.Decimals) + decimals + 1;
@@ -130,9 +136,14 @@ internal sealed partial class FunctionNode
                 // A NULL first source argument fixes VAL's cursor column at N(1,0), even if
                 // WHERE skips that row. Other numeric functions retain their static widths.
                 if (_args.Length > 0 && schema is SqlInferenceSchema valSample
+                    && valSample.Row is not null
                     && _args[0].Eval(valSample.Row, valSample.Context).IsNull)
                     return new(VfpType.Numeric, 1);
-                return new(VfpType.Numeric, 8, 2);
+                int valScale = schema is SqlInferenceSchema valContext ? valContext.Context.NumericDecimals : 2;
+                return new(VfpType.Numeric, Math.Min(20, arg.Length + valScale + 1), valScale);
+            case "SQRT":
+                int sqrtScale = Math.Max(number.Decimals, schema is SqlInferenceSchema sqrtContext ? sqrtContext.Context.NumericDecimals : 2);
+                return new(VfpType.Numeric, Math.Min(20, number.Length + sqrtScale - number.Decimals), sqrtScale);
             case "ABS": case "MIN": case "MAX": case "SUM": case "AVG":
                 // Within a larger expression SUM/AVG have their argument's width. Only a root
                 // aggregate expands N/F storage to 16 columns (handled by the SQL executor).
@@ -149,7 +160,7 @@ internal sealed partial class FunctionNode
                 if (_args.Length == 3)
                 {
                     VfpValue? condition = _args[0] is LiteralNode literal ? literal.ConstantValue : null;
-                    if (condition is null && schema is SqlInferenceSchema sample
+                    if (condition is null && schema is SqlInferenceSchema sample && sample.Row is not null
                         && !_args[0].ContainsFunction(static (n, a) => a == 1 && n is "SUM" or "AVG" or "COUNT" or "MIN" or "MAX"))
                         condition = _args[0].Eval(sample.Row, sample.Context);
                     if (condition is { } value)

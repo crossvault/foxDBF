@@ -44,7 +44,7 @@ internal static partial class VfpRuntime
     // ===================================================================
 
     public static VfpValue GetField(IRowContext row, string name)
-        => VfpValue.FromClr(row.GetField(name));
+        => row is IVfpValueRow typed ? typed.GetValue(name) : VfpValue.FromClr(row.GetField(name));
 
     // ===================================================================
     //  UNARY
@@ -56,7 +56,7 @@ internal static partial class VfpRuntime
         {
             case UnOp.Neg:
                 if (v.IsNull) return VfpValue.Null;
-                return VfpValue.Number(-v.AsDouble);
+                return VfpValue.Number(-v.AsDouble).WithDisplayDecimals(v.DisplayDecimals);
             case UnOp.Not:
                 if (v.IsNull) return VfpValue.Null;
                 return VfpValue.Logical(!v.AsLogical);
@@ -69,7 +69,7 @@ internal static partial class VfpRuntime
     //  BINARY
     // ===================================================================
 
-    public static VfpValue Binary(BinOp op, VfpValue l, VfpValue r, EvaluationContext ctx)
+    public static VfpValue Binary(BinOp op, VfpValue l, VfpValue r, EvaluationContext ctx, bool constant = false)
     {
         // Logical operators implement three-valued logic and must NOT short to .NULL.
         if (op == BinOp.And) return And(l, r);
@@ -80,14 +80,14 @@ internal static partial class VfpRuntime
 
         switch (op)
         {
-            case BinOp.Add: return Add(l, r, ctx);
-            case BinOp.Sub: return Sub(l, r);
-            case BinOp.Mul: return VfpValue.Number(l.AsDouble * r.AsDouble);
+            case BinOp.Add: return NumericScale(Add(l, r, ctx), l, r, op, ctx, constant);
+            case BinOp.Sub: return NumericScale(Sub(l, r), l, r, op, ctx, constant);
+            case BinOp.Mul: return NumericScale(VfpValue.Number(l.AsDouble * r.AsDouble), l, r, op, ctx, constant);
             case BinOp.Div:
                 return r.AsDouble == 0d ? VfpValue.Null
-                                        : VfpValue.Number(l.AsDouble / r.AsDouble);
-            case BinOp.Mod: return VfpValue.Number(Modulo(l.AsDouble, r.AsDouble));
-            case BinOp.Pow: return VfpValue.Number(Math.Pow(l.AsDouble, r.AsDouble));
+                                        : NumericScale(VfpValue.Number(l.AsDouble / r.AsDouble), l, r, op, ctx, constant);
+            case BinOp.Mod: return VfpValue.Number(Modulo(l.AsDouble, r.AsDouble)).WithDisplayDecimals(l.DisplayDecimals);
+            case BinOp.Pow: return NumericScale(VfpValue.Number(Math.Pow(l.AsDouble, r.AsDouble)), l, r, op, ctx, constant);
 
             case BinOp.Eq: return VfpValue.Logical(ValueEquals(l, r, ctx, exact: false));
             case BinOp.ExactEq: return VfpValue.Logical(ValueEquals(l, r, ctx, exact: true));
@@ -101,6 +101,19 @@ internal static partial class VfpRuntime
             default:
                 return VfpValue.Null;
         }
+    }
+
+    // VFP9 uses operand scales for ordinary +/-/*, SET DECIMALS as a minimum for
+    // constant arithmetic and powers, and DECIMALS+2 for a nonconstant quotient.
+    private static VfpValue NumericScale(VfpValue value, in VfpValue l, in VfpValue r,
+        BinOp op, EvaluationContext ctx, bool constant)
+    {
+        if (value.Type != VfpType.Numeric) return value;
+        int left = Math.Max(0, l.DisplayDecimals), right = Math.Max(0, r.DisplayDecimals);
+        int scale = op == BinOp.Mul ? left + right : Math.Max(left, right);
+        if (op == BinOp.Div) scale = Math.Max(scale, ctx.NumericDecimals + (constant ? 0 : 2));
+        else if (constant || op == BinOp.Pow) scale = Math.Max(scale, ctx.NumericDecimals);
+        return value.WithDisplayDecimals(scale);
     }
 
     /// <summary>True when the LEFT operand alone decides an AND (a logical .F.) or an OR (a logical .T.), so the
@@ -451,7 +464,7 @@ internal static partial class VfpRuntime
             }
 
             // ---- convert ----
-            case "VAL": return VfpValue.Number(Val(Arg(args, 0).AsString));
+            case "VAL": return VfpValue.Number(Val(Arg(args, 0).AsString)).WithDisplayDecimals(ctx.NumericDecimals);
             case "CTOD": return Ctod(Arg(args, 0).AsString);
             case "CTOT": return Ctot(Arg(args, 0).AsString);
             // VFP9: a Date becomes midnight, including the empty Date; NULL propagates above.
@@ -492,9 +505,9 @@ internal static partial class VfpRuntime
 
             // ---- numeric ----
             case "INT": return VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble));
-            case "ROUND": return VfpValue.Number(Round(Arg(args, 0).AsDouble, IntArg(args, 1)));
-            case "ABS": return VfpValue.Number(Math.Abs(Arg(args, 0).AsDouble));
-            case "MOD": return VfpValue.Number(Modulo(Arg(args, 0).AsDouble, Arg(args, 1).AsDouble));
+            case "ROUND": return VfpValue.Number(Round(Arg(args, 0).AsDouble, IntArg(args, 1))).WithDisplayDecimals(IntArg(args, 1));
+            case "ABS": return VfpValue.Number(Math.Abs(Arg(args, 0).AsDouble)).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
+            case "MOD": return VfpValue.Number(Modulo(Arg(args, 0).AsDouble, Arg(args, 1).AsDouble)).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
             case "MAX": return MaxMin(args, ctx, max: true);
             case "MIN": return MaxMin(args, ctx, max: false);
 

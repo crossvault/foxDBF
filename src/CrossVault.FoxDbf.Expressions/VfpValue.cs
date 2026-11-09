@@ -63,7 +63,10 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     // it across assignment and later SET DECIMALS changes without rounding their payload.
     internal int DisplayDecimals => _displayDecimalsPlusOne - 1;
     internal VfpValue WithDisplayDecimals(int decimals) => new(_type, _num, _dec, _isExact,
-        _str, _bool, _date, _isBinary, (byte)(Math.Clamp(decimals, 0, 18) + 1));
+        _str, _bool, _date, _isBinary, (byte)(Math.Clamp(decimals, 0, 19) + 1));
+
+    internal VfpValue WithFieldScale(char type, int decimals) => IsNull ? this
+        : type is 'N' or 'F' or 'B' or 'I' ? WithDisplayDecimals(decimals) : this;
 
     public static VfpValue Varbinary(byte[] bytes) =>
         new(VfpType.Character, 0d, 0m, false, System.Text.Encoding.Latin1.GetString(bytes), false, default, isBinary: true);
