@@ -314,10 +314,11 @@ public sealed partial class DbfWriter
 
                 if (oldIn)
                     editor.Delete(tag.HeaderOffset, oldKey, (uint)recNo, computer.KeyLen, computer.Pad);
-                if (newIn && !(computer.Unique && editor.ContainsKey(tag.HeaderOffset, newKey, computer.KeyLen, computer.Pad)))
+                bool inserted = newIn && !(computer.Unique && editor.ContainsKey(tag.HeaderOffset, newKey, computer.KeyLen, computer.Pad));
+                if (inserted)
                     editor.Insert(tag.HeaderOffset, newKey, (uint)recNo, computer.KeyLen, computer.Pad, computer.IsChar && computer.Collation is GeneralCollation { BlankHead: 0x11 });
                 if (_captureDeletionChanges)
-                    (DeletionIndexChanges ??= new()).Add((tag.Name, recNo, newIn ? newKey : null));
+                    (DeletionIndexChanges ??= new()).Add((tag.Name, recNo, inserted ? newKey : null));
             }
             // Flush after every update so on-disk visibility is byte-for-byte what the per-update
             // open/edit/flush/close path produced — only the redundant re-open/re-parse is removed.
