@@ -48,12 +48,17 @@ public sealed partial class DbfWriter
         => _cdxMaintEditor?.AppendPageCachePageCountForTests ?? 0;
 
     /// <summary>True when a structural index is available for incremental maintenance.</summary>
-    private bool ShouldMaintainIndexes()
+    private bool ShouldMaintainIndexes() => ShouldMaintainIndexes(out _);
+
+    private bool ShouldMaintainIndexes(out string path)
     {
+        path = string.Empty;
         if (!_hasStructuralCdx) return false;
         // One live existence check on the common path; preserve case-variant discovery on a miss.
-        string path = _cdxMaintStream?.Name ?? Path.ChangeExtension(_stream.Name, ".cdx");
-        return File.Exists(path) || File.Exists(ExistingCdxPath());
+        path = _cdxMaintStream?.Name ?? Path.ChangeExtension(_stream.Name, ".cdx");
+        if (File.Exists(path)) return true;
+        path = ExistingCdxPath();
+        return File.Exists(path);
     }
 
     // Q2: VFP refuses an unavailable index expression instead of discarding its definition.
@@ -63,7 +68,7 @@ public sealed partial class DbfWriter
         ValidateCompactIndexes();
         if (ReindexNeeded)
             throw new DbfWriteException("Index maintenance previously failed; rebuild the structural index before writing again.");
-        if (!ShouldMaintainIndexes())
+        if (!ShouldMaintainIndexes(out string path))
         {
             CloseCdxMaint(flush: true);
             return false;
@@ -71,7 +76,7 @@ public sealed partial class DbfWriter
         // In unattended VFP, a released array suppresses this tag's maintenance without
         // aborting the DBF/FPT write. Re-evaluate availability on each write in that mode.
         if (IndexContext?.SkipUnavailableIndexExpression is not null) CloseCdxMaint(flush: true);
-        EnsureCdxMaint(mode);
+        EnsureCdxMaint(mode, path);
         if (_hostIndexValidators is { } validators)
             foreach (var validate in validators) validate();
         return true;
@@ -107,7 +112,7 @@ public sealed partial class DbfWriter
     }
 
     /// <summary>Open or refresh the cached editor, rejecting any unmaintainable tag before editing.</summary>
-    private void EnsureCdxMaint(CdxMaintMode mode)
+    private void EnsureCdxMaint(CdxMaintMode mode, string path)
     {
         if (_cdxMaintEditor is not null && _cdxMaintPlans is not null)
         {
@@ -120,7 +125,9 @@ public sealed partial class DbfWriter
         CdxTreeEditor? editor = null;
         try
         {
-            rw = OpenCdxReadWrite();
+            // Validation just resolved the live sidecar under this mutation's lock.
+            // Reuse that path without repeating the existence/case-discovery probes.
+            rw = OpenCdxReadWrite(path);
             FailCdxMaintEditorForTests?.Invoke();   // test seam: simulate a CdxTreeEditor ctor throw (else no-op).
             editor = new CdxTreeEditor(rw, _schema.Encoding);
             if (mode == CdxMaintMode.Append)
@@ -384,8 +391,8 @@ public sealed partial class DbfWriter
 
     /// <summary>Open the structural <c>.cdx</c> read/write, sharing with any concurrent reader (the microVFP
     /// work area keeps its own read handle open across a write).</summary>
-    private FileStream OpenCdxReadWrite()
-        => new(ExistingCdxPath(), FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+    private FileStream OpenCdxReadWrite(string? path = null)
+        => new(path ?? ExistingCdxPath(), FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
 
     /// <summary>Cache a key computer only when KEY/FOR fields, functions, weights and stored width resolve.</summary>
     private CdxIndexBuilder.TagKeyComputer? GetComputer(CdxTreeEditor.TagHandle tag)

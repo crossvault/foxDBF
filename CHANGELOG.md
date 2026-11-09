@@ -16,6 +16,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   VFP byte table; writer defaults use the table's own session, including OEM/Mac case tables.
 - microVFP character SEEK converts session values into the table code page using VFP9's
   measured single-byte conversion maps, including its lossy accent/best-fit substitutions.
+- Faster indexed microVFP writes: parsed INSERT values are reused and redundant CDX path and file-length
+  queries are avoided, preserving VFP9 index bytes, handle release and rollback behavior.
 
 ### Added
 
