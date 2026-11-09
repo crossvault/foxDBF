@@ -336,7 +336,7 @@ public sealed partial class VfpInterpreter
     /// caller falls back to a whole-file <see cref="CaptureSnapshot"/>) when the row cannot be represented
     /// record-level:
     /// <list type="bullet">
-    ///   <item>a deleted/unreadable current record (<see cref="DbfTable.GetRecord"/> returns null); or</item>
+    ///   <item>a deleted/unreadable current record (<see cref="DbfTable.GetRecord(int)"/> returns null); or</item>
     ///   <item>the statement TOUCHES a General/Picture (<c>G</c>/<c>P</c>) field — those decode to a raw
     ///     4-byte FPT block POINTER, not content, so feeding the read-back value back through
     ///     <see cref="DbfWriter.UpdateRecord(int, object?[])"/> would write the pointer bytes AS block data

@@ -777,6 +777,9 @@ public sealed partial class VfpInterpreter
             "GENERAL" => VfpCollations.General,
             "SPANISH" => VfpCollations.ByName("SPANISH"),
             "GERMAN" => VfpCollations.ByName("GERMAN"),
+            "NORDAN" => VfpCollations.ByName("NORDAN"),
+            "SWEFIN" => VfpCollations.ByName("SWEFIN"),
+            "ICELAND" => VfpCollations.ByName("ICELAND"),
             // Availability is library-wide; existing VFP tags remain maintainable across session code pages.
             // These sequences compare expressions in their native 1250 table; INDEX uses the DBF code page.
             "CZECH" or "SLOVAK" or "POLISH" or "HUNGARY" => VfpCollations.ByName(seq, 1250),

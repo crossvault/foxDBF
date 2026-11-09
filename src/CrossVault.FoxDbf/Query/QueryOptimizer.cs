@@ -1881,29 +1881,35 @@ public static class QueryOptimizer
         /// heads(literal)++heads(rest)++tails(...). For BOTH collations the leading bytes are the
         /// literal's head run H; the GENERAL diacritic tail of the literal is pushed AFTER the
         /// match's extra heads, so it never appears in the shared prefix. Thus every match key
-        /// begins with H and so sorts strictly below byteIncrement(H). The head boundary is found
-        /// collation-agnostically: append two probe chars with distinct primary weights — their
-        /// collated keys share EXACTLY the literal's head run, then diverge at the next head.
+        /// begins with H and so sorts strictly below byteIncrement(H). Table-driven collations expose
+        /// the head boundary directly. For other collations, two appended probe characters with
+        /// distinct primary weights identify it by their common key prefix.
         /// </para>
         /// </summary>
         private static byte[]? CharEqUpperBound(CdxTag tag, string literal, byte[] lit)
         {
-            byte[] a, b;
-            try
+            int hc;
+            if (tag.KeyCollation is GeneralCollation weighted)
             {
-                a = tag.EncodeCharacterKey(literal + "A");
-                b = tag.EncodeCharacterKey(literal + "B");
+                // NORDAN 'a' + 'A' contracts to aa. Probing with A/B would lose the
+                // shared head run and incorrectly exclude aa-prefixed matches.
+                hc = weighted.GetHeadKey(literal).Length;
             }
-            catch { return null; }                       // uncertain → widen
-
-            // Length of the shared head run (the literal's primary weights). The two probes share
-            // every head byte of the literal, then diverge at the appended char's head weight.
-            int max = Math.Min(Math.Min(a.Length, b.Length), lit.Length);
-            int hc = 0;
-            while (hc < max && a[hc] == b[hc]) hc++;
-            if (hc == 0) return null;                                          // no shared run → widen
-            if (hc >= a.Length || hc >= b.Length || a[hc] == b[hc]) return null; // probes never diverged → widen
-            if (hc > lit.Length) return null;                                 // defensive → widen
+            else
+            {
+                byte[] a, b;
+                try
+                {
+                    a = tag.EncodeCharacterKey(literal + "A");
+                    b = tag.EncodeCharacterKey(literal + "B");
+                }
+                catch { return null; }
+                int max = Math.Min(Math.Min(a.Length, b.Length), lit.Length);
+                hc = 0;
+                while (hc < max && a[hc] == b[hc]) hc++;
+                if (hc >= a.Length || hc >= b.Length || a[hc] == b[hc]) return null;
+            }
+            if (hc == 0 || hc > lit.Length) return null;
 
             // Byte-increment the head run (next prefix). Drop any trailing 0xFF that cannot carry;
             // if NOTHING can be incremented the bound would overflow the value space → widen.
