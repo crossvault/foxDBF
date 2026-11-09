@@ -769,6 +769,12 @@ public sealed partial class VfpInterpreter
         public DbfRecord? Cached;   // current-record cache (invalidated on move/write).
         public int CachedRec = -1;
         public List<int>? Ordered;  // recnos in the active index order (null ⇒ physical order).
+        public List<byte[]>? OrderKeys;
+        public Dictionary<int, int>? OrderSlots;
+        public bool OrderDescending;
+        public bool OrderKeyIsField;
+        public string? OrderExpression;
+        public Func<VfpValue, byte[]>? OrderEncodeKey;
         public string? OrderedFor;  // the tag name the Ordered cache was built for.
         public string? OrderedKeyExpr; // the controlling order's KEY expression (5.5: tag-scoped cache refresh).
         public int OrderPos = -1;   // current position within Ordered (when index-ordered).
@@ -840,6 +846,8 @@ public sealed partial class VfpInterpreter
 
     private bool Visible(VfpSession.WorkArea wa, int rec, HashSet<int>? keyVisible = null, bool includeDeleted = false)
     {
+        // Removed index entries retain a negative-recno slot, avoiding an O(n) shift per DELETE.
+        if (rec < 1) return false;
         bool deleted;
         if (rec > wa.Table.RecordCount)
         {
@@ -933,14 +941,26 @@ public sealed partial class VfpInterpreter
 
         using var src = OpenOrderSource(area, m.Order!);   // structural cdx, extra cdx, or standalone idx.
         if (src is null) return null;
-        var ordered = OrderedEntries(src).Select(e => e.Recno).ToList();
+        var entries = OrderedEntries(src).ToList();
         // A SET ORDER … DESCENDING|ASCENDING override reverses the order's own traversal direction.
-        if (m.OrderReversed) ordered.Reverse();
+        if (m.OrderReversed) entries.Reverse();
+        var ordered = entries.Select(e => e.Recno).ToList();
+        m.OrderKeys = entries.Select(e => e.Key).ToList();
+        m.OrderSlots = entries.Select((e, i) => (e.Recno, i)).ToDictionary(e => e.Recno, e => e.i);
+        m.OrderDescending = src.Descending != m.OrderReversed;
         m.Ordered = ordered;
         m.OrderedFor = m.Order;
         // Remember the controlling key expression so a later REPLACE can decide (tag-scoped, 5.5) whether it
         // touched the order key — a CDX tag exposes it; a standalone .idx does not (null ⇒ drop on any REPLACE).
         m.OrderedKeyExpr = src.CdxTag?.KeyExpression?.Trim();
+        m.OrderKeyIsField = ColumnIndex(wa.Table, m.OrderedKeyExpr ?? "") >= 0;
+        m.OrderExpression = src.CdxTag?.KeyExpression ?? src.Idx!.Header.KeyExpression;
+        // Encoding uses immutable header metadata only, never the source's owned stream.
+        bool character = src.IsCharacterKey;
+        var keyType = src.KeyType;
+        int keyLength = src.KeyLength;
+        m.OrderEncodeKey = value => character ? PaddedCharacterKey(src, value)
+            : IndexKey.Encode(value.ToClr(), keyType) is { Length: > 0 } bytes ? bytes : new byte[keyLength];
         m.OrderPos = -1;
         return m.Ordered;
     }
@@ -999,7 +1019,7 @@ public sealed partial class VfpInterpreter
         m.OldVals = null;                 // a record move re-bases the OLDVAL() buffer (per-record buffering).
         // Re-anchor the index position to this physical record (so a following SKIP walks index order).
         var ord = ActiveOrder(area);
-        if (ord is not null) m.OrderPos = ord.IndexOf(rec);
+        if (ord is not null) m.OrderPos = m.OrderSlots!.GetValueOrDefault(rec, -1);
     }
 
     private static bool InRange(VfpSession.WorkArea wa, int rec) => rec >= 1 && rec <= wa.Table.RecordCount;
@@ -1018,9 +1038,10 @@ public sealed partial class VfpInterpreter
         {
             int dirO = count > 0 ? 1 : -1, stepsO = Math.Abs(count);
             int pos = m.OrderPos;
-            if (pos < 0)
+            if (pos < 0 || (pos < ord.Count && ord[pos] < 0 && !m.OrderKeyIsField))
             {
-                pos = ord.IndexOf(m.RecNo);
+                pos = m.OrderSlots!.GetValueOrDefault(m.RecNo, -1);
+                if (pos >= 0 && ord[pos] < 0 && !m.OrderKeyIsField) pos = -1;
                 if (pos < 0 && InRange(wa, m.RecNo))
                 {
                     // A deletion-dependent FOR can remove the current entry. VFP resumes at
@@ -1055,27 +1076,62 @@ public sealed partial class VfpInterpreter
 
     private int MissingOrderInsertionPoint(int area, AreaMeta m)
     {
-        using var source = OpenMasterOrder(area);
-        if (source is null) return 0;
         int selected = Session.CurrentArea;
         VfpValue value;
         try
         {
             Session.SelectArea(area);
-            value = EvalTextLoud(source.CdxTag?.KeyExpression ?? source.Idx!.Header.KeyExpression);
+            value = EvalTextLoud(m.OrderExpression!);
         }
         finally { Session.SelectArea(selected); }
-        byte[] key = source.IsCharacterKey ? PaddedCharacterKey(source, value)
-            : IndexKey.Encode(value.ToClr(), source.KeyType) ?? Array.Empty<byte>();
-        bool descending = source.Descending != m.OrderReversed;
-        int before = 0;
-        foreach (var entry in OrderedEntries(source))
+        byte[] key = m.OrderEncodeKey!(value);
+        bool descending = m.OrderDescending;
+        // VFP uses the current expression value for a missing expression key (including
+        // IIF(DELETED(), ...)); ordinary field keys keep their original cached slot.
+        int low = 0, high = m.Ordered!.Count;
+        while (low < high)
         {
-            int compare = CompareBytesUnsigned(entry.Key, key);
-            if (compare == 0) compare = entry.Recno.CompareTo(m.RecNo);
-            if (descending ? compare > 0 : compare < 0) before++;
+            int mid = low + (high - low) / 2;
+            int compare = CompareBytesUnsigned(m.OrderKeys![mid], key);
+            if (compare == 0) compare = Math.Abs(m.Ordered[mid]).CompareTo(m.RecNo);
+            if (descending ? compare > 0 : compare < 0) low = mid + 1;
+            else high = mid;
         }
-        return before;
+        return low;
+    }
+
+    private void RefreshDeletionOrder(string path, DbfWriter writer)
+    {
+        foreach (var wa in Session.OpenAreas)
+        {
+            if (!SamePath(wa.Table.SourcePath, path) || !_meta.TryGetValue(wa.Area, out var m)) continue;
+            m.KeyVisible = null;
+            if (m.Ordered is null) continue;
+            // Additional indexes do not supply structural-tag deltas; refresh them normally.
+            if (wa.Cdx?.Tag(m.Order!) is null)
+            {
+                m.Ordered = null;
+                m.OrderPos = -1;
+                continue;
+            }
+            foreach (var change in writer.DeletionIndexChanges ?? [])
+            {
+                if (!change.Tag.Equals(m.Order, StringComparison.OrdinalIgnoreCase)) continue;
+                int slot = m.OrderSlots!.GetValueOrDefault(change.Recno, -1);
+                if (change.Key is null)
+                {
+                    if (slot >= 0) m.Ordered[slot] = -change.Recno;
+                }
+                else if (slot >= 0 && m.OrderKeys![slot].AsSpan().SequenceEqual(change.Key))
+                    m.Ordered[slot] = change.Recno;
+                else
+                {
+                    m.Ordered = null;
+                    m.OrderPos = -1;
+                    break;
+                }
+            }
+        }
     }
 
     // ── navigation wrappers (microVFP P1 gap #2) — every USER parent move goes through one of these and,

@@ -766,6 +766,7 @@ public sealed partial class DbfWriter : IDisposable
 
     private void SetDeleteFlag(int index, byte flag)
     {
+        DeletionIndexChanges = null;
         ObjectDisposedException.ThrowIf(_disposed, this);
         if ((uint)index >= (uint)_recordCount)
             throw new ArgumentOutOfRangeException(nameof(index));
@@ -793,7 +794,9 @@ public sealed partial class DbfWriter : IDisposable
                 // DELETED() can participate in either the key or its FOR expression.
                 if (structural)
                 {
-                    MaintainIndexesAfterUpdate(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));
+                    _captureDeletionChanges = true;
+                    try { MaintainIndexesAfterUpdate(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after)); }
+                    finally { _captureDeletionChanges = false; }
                     mutation?.Commit();
                 }
                 MaintainCompactIndexes(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));

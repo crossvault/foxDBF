@@ -84,6 +84,8 @@ public sealed partial class DbfWriter
     }
 
     private bool _deletionRekeyed;
+    internal List<(string Tag, int Recno, byte[]? Key)>? DeletionIndexChanges { get; private set; }
+    private bool _captureDeletionChanges;
 
     /// <summary>True (once; the flag resets) when a DELETE / RECALL since the last call re-keyed an open index,
     /// i.e. a structural tag, compact <c>.idx</c> or additional index whose KEY/FOR depends on the deletion

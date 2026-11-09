@@ -112,6 +112,14 @@ public sealed class CdxFile : IDisposable
     /// <summary>Indexer form of <see cref="Tag(string)"/>.</summary>
     public CdxTag? this[string name] => Tag(name);
 
+    internal void RefreshView()
+    {
+        _index.RefreshView();
+        _tagNames.Clear();
+        _tags.Clear();
+        BuildDirectory();
+    }
+
     /// <summary>
     /// Decodes the tag directory: page-0 root → compact directory node(s) whose
     /// 10-byte character keys are tag names and whose "recno" is the byte offset of

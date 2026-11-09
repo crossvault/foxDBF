@@ -833,8 +833,12 @@ public sealed partial class VfpInterpreter
             // Other indexes are unchanged by a deletion flip, so SCAN … DELETE keeps its per-row cost.
             if (writePath is not null && rekeyed)
             {
-                ReopenFileAreas(writePath);
-                ResetMetaCachesForPath(writePath);
+                foreach (var changedArea in Session.OpenAreas.Where(w => SamePath(w.Table.SourcePath, writePath)).ToArray())
+                {
+                    // Keep cached slots and file handles: only the tag roots/read buffer changed.
+                    if (changedArea.Cdx?.IsMemoryMapped == true) Session.ReopenAreaTable(changedArea.Area);
+                    else changedArea.Cdx?.RefreshView();
+                }
             }
             if (started) Memory.Set("_TALLY", VfpValue.Integer(tally));
         }
@@ -907,6 +911,7 @@ public sealed partial class VfpInterpreter
                     lease ??= LeaseWriter(writePath);
                     if (recall) lease.Value.Writer.Recall(rec - 1);
                     else lease.Value.Writer.Delete(rec - 1);
+                    RefreshDeletionOrder(writePath, lease.Value.Writer);
                 }
                 // Preserve index order, but make each flag visible to subsequent predicates/UDFs.
                 RefreshDeletionFlag(writePath);

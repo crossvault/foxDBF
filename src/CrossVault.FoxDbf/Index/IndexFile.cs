@@ -74,6 +74,9 @@ public sealed class IndexFile : IDisposable
     /// <summary>Total length of the underlying index file in bytes.</summary>
     public long Length => _stream.Length;
 
+    // A writer sharing this file changed pages. Flush also discards FileStream's read buffer.
+    internal void RefreshView() => _stream.Flush();
+
     /// <summary>
     /// Reads and parses a CDX file header (offset 0) or a per-tag header at the
     /// given byte offset, including its trailing KEY/FOR expression pool.
