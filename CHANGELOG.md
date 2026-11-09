@@ -8,6 +8,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- VFP9-exact TURKISH collation on code pages 1254/857, RUSSIAN on 1251/866/10007 and GREEK
+  on 1253/737/10006, including index creation and maintenance, prefix SEEK, Rushmore and microVFP
+  `SET COLLATE TO` / `INDEX ON` / `SEEK`.
+- **BREAKING:** `UPPER()` and `LOWER()` with these eight code pages now use VFP9's language byte
+  mappings instead of Unicode casing, including in index expressions. Turkish dotted-I comparisons
+  also treat an absent secondary weight like a zero weight, as VFP9 does.
+  Case-expression parity is verified in the matching language sessions; selecting a different VFP
+  session code page for index-expression evaluation is not currently supported by the writer.
 - **BREAKING:** `DATETIME(year, month, day [, hour [, minute [, second]]])` in expressions, SQL and microVFP,
   including fractional-component truncation, NULL component defaults and empty results for impossible
   calendar dates, as in VFP9. Invalid arguments now raise VFP errors 11, 1229 or 1230

@@ -495,7 +495,15 @@ internal static class CdxIndexBuilder
         {
             // KEY/FOR comparisons run on the decoded text (VFP: in the current code page), so they use the
             // code-page-neutral collation of that name; only the stored key bytes follow the table code page.
-            Collation = VfpCollations.ByName(def.Collation),
+            Collation = collation.Name switch
+            {
+                // These sequences are unavailable in CP1252. FOR expressions need their
+                // language session, rather than the default factory's MACHINE fallback.
+                "TURKISH" => VfpCollations.ByName(def.Collation, 1254),
+                "RUSSIAN" => VfpCollations.ByName(def.Collation, 1251),
+                "GREEK" => VfpCollations.ByName(def.Collation, 1253),
+                _ => VfpCollations.ByName(def.Collation),
+            },
             Exact = evalContext?.Exact ?? false,
             Ansi = evalContext?.Ansi ?? false,
             Culture = evalContext?.Culture,

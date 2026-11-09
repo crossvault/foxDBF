@@ -81,6 +81,41 @@ public static class VfpCollations
             return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
         }
 
+        if (n.Equals("TURKISH", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = codePage switch
+            {
+                1254 => GeneralCollation.Turkish1254,
+                857 => GeneralCollation.Turkish857,
+                _ => Machine,
+            };
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+
+        if (n.Equals("RUSSIAN", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = codePage switch
+            {
+                1251 => GeneralCollation.Russian1251,
+                866 => GeneralCollation.Russian866,
+                10007 => GeneralCollation.Russian10007,
+                _ => Machine,
+            };
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+
+        if (n.Equals("GREEK", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = codePage switch
+            {
+                1253 => GeneralCollation.Greek1253,
+                737 => GeneralCollation.Greek737,
+                10006 => GeneralCollation.Greek10006,
+                _ => Machine,
+            };
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+
         bool general = n.Equals("GENERAL", StringComparison.OrdinalIgnoreCase);
         if (!general && !n.Equals("SPANISH", StringComparison.OrdinalIgnoreCase))
         {
