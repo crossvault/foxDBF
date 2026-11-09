@@ -25,6 +25,8 @@ public sealed partial class VfpInterpreter
         try
         {
             FlushPendingAppends();
+            if (statement.DeleteTarget is not null && !table.Equals(delete!.Table, StringComparison.OrdinalIgnoreCase))
+                (source, sourceIndex) = Session.OpenNamedTable(delete.Table);
             var wa = Session.FindInsertArea(table);
             if (wa is null)
             {
@@ -33,8 +35,6 @@ public sealed partial class VfpInterpreter
             }
             int area = wa.Area;
             Session.SelectArea(area);
-            if (statement.DeleteTarget is not null && !table.Equals(delete!.Table, StringComparison.OrdinalIgnoreCase))
-                (source, sourceIndex) = Session.OpenNamedTable(delete.Table);
             var sqlRow = source is null ? null : new SqlDeleteSourceRow(this, wa, source, delete!.Table);
             if (Session.ReadOnly || wa.NoUpdate)
                 throw new MicroVfpRuntimeException("Cannot update the cursor.", 111);
@@ -82,32 +82,38 @@ public sealed partial class VfpInterpreter
             // SQL ignores FILTER/KEY/order, honours DELETED, and leaves the pointer on the last
             // examined physical row. GoRecord retains row-buffer commits and transaction seams.
             int count = EffCount(area, wa);
-            for (int rec = 1; rec <= count; rec++)
-            {
-                GoRecord(area, rec);
-                wa = Session.AreaAt(area)!;
-                if (_ctx.Deleted && _row.Deleted) continue;
-                if (sqlRow is not null)
-                {
-                    bool matched = false;
-                    for (int sourceRec = 0; sourceRec < source!.RecordCount; sourceRec++)
-                    {
-                        if (_ctx.Deleted && source.IsRecordDeleted(sourceRec)) continue;
-                        sqlRow.Record = source.GetRecord(sourceRec, includeDeleted: true);
-                        if (predicate is null || Truth(predicate.Parsed!.Evaluate(sqlRow, _ctx))) { matched = true; break; }
-                    }
-                    if (!matched) continue;
-                }
-                else if (predicate is not null && !Truth(Eval(predicate))) continue;
-                if (update is not null)
-                    SqlUpdateRow(wa, assignments);
-                else
-                    ExecDelete(new DeleteStmt(null, null, null, null));
-                // Unlike xBase DELETE, SQL counts matches even when their deletion flag was set.
-                tally++;
-            }
+            if (update is not null)
+                ScanRows(() => SqlUpdateRow(Session.AreaAt(area)!, assignments));
+            else
+                // Share xBase's statement writer/refresh while retaining SQL's matching-row tally.
+                ExecDeleteRecall(null, null, null, null, 0, recall: false, scanRows: ScanRows);
             MaybeAutoCommitRow(area);
             completed = true;
+
+            void ScanRows(Action mark)
+            {
+                for (int rec = 1; rec <= count; rec++)
+                {
+                    GoRecord(area, rec);
+                    wa = Session.AreaAt(area)!;
+                    if (_ctx.Deleted && _row.Deleted) continue;
+                    if (sqlRow is not null)
+                    {
+                        bool matched = false;
+                        for (int sourceRec = 0; sourceRec < source!.RecordCount; sourceRec++)
+                        {
+                            if (_ctx.Deleted && source.IsRecordDeleted(sourceRec)) continue;
+                            sqlRow.Record = source.GetRecord(sourceRec, includeDeleted: true);
+                            if (predicate is null || Truth(predicate.Parsed!.Evaluate(sqlRow, _ctx))) { matched = true; break; }
+                        }
+                        if (!matched) continue;
+                    }
+                    else if (predicate is not null && !Truth(Eval(predicate))) continue;
+                    mark();
+                    // Unlike xBase DELETE, SQL counts matches even when their deletion flag was set.
+                    tally++;
+                }
+            }
         }
         finally
         {
@@ -122,6 +128,7 @@ public sealed partial class VfpInterpreter
 
     // The optional DELETE target FROM source form is a two-table predicate. Its source scan
     // must not move the caller's live source pointer or leave a temporary source work area open.
+    // VFP uses the source's disk values even when its open work area has pending buffered edits.
     private sealed class SqlDeleteSourceRow(VfpInterpreter owner, VfpSession.WorkArea target, DbfTable source, string alias)
         : IRowContext, IVfpFunctionHost
     {
@@ -184,10 +191,16 @@ public sealed partial class VfpInterpreter
         // VFP retains an invalid SQL candidate in a row/table buffer so it can be corrected or
         // reverted. The same failure must still prevent a later TABLEUPDATE from publishing it.
         if (EnforceReferentialIntegrity && Meta(wa.Area).Buffering > 1)
-            WithImportRow(wa, Meta(wa.Area).RecNo, values, () =>
-            {
-                DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalTextLoud);
-                return true;
-            });
+        {
+            var meta = Meta(wa.Area);
+            if (meta.Buf?.Rows.TryGetValue(meta.RecNo, out var edit) == true)
+                ValidateBufferedRow(wa, meta.RecNo, edit);
+            else
+                WithImportRow(wa, meta.RecNo, values, () =>
+                {
+                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, values, EvalTextLoud);
+                    return true;
+                });
+        }
     }
 }

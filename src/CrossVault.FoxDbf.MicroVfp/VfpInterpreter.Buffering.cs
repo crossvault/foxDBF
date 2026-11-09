@@ -61,6 +61,13 @@ public sealed partial class VfpInterpreter
             var v = Eval(clause.Value);
             var col = wa.Table.Columns[idx];
             target[idx] = v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
+            if (edit is not null)
+            {
+                edit.ValidatedFields.Remove(idx);
+                edit.RecordRuleValidated = false;
+                // VFP checks a changed field immediately; record rules wait for the row to leave.
+                ValidateBufferedRow(wa, recno, edit, changedField: idx, validateRecord: false);
+            }
         }
     }
 
@@ -224,9 +231,14 @@ public sealed partial class VfpInterpreter
         finally { parentSnap?.Cleanup(); }
     }
 
-    private void ValidateBufferedRow(VfpSession.WorkArea wa, int recno, RowEdit edit)
+    private void ValidateBufferedRow(VfpSession.WorkArea wa, int recno, RowEdit edit,
+        int? changedField = null, bool validateRecord = true)
     {
         if (!EnforceReferentialIntegrity || edit.Fields.Count == 0 || Session.Database is null) return;
+        var fields = changedField.HasValue ? new[] { changedField.Value }
+            : edit.Fields.Keys.Where(i => !edit.ValidatedFields.Contains(i)).ToArray();
+        bool checkRecord = validateRecord && !edit.RecordRuleValidated;
+        if (fields.Length == 0 && !checkRecord) return;
         var map = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         var record = wa.Table.GetRecord(recno - 1, includeDeleted: true);
         for (int i = 0; i < wa.Table.Columns.Count; i++)
@@ -237,9 +249,13 @@ public sealed partial class VfpInterpreter
         }
         WithImportRow(wa, recno, map, () =>
         {
-            DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, map, EvalTextLoud);
+            DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, map, EvalTextLoud,
+                fieldsToValidate: fields.Select(i => wa.Table.Columns[i].Name).ToHashSet(StringComparer.OrdinalIgnoreCase),
+                validateRecord: checkRecord);
             return true;
         });
+        edit.ValidatedFields.UnionWith(fields);
+        if (checkRecord) edit.RecordRuleValidated = true;
     }
 
     /// <summary>TABLEUPDATE core — commit the current row (allRows=false) or every buffered row + append
@@ -491,6 +507,8 @@ public sealed partial class VfpInterpreter
     private sealed class RowEdit
     {
         public readonly Dictionary<int, object?> Fields = new();               // colIndex → buffered new value.
+        public readonly HashSet<int> ValidatedFields = new();
+        public bool RecordRuleValidated;
         public bool? DeletedOverride;                                          // null ⇒ no pending delete change.
         public readonly Dictionary<string, object?> Old = new(StringComparer.OrdinalIgnoreCase); // OLDVAL per field.
     }

@@ -114,7 +114,8 @@ internal sealed partial class DmlExecutor
     }
 
     internal static void ValidateImportRules(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
-        Dictionary<string, object?> map, Func<string, VfpValue>? evaluate = null, int recno = 0, bool? suppliedFields = null)
+        Dictionary<string, object?> map, Func<string, VfpValue>? evaluate = null, int recno = 0, bool? suppliedFields = null,
+        ISet<string>? fieldsToValidate = null, bool validateRecord = true)
     {
         var rules = TableRules(session, table);
         if (rules is null) return;
@@ -126,6 +127,7 @@ internal sealed partial class DmlExecutor
             if (col.IsSystem) continue;
             var rule = FieldRules(rules, columns, col, field++);
             if ((!suppliedFields.HasValue || map.ContainsKey(col.Name) == suppliedFields.Value)
+                && (fieldsToValidate is null || fieldsToValidate.Contains(col.Name))
                 && !string.IsNullOrEmpty(rule?.RuleExpression))
             {
                 var value = Eval(rule.RuleExpression);
@@ -133,7 +135,7 @@ internal sealed partial class DmlExecutor
                     throw new FoxDbfSqlException("Field validation rule is violated.") { VfpErrorNumber = 1582 };
             }
         }
-        if (suppliedFields != true && !string.IsNullOrEmpty(rules.RuleExpression))
+        if (validateRecord && suppliedFields != true && !string.IsNullOrEmpty(rules.RuleExpression))
         {
             var value = Eval(rules.RuleExpression);
             if (value.Type != VfpType.Logical || !value.AsLogical)

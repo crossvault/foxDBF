@@ -1018,7 +1018,18 @@ public sealed partial class VfpInterpreter
         {
             int dirO = count > 0 ? 1 : -1, stepsO = Math.Abs(count);
             int pos = m.OrderPos;
-            if (pos < 0) { GoTopCore(area); pos = m.OrderPos; }    // not yet anchored → start at top.
+            if (pos < 0)
+            {
+                pos = ord.IndexOf(m.RecNo);
+                if (pos < 0 && InRange(wa, m.RecNo))
+                {
+                    // A deletion-dependent FOR can remove the current entry. VFP resumes at
+                    // its key's insertion point, in either direction, rather than going to TOP.
+                    pos = MissingOrderInsertionPoint(area, m) - (dirO > 0 ? 1 : 0);
+                }
+                else if (pos < 0 && m.Eof) pos = ord.Count;
+                else if (pos < 0) { GoTopCore(area); pos = m.OrderPos; }
+            }
             while (stepsO > 0)
             {
                 pos += dirO;
@@ -1040,6 +1051,31 @@ public sealed partial class VfpInterpreter
             if (Visible(wa, cur)) steps--;
         }
         m.RecNo = cur; m.Eof = false; m.Bof = false;
+    }
+
+    private int MissingOrderInsertionPoint(int area, AreaMeta m)
+    {
+        using var source = OpenMasterOrder(area);
+        if (source is null) return 0;
+        int selected = Session.CurrentArea;
+        VfpValue value;
+        try
+        {
+            Session.SelectArea(area);
+            value = EvalTextLoud(source.CdxTag?.KeyExpression ?? source.Idx!.Header.KeyExpression);
+        }
+        finally { Session.SelectArea(selected); }
+        byte[] key = source.IsCharacterKey ? PaddedCharacterKey(source, value)
+            : IndexKey.Encode(value.ToClr(), source.KeyType) ?? Array.Empty<byte>();
+        bool descending = source.Descending != m.OrderReversed;
+        int before = 0;
+        foreach (var entry in OrderedEntries(source))
+        {
+            int compare = CompareBytesUnsigned(entry.Key, key);
+            if (compare == 0) compare = entry.Recno.CompareTo(m.RecNo);
+            if (descending ? compare > 0 : compare < 0) before++;
+        }
+        return before;
     }
 
     // ── navigation wrappers (microVFP P1 gap #2) — every USER parent move goes through one of these and,

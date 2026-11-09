@@ -903,7 +903,8 @@ public static class SqlParser
         {
             ExpectKw("DELETE");
             ExpectKw("FROM");
-            var (db, table) = ParseDbTable();
+            var (db, table) = Current.Kind == TokKind.String
+                ? ((string?)null, ExpectName("a table name")) : ParseDbTable();
 
             VfpExpression? where = null;
             if (IsKw("WHERE"))

@@ -99,6 +99,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP `SCAN` and `SKIP` retain their place after `DELETE`/`RECALL` changes membership in
+  the controlling index. SQL `DELETE FROM` shares one statement writer and refreshes
+  deletion-dependent indexes once per statement.
+- BREAKING: With `EnforceReferentialIntegrity = true`, buffered field rules run when `REPLACE`
+  changes the field and can reject it immediately; record rules run once at commit.
+  SQL UPDATE's successful validations are retained through `TABLEUPDATE` and row-buffer commits,
+  avoiding duplicate rule-UDF side effects while still rejecting invalid buffered values.
+- Scoped microVFP `REPLACE` preserves `_TALLY` when no table is open and includes the rejected
+  row when an update trigger fails. `UPDATE ON` again reports an explicitly unsupported xBase
+  command; ambiguous `DELETE FOR from=1` retains VFP9's SQL filename interpretation and error.
+
 - microVFP: SQL writes maintain the open standalone `.idx` files of the table as VFP9 does. `INSERT … FROM ARRAY` /
   `FROM MEMVAR` no longer refuse with an open `.idx`, and `UPDATE` / `DELETE` through the session's SQL layer no
   longer leave it stale. Transactions and candidate/RI rollback keep their existing standalone-index restriction.

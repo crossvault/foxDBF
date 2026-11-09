@@ -639,13 +639,22 @@ public sealed partial class VfpInterpreter
     private void ExecReplaceScope(ReplaceStmt rp)
     {
         int area = rp.In is not null ? ResolveAreaRef(rp.In) : AreaOfClause(rp.Clauses[0]);
+        // VFP preserves the preceding _TALLY when the command cannot start.
+        if (Session.AreaAt(area) is null)
+            throw new MicroVfpRuntimeException("No table is open in the current work area.", 52);
         var single = rp with { Scope = null, For = null, While = null };
         int tally = 0;
         try
         {
             ExecRecordScope(area, rp.Scope, rp.For, rp.While, () =>
             {
-                ExecReplace(single);
+                try { ExecReplace(single); }
+                catch (MicroVfpRuntimeException error) when (error.VfpErrorNumber == 1539)
+                {
+                    // VFP includes the attempted row even when its update trigger rejects it.
+                    tally++;
+                    throw;
+                }
                 tally++;
             });
         }
@@ -766,7 +775,8 @@ public sealed partial class VfpInterpreter
         ExecDeleteRecall(rc.In, rc.Scope, rc.For, rc.While, rc.SyntaxError, recall: true);
     }
 
-    private void ExecDeleteRecall(NameRef? inArea, string? scope, PrgExpr? forExpr, PrgExpr? whileExpr, int syntaxError, bool recall)
+    private void ExecDeleteRecall(NameRef? inArea, string? scope, PrgExpr? forExpr, PrgExpr? whileExpr, int syntaxError, bool recall,
+        Action<Action>? scanRows = null)
     {
         // Validate the entire syntax before moving or marking any row. The general scope resolver is
         // permissive for legacy commands; DELETE/RECALL must never turn an invalid scope into ALL.
@@ -801,7 +811,10 @@ public sealed partial class VfpInterpreter
                 && !(resolvedScope.Kind == LocScope.Next && resolvedScope.Count == 1);
             started = true;
             Memory.Set("_TALLY", VfpValue.Integer(0));
-            ExecRecordScope(area, scope, forExpr, whileExpr, Mark, includeDeleted: recall, resolvedScope: resolvedScope);
+            if (scanRows is null)
+                ExecRecordScope(area, scope, forExpr, whileExpr, Mark, includeDeleted: recall, resolvedScope: resolvedScope);
+            else
+                scanRows(Mark);
             if (EffCount(area, Session.AreaAt(area)!) == 0) Meta(area).Bof = true;
         }
         finally
