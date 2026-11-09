@@ -22,6 +22,7 @@ public enum FoxDbfAccelerator
 ///   <item><c>Exclusive</c> — <c>true</c> | <c>false</c> (default false → SHARED).</item>
 ///   <item><c>Deleted</c> — <c>on</c> | <c>off</c> (default on → exclude deleted).</item>
 ///   <item><c>Ansi</c> — <c>on</c> | <c>off</c> (default off).</item>
+///   <item><c>SessionCodePage</c> — VFP text session code page (default: none → each table's own code page, lossless).</item>
 ///   <item><c>ReadOnly</c> — <c>true</c> | <c>false</c> (default false).</item>
 ///   <item><c>Accelerator</c> — <c>Highlike</c> | <c>None</c> (default None).</item>
 ///   <item><c>EnforceRules</c> (alias <c>EnforceRI</c>) — <c>on</c> | <c>off</c> (default off → RAW writes):
@@ -39,6 +40,7 @@ public sealed class FoxDbfConnectionStringBuilder : DbConnectionStringBuilder
     public const string ReadOnlyKey = "ReadOnly";
     public const string AcceleratorKey = "Accelerator";
     public const string EnforceRulesKey = "EnforceRules";
+    public const string SessionCodePageKey = "SessionCodePage";
     /// <summary>Alias for <see cref="EnforceRulesKey"/> — both map to the same opt-in enforcement flag.</summary>
     public const string EnforceRiKey = "EnforceRI";
 
@@ -54,6 +56,20 @@ public sealed class FoxDbfConnectionStringBuilder : DbConnectionStringBuilder
     {
         get => GetString(DataSourceKey, "");
         set => this[DataSourceKey] = value;
+    }
+
+    /// <summary>VFP text session code page. Null (default) reads and writes each table's own code page
+    /// losslessly; a value applies VFP9's session-to-table best-fit conversion, as a VFP9 session would.</summary>
+    public int? SessionCodePage
+    {
+        get => TryGetValue(SessionCodePageKey, out var value) && value is not null && value.ToString() is { Length: > 0 } text
+            ? Convert.ToInt32(text, System.Globalization.CultureInfo.InvariantCulture)
+            : null;
+        set
+        {
+            if (value is null) Remove(SessionCodePageKey);
+            else this[SessionCodePageKey] = value.Value;
+        }
     }
 
     /// <summary>The collation: <c>machine</c> (default) or <c>general</c>.</summary>

@@ -176,14 +176,14 @@ public sealed partial class DbfWriter
             for (int ci = 0; ci < oldUserCols.Count; ci++)
             {
                 var oc = oldUserCols[ci];
-                // The writer's schema carries no memo reader (it was opened stream-only), so
-                // FPT-backed content (M memo / W blob / G General-OLE / P Picture) is pulled
-                // directly from OUR open .fpt sidecar; everything else decodes through the record.
+                // Pull FPT-backed content (M memo / W blob / G General-OLE / P Picture)
+                // directly from OUR open .fpt sidecar, preserving its native bytes;
+                // everything else decodes through the record's stored-value view.
                 // This keeps the memo/OLE data across the rebuild — without G/P here their stale
                 // block pointers would dangle into the freshly rebuilt (empty) .fpt.
                 map[oc.Name] = oc.Type is 'M' or 'W' or 'G' or 'P'
                     ? ReadMemoContentForMigration(oc, copy.AsSpan(oc.Offset + 1, oc.Length))
-                    : rec[ci];
+                    : rec.GetStoredExpressionValue(ci);
             }
             snapshot.Add((map, copy.Length > 0 && copy[0] == 0x2A));
         }
@@ -213,6 +213,8 @@ public sealed partial class DbfWriter
 
             using (var tw = Open(tmpDbf, new DbfOptions { LockMode = LockMode.Exclusive, Encoding = reopenOptions.Encoding, SessionCodePage = reopenOptions.SessionCodePage }))
             {
+                // Structural migration must retain table-native bytes, without a lossy session round trip.
+                tw.Schema.SetTextSession(null);
                 foreach (var (values, deleted) in snapshot)
                 {
                     var positional = new object?[defs.Count];

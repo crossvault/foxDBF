@@ -85,6 +85,12 @@ public sealed class VfpSession : IDisposable
     /// — the executor and the interpreter read the current session's SET state through this.</summary>
     public EvaluationContext Context => _active.Context;
 
+    internal Write.DbfCreateOptions NewTableOptions => new()
+    {
+        CodePage = Encodings.MarkForCodePage(Context.SessionCodePage ?? Encodings.DefaultCodePage),
+        SessionCodePage = Context.SessionCodePage,
+    };
+
     /// <summary>
     /// Raised at the START of <see cref="Dispose"/>, before any work-area handle is closed. A consumer that
     /// holds its own file handles keyed to this session's lifetime (the microVFP interpreter's 5.5 cached
@@ -562,7 +568,7 @@ public sealed class VfpSession : IDisposable
         if (prev is not null && _areas.Remove(prev.Area, out var pw)) pw.Dispose();
         if (_cursorPaths.Remove(a, out var oldPath)) TryDeleteCursorFiles(oldPath);
 
-        var dbf = DbfTable.Open(tempDbfPath, new DbfOptions { LockMode = Write.LockMode.Shared });
+        var dbf = DbfTable.Open(tempDbfPath, new DbfOptions { LockMode = Write.LockMode.Shared, SessionCodePage = Context.SessionCodePage });
         int area = LowestFreeArea();
         _areas[area] = new WorkArea(area, dbf, null, a, exclusive: false, noUpdate: false);
         _cursorPaths[a] = tempDbfPath;
@@ -643,8 +649,9 @@ public sealed class VfpSession : IDisposable
         string readPath = TxRedirectReadPath is { } redirect ? redirect(livePath) : livePath;
         dbf = objectName is not null
             ? _db!.OpenTableAt(objectName, readPath)
-            : DbfTable.Open(readPath, new DbfOptions { LockMode = w.Exclusive ? Write.LockMode.Exclusive : Write.LockMode.Shared });
+            : DbfTable.Open(readPath, new DbfOptions { LockMode = w.Exclusive ? Write.LockMode.Exclusive : Write.LockMode.Shared, SessionCodePage = Context.SessionCodePage });
 
+        dbf.SetTextSession(Context.SessionCodePage);
         CdxFile? cdx = null;
         string cdxPath = SidecarFile.ChangeExtension(readPath, ".cdx");
         if (File.Exists(cdxPath))
@@ -738,6 +745,7 @@ public sealed class VfpSession : IDisposable
             });
         }
 
+        dbf.SetTextSession(Context.SessionCodePage);
         return (dbf, OpenStructuralCdx(dbf.SourcePath, dbf));
     }
 

@@ -17,7 +17,6 @@ public readonly struct DbfRecord
 {
     private readonly byte[] _buffer;
     private readonly DbfTable _table;
-
     // Per-record decode memo. Both arrays are reference fields on a readonly struct:
     // struct copies share them, and mutating their *elements* (not the field) is legal.
     // _decoded says what the slot holds: Decoded (the indexer's value) or ExpressionDecoded (a C field at full
@@ -131,7 +130,7 @@ public readonly struct DbfRecord
             var raw = GetRawField(column);
             if (!raw.IsEmpty)
             {
-                var encoding = column.IsBinary ? System.Text.Encoding.Latin1 : _table.Encoding;
+                var encoding = column.IsBinary ? _table.BinaryTextEncoding : _table.TextEncoding;
                 // VFP reads the declared code page, even when the bytes happen to be valid UTF-8; UTF-8 detection
                 // only applies when the table was opened with DbfOptions.DetectUtf8 (non-VFP data).
                 value = FieldDecoder.DecodeCharacterPadded(column, raw, encoding, _table.SuppressUtf8Detection);
@@ -140,6 +139,23 @@ public readonly struct DbfRecord
         _cache[index] = value;
         _decoded[index] = ExpressionDecoded;
         return value;
+    }
+
+    // Index expressions and direct table transfers see stored text, not the lossy session view.
+    internal object? GetStoredExpressionValue(int index)
+    {
+        if (!_table.NeedsStoredText) return GetExpressionValue(index);
+        var column = _table.Columns[index];
+        if (column.Type != 'C') return DecodeColumn(column, storedText: true);
+        if (_table.ApplyNullFlags && IsNullFlagSet(column)) return null;
+        var encoding = column.IsBinary ? System.Text.Encoding.Latin1 : _table.Encoding;
+        return FieldDecoder.DecodeCharacterPadded(column, GetRawField(column), encoding, _table.SuppressUtf8Detection);
+    }
+
+    internal object? GetStoredExpressionValue(string name)
+    {
+        int index = IndexOfColumn(name);
+        return index < 0 ? null : GetStoredExpressionValue(index);
     }
 
     /// <summary>The expression value (<see cref="GetExpressionValue(int)"/>) of the column named <paramref name="name"/>.</summary>
@@ -196,7 +212,7 @@ public readonly struct DbfRecord
     /// <see langword="null"/>; <c>V</c>/<c>Q</c> use the varlen bit for their effective
     /// length; binary (NOCPTRANS) <c>C</c>/<c>M</c> are not code-page transcoded.
     /// </summary>
-    private object? DecodeColumn(DbfColumn column)
+    private object? DecodeColumn(DbfColumn column, bool storedText = false)
     {
         var (varlenBit, nullBit) = _table.GetVarlenNullBits(column);
 
@@ -213,7 +229,7 @@ public readonly struct DbfRecord
         // 'W' (VFP9 0x32 Blob) is a 4-byte FPT pointer like memo, but always binary (§A5b
         // line 257) — ReadMemoValue returns its raw FPT block bytes, never a transcoded string.
         if (column.Type is 'M' or 'W')
-            return _table.ReadMemoValue(column, raw);
+            return _table.ReadMemoValue(column, raw, storedText);
 
         // Varchar / Varbinary: effective length is the full field width unless the
         // varlen bit is set, in which case it lives in the field's LAST byte (§A5b).
@@ -228,17 +244,19 @@ public readonly struct DbfRecord
             var slice = raw[..effLen];
             // A binary (NOCPTRANS, flag 0x04) Varchar must NOT be code-page transcoded —
             // the §A7 line 312 bypass is generic to ALL flag-0x04 columns, not just C/M.
-            // Decode 1:1 via Latin1 so raw bytes (e.g. 0x80) are preserved verbatim.
-            var venc = column.IsBinary ? System.Text.Encoding.Latin1 : _table.Encoding;
+            // The explicit session encoding (otherwise Latin1) preserves the binary bytes.
+            var venc = column.IsBinary
+                ? (storedText ? System.Text.Encoding.Latin1 : _table.BinaryTextEncoding)
+                : (storedText ? _table.Encoding : _table.TextEncoding);
             return column.Type == 'V'
                 ? venc.GetString(slice) // V → string via encoding (Latin1 when binary)
                 : slice.ToArray();      // Q → raw bytes (binary, not transcoded)
         }
 
-        // Binary / NOCPTRANS C/M: decode 1:1 (Latin1) instead of the table code page.
+        // Binary / NOCPTRANS: session bytes, or Latin1 without a session option.
         var encoding = column.IsBinary && column.Type is 'C' or 'M'
-            ? System.Text.Encoding.Latin1
-            : _table.Encoding;
+            ? (storedText ? System.Text.Encoding.Latin1 : _table.BinaryTextEncoding)
+            : (storedText ? _table.Encoding : _table.TextEncoding);
 
         // Suppress the UTF-8 auto-detect short-circuit when the table encoding is an
         // explicit override (§A7 highest precedence) so the forced encoding wins even

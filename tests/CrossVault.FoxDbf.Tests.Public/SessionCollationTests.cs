@@ -70,6 +70,8 @@ public sealed class SessionCollationTests
         using (var writer = DbfWriter.Create(path, [new DbfColumnDef("name", 'C', 1)],
             new DbfCreateOptions { CodePage = 0xca, SessionCodePage = sessionCp }))
         {
+            // These are deliberately table-native fixture bytes; only index casing uses the session.
+            writer.Schema.SetTextSession(null);
             writer.AppendRecord(value);
             writer.CreateTag(new CdxTagDefinition("u", "UPPER(name)"));
             writer.CreateStandaloneIdx(legacy, "UPPER(name)");
@@ -77,6 +79,7 @@ public sealed class SessionCollationTests
         }
         using (var writer = DbfWriter.Open(path, new DbfOptions { SessionCodePage = sessionCp, LockMode = LockMode.Exclusive }))
         {
+            writer.Schema.SetTextSession(null);
             writer.OpenCompactIdx(compact);
             writer.AppendRecord(value);
             writer.UpdateRecord(0, new object?[] { value });

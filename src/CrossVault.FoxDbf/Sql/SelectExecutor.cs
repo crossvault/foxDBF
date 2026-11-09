@@ -288,7 +288,7 @@ internal sealed class SelectExecutor
         if (into.Kind == IntoKind.Table)
         {
             string path = _session.ResolveIntoTablePath(into.Name);
-            using (var w = DbfWriter.Create(path, defs, new DbfCreateOptions { Overwrite = true }))
+            using (var w = DbfWriter.Create(path, defs, _session.NewTableOptions with { Overwrite = true }))
                 w.AppendRecords(rows);
             return SqlResult.Dml(rows.Count);
         }
@@ -297,7 +297,7 @@ internal sealed class SelectExecutor
         // READWRITE is implicit (it is a real, updatable table). Register it in the session so the
         // cursor alias is queryable until the session is disposed or the name is reused.
         string temp = _session.NewCursorTempPath(into.Name);
-        using (var w = DbfWriter.Create(temp, defs, new DbfCreateOptions { Overwrite = true }))
+        using (var w = DbfWriter.Create(temp, defs, _session.NewTableOptions with { Overwrite = true }))
             w.AppendRecords(rows);
         _session.RegisterCursor(into.Name, temp);
         return SqlResult.Dml(rows.Count);
@@ -381,7 +381,7 @@ internal sealed class SelectExecutor
         {
             string name = SafeFieldName(col.Name, used);
             used.Add(name);
-            defs.Add(ToColumnDef(col, name));
+            defs.Add(ToColumnDef(col, name) with { Binary = col.IsBinary });
         }
         return defs;
     }
@@ -396,6 +396,7 @@ internal sealed class SelectExecutor
             case 'D': return new DbfColumnDef(name, 'D');             // Date (fixed 8)
             case 'T': case '@': return new DbfColumnDef(name, 'T');   // DateTime (fixed 8)
             case 'L': return new DbfColumnDef(name, 'L');             // Logical (fixed 1)
+            case 'V': case 'Q': return new DbfColumnDef(name, col.VfpType, col.Length);
             case 'M': case 'G': case 'P': case 'W':                   // memo / binary blob (FPT-backed)
                 return new DbfColumnDef(name, 'M');
             case 'N':
@@ -2052,7 +2053,7 @@ internal sealed class SelectExecutor
             if (it.IsStar)
             {
                 foreach (var c in table.Columns)
-                    cols.Add(new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)));
+                    cols.Add(new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)) { IsBinary = c.IsBinary });
                 continue;
             }
 
@@ -2081,7 +2082,7 @@ internal sealed class SelectExecutor
                 var c = FindColumn(table, field);
                 if (c is not null)
                 {
-                    cols.Add(new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)));
+                    cols.Add(new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)) { IsBinary = c.IsBinary });
                     continue;
                 }
             }
@@ -2112,7 +2113,7 @@ internal sealed class SelectExecutor
                         continue;
                     any = true;
                     foreach (var c in s.Columns)
-                        cols.Add(new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)));
+                        cols.Add(new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)) { IsBinary = c.IsBinary });
                 }
                 if (it.StarAlias is not null && !any)
                     throw new FoxDbfSqlException($"Unknown alias '{it.StarAlias}' in '{it.StarAlias}.*'.");
@@ -2144,7 +2145,7 @@ internal sealed class SelectExecutor
                 var c = ResolveJoinField(text, src, out _);
                 if (c is not null)
                 {
-                    cols.Add(new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)));
+                    cols.Add(new SqlColumn(c.Name, NormalizeTypeChar(c.Type), c.Length, c.Decimal, ClrForDbfType(c.Type)) { IsBinary = c.IsBinary });
                     continue;
                 }
             }
@@ -2220,7 +2221,7 @@ internal sealed class SelectExecutor
             var col = cols[i];
             outCols.Add(string.Equals(name, col.Name, StringComparison.Ordinal)
                 ? col
-                : new SqlColumn(name, col.VfpType, col.Length, col.Decimals, col.ClrType));
+                : new SqlColumn(name, col.VfpType, col.Length, col.Decimals, col.ClrType) { IsBinary = col.IsBinary });
         }
         return outCols;
     }

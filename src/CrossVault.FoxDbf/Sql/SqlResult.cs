@@ -28,6 +28,8 @@ public sealed class SqlColumn
     /// <summary>The CLR type the column's row values box to (e.g. <see cref="string"/>,
     /// <see cref="decimal"/>, <see cref="DateOnly"/>, <see cref="bool"/>, <see cref="int"/>).</summary>
     public Type ClrType { get; }
+    /// <summary>Whether a projected source field bypasses code-page translation.</summary>
+    public bool IsBinary { get; init; }
 
     public SqlColumn(string name, char vfpType, int length, int decimals, Type clrType)
     {

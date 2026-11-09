@@ -3,15 +3,41 @@ using System.Text;
 
 namespace CrossVault.FoxDbf;
 
-/// <summary>VFP9's single-byte CPCONVERT maps used when a session SEEK value enters a table.</summary>
+/// <summary>VFP9's single-byte CPCONVERT maps for fields, memos and SEEK values.</summary>
 internal static class VfpSessionText
 {
     // VFP best-fit conversion differs from Unicode/.NET conversion (including representable
     // Greek accents). These tables are measured, not inferred; see SessionCollationVfp9OracleTests.
     private static readonly Dictionary<(int From, int To), byte[]> Maps = LoadMaps();
 
+    internal static Encoding ResolveSession(int codePage) => codePage switch
+    {
+        620 => Encodings.ResolveEncoding(0x69),
+        895 => Encodings.ResolveEncoding(0x68),
+        _ => Encoding.GetEncoding(codePage),
+    };
+
+    internal static Encoding ForFields(Encoding table, Encoding? session)
+    {
+        // Native-page tables keep their original encoder; no per-character conversion or map lookup.
+        if (session is null || session.CodePage == table.CodePage) return table;
+        return Maps.TryGetValue((session.CodePage, table.CodePage), out var write)
+            && Maps.TryGetValue((table.CodePage, session.CodePage), out var read)
+            ? new VfpTextEncoding(session, write, read) : table;
+    }
+
+    internal static byte[] ConvertBytes(byte[] bytes, int from, int to)
+    {
+        if (from == to) return bytes;
+        if (!Maps.TryGetValue((from, to), out var map))
+            return Encoding.Convert(ResolveSession(from), ResolveSession(to), bytes);
+        for (int i = 0; i < bytes.Length; i++) bytes[i] = map[bytes[i]];
+        return bytes;
+    }
+
     internal static string ForTable(string value, Encoding session, Encoding table, bool byteString = false)
     {
+        if (session.CodePage == table.CodePage) return value;
         if (!Maps.TryGetValue((session.CodePage, table.CodePage), out var map)) return value;
         if (byteString)
         {

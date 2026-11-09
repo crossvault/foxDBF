@@ -171,12 +171,10 @@ public sealed partial class VfpInterpreter
         _ctx.IndexEvaluator = EvaluateIndex;
         _ctx.NormalizeIndexExpression = MicroVfpExprRewrite.Normalize;
         _ctx.ValidateIndexFunction = ValidateIndexFunction;
-        bool explicitCodePage = sessionCodePage.HasValue || _ctx.SessionCodePage.HasValue;
         SessionCodePage = sessionCodePage ?? _ctx.SessionCodePage ?? System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage;
         if (SessionCodePage is 1255 or 1256) SessionCodePage = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage;
         _ctx.SessionCodePage = SessionCodePage;
-        if (explicitCodePage)
-            _ctx.Encoding ??= ConnectionEncoding();
+        _ctx.Encoding = ConnectionEncoding();   // a VFP9 session always runs in its CPCURRENT() text page
         // VFP runtime defaults the SP corpus + oracle harness run under: SET DELETED ON, MACHINE collation and
         // SET EXACT OFF (VFP's default; with full-width C field reads, see header, field = field and
         // field = literal compare as in VFP).

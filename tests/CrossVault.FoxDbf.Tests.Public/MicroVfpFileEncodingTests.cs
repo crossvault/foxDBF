@@ -129,7 +129,8 @@ public sealed class MicroVfpFileEncodingTests : IDisposable
         byte[] copied = File.ReadAllBytes(Path.Combine(dataDir, "out.prg"));
         Assert.True(ContainsSequence(copied, appended), "the appended bytes must come back unchanged");
         Assert.False(ContainsSequence(copied, new byte[] { 0xC3, 0xB3 }), "no UTF-8 'ó'");
-        Assert.Equal(Latin1(Cp1252.GetBytes("razón € Š œ")), vfp.Call("zzEnc").AsString);
+        // The result is session text; VFP's literal bytes remain identical (session-text oracle).
+        Assert.Equal(Cp1252.GetBytes("razón € Š œ"), Cp1252.GetBytes(vfp.Call("zzEnc").AsString));
     }
 
     private static string Latin1(byte[] bytes) => Encoding.Latin1.GetString(bytes);

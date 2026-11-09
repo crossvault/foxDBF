@@ -101,7 +101,7 @@ public sealed record DbfColumnDef
 /// </summary>
 public sealed record DbfCreateOptions
 {
-    /// <summary>Session code page for UPPER/LOWER in index expressions; null uses the table code page.</summary>
+    /// <summary>Session code page for field/memo text and index expressions; see <see cref="DbfOptions.SessionCodePage"/>.</summary>
     public int? SessionCodePage { get; init; }
 
     /// <summary>The code-page byte written at header offset 29. Default <c>0x03</c> (Windows ANSI / CP1252).</summary>

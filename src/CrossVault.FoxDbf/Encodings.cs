@@ -139,6 +139,14 @@ public static class Encodings
             return Map.TryGetValue(codePageByte, out var cp) ? cp : null;
     }
 
+    internal static byte MarkForCodePage(int codePage)
+    {
+        lock (Gate)
+            foreach (var pair in Map)
+                if (pair.Value == codePage) return pair.Key;
+        throw new NotSupportedException($"No DBF language-driver mark for code page {codePage}.");
+    }
+
     /// <summary>The usable header code page, or zero for an unknown/unavailable driver.
     /// Unlike the decoding fallback, this is the value reported by VFP9 CPDBF().</summary>
     public static int ResolveAvailableCodePage(byte codePageByte)

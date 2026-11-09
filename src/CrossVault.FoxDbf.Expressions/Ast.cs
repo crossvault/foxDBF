@@ -49,12 +49,22 @@ internal abstract class AstNode
 internal sealed partial class LiteralNode : AstNode
 {
     private readonly VfpValue _value;
-    public LiteralNode(VfpValue value) => _value = value;
+    private readonly bool _byteLiteral;
+    public LiteralNode(VfpValue value)
+    {
+        _value = value;
+        _byteLiteral = value.Type == VfpType.Character && !value.IsBinary
+            && value.AsString.AsSpan().IndexOfAnyInRange('\u0080', '\u009f') >= 0;
+    }
 
-    public override VfpValue Eval(IRowContext row, EvaluationContext ctx) => _value;
+    public override VfpValue Eval(IRowContext row, EvaluationContext ctx)
+        => _byteLiteral ? VfpRuntime.DecodeByteLiteral(_value, ctx) : _value;
 
     public override Expression Build(BuildContext b)
-        => Expression.Constant(_value, typeof(VfpValue));
+        => _byteLiteral
+            ? Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.DecodeByteLiteral), null,
+                Expression.Constant(_value, typeof(VfpValue)), b.Ctx)
+            : Expression.Constant(_value, typeof(VfpValue));
 
     public override VfpTypeInfo Infer(ISchema schema) => _value.Type switch
     {

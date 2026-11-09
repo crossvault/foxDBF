@@ -359,7 +359,6 @@ internal sealed class DmlExecutor
 
         // Resolve each SET column to a physical index up front (clear error for an unknown column).
         var assigns = new (int Index, CrossVault.FoxDbf.Expressions.VfpExpression Value)[st.Assignments.Count];
-        var setColumns = new HashSet<int>();
         for (int i = 0; i < st.Assignments.Count; i++)
         {
             string assignmentTarget = st.Assignments[i].Column;
@@ -385,7 +384,6 @@ internal sealed class DmlExecutor
                     $"Column '{st.Assignments[i].Column}' does not exist in table '{st.Table}'.")
                     { VfpErrorNumber = 1806 };
             assigns[i] = (idx, st.Assignments[i].Value);
-            setColumns.Add(idx);
         }
 
         var binder = TargetBinder(st.Table, columns);
@@ -401,21 +399,23 @@ internal sealed class DmlExecutor
         var matched = MatchedRecords(target, st.Table, st.Where?.Text, ctx);
         foreach (var (recNo, rec) in matched)
         {
-            // Rewrite the FULL row: seed every field from the record's CURRENT value, then apply each
-            // SET expression evaluated against THIS row (so amount = amount + 1 reads its own value).
-            // EXCEPTION: FPT-backed columns (M/W/G/P) the SET list does not touch carry the KeepValue
-            // sentinel so their existing .fpt block pointer is preserved verbatim — round-tripping
-            // their read-back value (decoded memo content, or a raw G/P pointer) back through the
-            // memo-append path would grow the .fpt unboundedly and corrupt General/Picture fields.
+            // Untouched fields retain their bytes. A session/table conversion is lossy, so even
+            // an unchanged character value must not take a read/write round trip (VFP9 oracle).
             var positional = new object?[columns.Count];
-            for (int i = 0; i < columns.Count; i++)
-                positional[i] = columns[i].Type is 'M' or 'W' or 'G' or 'P' && !setColumns.Contains(i)
-                    ? DbfWriter.KeepValue
-                    : rec.GetExpressionValue(i);   // full width: an untouched C field keeps its leading blanks
+            Array.Fill(positional, DbfWriter.KeepValue);
 
             var rowCtx = new RecordRow(rec, recNo, table.RecordCount);
             foreach (var (idx, val) in assigns)
+            {
+                // VFP copies a direct self-assignment without translating its stored text. A computed
+                // assignment (field + 'x') does evaluate in the session and may lose best-fit bytes.
+                string source = val.Text.Trim();
+                if (columns[idx].Type is 'C' or 'V' or 'M'
+                    && (string.Equals(source, columns[idx].Name, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(source, st.Table + "." + columns[idx].Name, StringComparison.OrdinalIgnoreCase)))
+                    continue;
                 positional[idx] = SelectExecutor.ToClr(val.Evaluate(rowCtx, ctx));
+            }
 
             writer.UpdateRecord(recNo - 1, positional);
         }

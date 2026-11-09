@@ -443,6 +443,7 @@ internal static partial class VfpRuntime
             {
                 var s = Arg(args, 0).AsString;
                 if (s.Length == 0) return VfpValue.Integer(0);
+                if (Arg(args, 0).IsBinary) return VfpValue.Integer((byte)s[0]);
                 byte b = ctx.Encoding is { } e2 ? e2.GetBytes(new[] { s[0] })[0]
                                                 : Cp1252.ToByte(s[0]);
                 return VfpValue.Integer(b);

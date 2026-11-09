@@ -34,7 +34,7 @@ public static class RecordEncoder
         dest[0] = deleted ? (byte)0x2A : (byte)0x20;
 
         var columns = schema.Columns;
-        var encoding = schema.Encoding;
+        var encoding = schema.TextEncoding;
         var nf = schema.NullFlagsColumn;
 
         for (int ci = 0; ci < columns.Count; ci++)
@@ -52,12 +52,10 @@ public static class RecordEncoder
             var field = dest.AsSpan(column.Offset + 1, column.Length);
             var (varlenBit, nullBit) = schema.GetVarlenNullBits(column);
 
-            // A binary (NOCPTRANS, flag 0x04) 'C'/'V' column is decoded 1:1 via Latin1 by the
-            // reader (DbfRecord.DecodeColumn), NOT the table code page. Encode it with the same
-            // Latin1 so raw bytes in 0x80-0x9F round-trip exactly under a non-Latin1 code page
-            // (e.g. CP1252). 'Q' uses byte[] and needs no encoding. (MUST-FIX: per-field encoding.)
-            var fieldEnc = (column.IsBinary && column.Type is 'C' or 'V')
-                ? System.Text.Encoding.Latin1
+            // NOCPTRANS strings retain their session bytes (Latin1 for the table-native API).
+            // Q accepts raw byte[] as well as strings; neither crosses a table conversion map.
+            var fieldEnc = ((column.IsBinary && column.Type is 'C' or 'V') || column.Type == 'Q')
+                ? schema.BinaryTextEncoding
                 : encoding;
 
             if (value is null)

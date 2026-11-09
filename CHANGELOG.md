@@ -8,6 +8,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- BREAKING: character, Varchar and memo writes now use VFP9's session-to-table best-fit bytes
+  when a session code page is set and differs from the table page; reads use the reverse VFP9 map.
+  microVFP always runs with a session code page (`CPCURRENT()`, the current ANSI code page by default).
+  SQL (`EvaluationContext.SessionCodePage`), `DbfOptions.SessionCodePage` and ADO.NET
+  (`SessionCodePage` in the connection string) convert only when it is set; unset, they keep lossless
+  table-native text. All paths preserve binary/NOCPTRANS bytes. SQL UPDATE preserves untouched
+  field bytes, and microVFP `CPCONVERT` uses the measured single-byte maps in both directions.
+  Table/file transfers preserve VFP9's distinct conversion rules; SELECT INTO retains
+  Varchar/Varbinary and NOCPTRANS metadata, and ALTER preserves existing text bytes.
 - BREAKING: microVFP `SET COLLATE` now raises VFP error 1915 when the sequence is unavailable in
   `CPCURRENT()`. `INDEX ON` separately rejects unsupported table-code-page combinations with 1915.
   Maintenance of existing language tags remains independent of SET COLLATE availability.

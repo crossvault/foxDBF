@@ -1587,23 +1587,7 @@ internal static class CdxIndexBuilder
                     }
                 }
             }
-            if (value is string)
-            {
-                foreach (var col in _record.Table.Columns)
-                {
-                    if (string.Equals(col.Name, name, StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (col.Type == 'C')
-                        {
-                            var raw = _record.GetRawField(col);
-                            var enc = col.IsBinary ? Encoding.Latin1 : _record.Table.Encoding;
-                            return FieldDecoder.DecodeCharacterPadded(col, raw, enc, _record.Table.SuppressUtf8Detection);
-                        }
-                        break;
-                    }
-                }
-            }
-            return value;
+            return value is string ? _record.GetStoredExpressionValue(name) : value;
         }
     }
 

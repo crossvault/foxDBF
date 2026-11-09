@@ -80,6 +80,7 @@ public sealed class FoxDbfConnection : DbConnection
                 Collation = ParseCollation(builder.Collate),
                 Deleted = builder.Deleted,
                 Ansi = builder.Ansi,
+                SessionCodePage = builder.SessionCodePage,
             };
 
             session = new VfpSession(context)
@@ -814,7 +815,15 @@ public sealed class FoxDbfConnection : DbConnection
             var session = Session;   // asserts the connection is open (and not disposed).
             if (_interpreter is null)
             {
+                int? sessionCodePage = session.Context.SessionCodePage;
+                var sessionEncoding = session.Context.Encoding;
                 var interp = new CrossVault.FoxDbf.MicroVfp.VfpInterpreter(session);
+                if (sessionCodePage is null)
+                {
+                    // Without an explicit SessionCodePage the connection stays table-native for every later table.
+                    session.Context.SessionCodePage = null;
+                    session.Context.Encoding = sessionEncoding ?? System.Text.Encoding.Latin1;   // as before 0.12.0
+                }
                 interp.LoadStoredProceduresFromDatabase();   // RI procs + business UDFs from the .dbc (no-op if none).
                 interp.EnforceReferentialIntegrity = _enforceRules;
                 _interpreter = interp;
