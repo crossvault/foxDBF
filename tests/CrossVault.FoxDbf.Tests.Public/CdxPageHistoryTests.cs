@@ -68,4 +68,25 @@ public sealed class CdxPageHistoryTests
             return index.Tag("K")!.EnumerateEntries().Select(e => e.RecordNumber).ToArray();
         }
     }
+
+    [Theory]
+    [InlineData("name", null, false)]
+    [InlineData("UPPER(name)", "LEN(name) > 0", false)]
+    [InlineData("name", "NOT DELETED()", true)]
+    [InlineData("IIF(DELETED(), 'X', name)", null, true)]
+    public void DeleteAndRecall_ReKeyOnlyTagsThatCanSeeTheDeletionFlag(string key, string? filter, bool changes)
+    {
+        using var dir = new IndexMaintTestSupport.TempDir();
+        string path = Path.Combine(dir.Path, "t.dbf");
+        string cdx = Path.ChangeExtension(path, ".cdx");
+        using (var writer = DbfWriter.Create(path, [new DbfColumnDef("name", 'C', 8)]))
+        {
+            writer.CreateTag(new CdxTagDefinition("K", key) { ForExpression = filter });
+            writer.AppendRecord("ALPHA");
+            writer.AppendRecord("BETA");
+        }
+        byte[] before = File.ReadAllBytes(cdx);
+        using (var writer = DbfWriter.Open(path)) writer.Delete(0);
+        Assert.Equal(changes, !before.AsSpan().SequenceEqual(File.ReadAllBytes(cdx)));
+    }
 }

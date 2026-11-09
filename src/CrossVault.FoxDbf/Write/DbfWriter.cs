@@ -773,9 +773,12 @@ public sealed partial class DbfWriter : IDisposable
         {
             ValidateIndexes();
             long offset = _headerLength + (long)index * _recordLength;
-            byte[]? before = _cdxMaintEditor is not null || HasAdditionalIndexes
+            // Only a tag whose KEY/FOR can see the deletion flag changes (VFP9 keeps every other key in place).
+            bool structural = _cdxMaintEditor is not null && _cdxMaintPlans is not null
+                && _cdxMaintPlans.Exists(plan => plan.Computer.DependsOnDeletionState);
+            byte[]? before = structural || HasAdditionalIndexes
                 ? ReadRaw(_handle, offset, _recordLength) : null;
-            using var mutation = BeginIndexMutation(offset, append: false, before: before);
+            using var mutation = structural ? BeginIndexMutation(offset, append: false, before: before) : null;
             _stream.Seek(offset, SeekOrigin.Begin);
             _stream.WriteByte(flag);
             _stream.Flush();
@@ -784,8 +787,11 @@ public sealed partial class DbfWriter : IDisposable
                 var after = (byte[])before.Clone();
                 after[0] = flag;
                 // DELETED() can participate in either the key or its FOR expression.
-                MaintainIndexesAfterUpdate(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));
-                mutation?.Commit();
+                if (structural)
+                {
+                    MaintainIndexesAfterUpdate(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));
+                    mutation?.Commit();
+                }
                 MaintainCompactIndexes(index + 1, new DbfRecord(_schema, before), new DbfRecord(_schema, after));
             }
         });

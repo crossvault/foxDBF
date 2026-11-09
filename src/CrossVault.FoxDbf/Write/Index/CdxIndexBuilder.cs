@@ -458,6 +458,10 @@ internal static class CdxIndexBuilder
         public required bool Unique;
         public required bool Descending;
         public Action? ValidateHost;
+        /// <summary>The KEY or FOR expression can change when only the record's deletion flag flips: it calls
+        /// DELETED(), EVALUATE(), a volatile function or a host (non-engine) function that might call DELETED().
+        /// A DELETE/RECALL re-keys only such tags; every other key is provably unchanged.</summary>
+        public bool DependsOnDeletionState;
 
         /// <summary>
         /// Evaluate the tag's FOR filter and KEY over <paramref name="record"/>. Returns <see langword="true"/>
@@ -491,6 +495,11 @@ internal static class CdxIndexBuilder
     /// otherwise honour the caller's LIVE SET EXACT / SET ANSI (via <paramref name="evalContext"/>) so a
     /// character <c>=</c> inside a FOR/KEY filters exactly as a VFP run of the same program would.
     /// </summary>
+    private static readonly HashSet<string> DeletionSensitiveFunctions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "DELETED", "EVALUATE", "EVAL", "RAND", "DATE", "DATETIME", "TIME", "SECONDS", "SYS", "NEWID",
+    };
+
     internal static TagKeyComputer CreateKeyComputer(DbfTable schema, CdxTagDefinition def, EvaluationContext? evalContext)
     {
         // The stored keys are weighted in the TABLE code page (VFP9: CP850 GENERAL expands Ä to AE, CP1252 does
@@ -557,9 +566,20 @@ internal static class CdxIndexBuilder
             }
             if (names.Count > 0) validateHost = () => { foreach (string name in names) validate(name); };
         }
+        bool dependsOnDeletion = false;
+        foreach (var text in new[] { def.KeyExpression, def.ForExpression })
+        {
+            if (string.IsNullOrWhiteSpace(text) || dependsOnDeletion) continue;
+            dependsOnDeletion = VfpExpression.Parse(text).ContainsFunction((name, _) =>
+            {
+                name = VfpFunctionAbbreviations.Canonical(name);
+                return DeletionSensitiveFunctions.Contains(name) || !VfpRuntime.EngineFunctionNames.Contains(name);
+            });
+        }
         return new TagKeyComputer
         {
             ValidateHost = validateHost,
+            DependsOnDeletionState = dependsOnDeletion,
             KeyType = keyType,
             KeyLen = keyLen,
             IsChar = isChar,
