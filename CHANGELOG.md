@@ -30,6 +30,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- `CREATE TABLE` / `CREATE DBF` accept AFIELDS-style microVFP arrays with 4–18 columns, including
+  field rules, table properties and autoincrement seeds. Declarations support `AUTOINC NEXTVALUE ...
+  STEP ...` and `NOCPTRANS`, with VFP9 descriptor bytes and validation errors.
 - SQL and microVFP `CREATE TABLE` / `CREATE DBF` support `FREE` and `CODEPAGE = expression`,
   including VFP9 language-driver bytes, memo encoding and invalid-code-page errors.
 - microVFP `APPEND FROM ARRAY` (1-D/2-D, `FIELDS`, `LIKE`/`EXCEPT`, `FOR`) and
@@ -118,9 +121,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   long field names, backlinks, DEFAULT/CHECK/ERROR properties, primary/candidate tags and REFERENCES
   relationships. `FREE` explicitly bypasses membership. Candidate keys reject duplicate inserts and
   updates after reopening; ADO.NET rollback restores the DBC, its memo and its index together.
-- `CREATE TABLE` / `CREATE DBF` accept AFIELDS-style microVFP arrays with 4–18 columns, including
-  field rules, table properties and autoincrement seeds. Declarations support `AUTOINC NEXTVALUE ...
-  STEP ...` and `NOCPTRANS`, with VFP9 descriptor bytes and validation errors.
 - microVFP builds and maintains index KEY/FOR expressions that call loaded UDFs, arrays or interpreter
   functions, including existing VFP9-created tags. Missing functions are rejected before writes by default; plain
   library access remains readable and refuses unsupported maintenance. Native scalar keys retain their
