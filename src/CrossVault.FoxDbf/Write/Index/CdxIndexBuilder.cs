@@ -1502,7 +1502,7 @@ internal static class CdxIndexBuilder
     }
 
     /// <summary>Adapts a <see cref="DbfRecord"/> to the expression engine row contract.</summary>
-    internal sealed class RowContext : IRowContext, ISchema
+    internal sealed class RowContext : IRowContext, ISchema, IVfpValueRow
     {
         private readonly DbfRecord _record;
         public RowContext(DbfRecord record, int recNo, int recCount) { _record = record; RecNo = recNo; RecCount = recCount; }
@@ -1511,6 +1511,15 @@ internal static class CdxIndexBuilder
         public bool Deleted => _record.IsDeleted;
         public bool TryGetColumn(string name, out char type, out int length, out int decimals)
             => new TableSchema(_record.Table).TryGetColumn(name, out type, out length, out decimals);
+
+        public VfpValue GetValue(string name)
+        {
+            var value = VfpValue.FromClr(GetField(name));
+            foreach (var column in _record.Table.Columns)
+                if (string.Equals(column.Name, name, StringComparison.OrdinalIgnoreCase))
+                    return value.WithFieldScale(column.Type, column.Decimal);
+            return value;
+        }
 
         public object? GetField(string name)
         {

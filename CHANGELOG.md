@@ -8,6 +8,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- Currency arithmetic preserves VFP9 type Y, operand conversion and four-place rounding, including
+  unary minus, `ROUND`, `INT`, `ABS`, `MOD`, mixed `MAX`/`MIN`, `NTOM`/`MTON` and currency literals.
+  Negative currency displays as `$-...`; SQL cursor descriptors retain currency where VFP9 does.
+
 - Numeric expressions retain VFP9 display scale through literals, arithmetic, scalar functions and
   assignments. `TRANSFORM` preserves trailing zeroes and `STR()` keeps its default zero decimals.
   SQL computed cursor widths/scales honor operand metadata and `SET DECIMALS`.

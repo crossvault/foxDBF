@@ -1272,9 +1272,10 @@ public sealed partial class VfpInterpreter
                 // first (and re-fetch, since the reopen replaces the WorkArea). No-op when nothing pending.
                 if (_pendingAppendPaths is { Count: > 0 }) { FlushPendingAppends(wa.Area); wa = Session.FindAreaByAlias(head); }
                 if (wa is null) return VfpValue.Null;
-                if (ColumnIndex(wa.Table, rest) < 0 && rest.IndexOf('.') < 0)
+                int fieldIndex = ColumnIndex(wa.Table, rest);
+                if (fieldIndex < 0 && rest.IndexOf('.') < 0)
                     throw new MicroVfpRuntimeException($"Variable '{rest.ToUpperInvariant()}' is not found.", 12);
-                return ReadExpressionField(wa, rest);
+                return ReadExpressionField(wa, rest, fieldIndex);
             }
             if (TryResolveObjectMember(head, rest, out var member)) return VfpValue.FromClr(member);   // CATCH TO oErr → oErr.ErrorNo
             // An object reference (a defined variable) or THIS/THISFORM member: not modeled → undefined.
@@ -1285,15 +1286,16 @@ public sealed partial class VfpInterpreter
         }
 
         var cur = Session.AreaAt(Session.CurrentArea);
-        if (cur is not null && ColumnIndex(cur.Table, name) >= 0)
+        int currentField = cur is null ? -1 : ColumnIndex(cur.Table, name);
+        if (cur is not null && currentField >= 0)
         {
             // Batch 4: a bare field read of the current area — flush any deferred fast-append refresh first.
             if (_pendingAppendPaths is { Count: > 0 }) { FlushPendingAppends(cur.Area); cur = Session.AreaAt(Session.CurrentArea); }
-            return cur is not null ? ReadExpressionField(cur, name) : VfpValue.Null;
+            return cur is not null ? ReadExpressionField(cur, name, currentField) : VfpValue.Null;
         }
         // A bare ARRAY name in scalar context = element (1,1)/(1), per VFP.
         // Expression evaluation accepts VfpValue directly. A CLR round trip loses currency
-        // identity and aggregate display decimals even for a simple TRANSFORM(memvar).
+        // identity and numeric display decimals even for a simple TRANSFORM(memvar).
         if (Memory.FindArray(name) is { } arr) return arr.First;
         if (Memory.IsDefined(name)) return Memory.Get(name);
         if (_defines.TryGetValue(name, out var d)) return VfpValue.FromClr(d);
@@ -1302,10 +1304,11 @@ public sealed partial class VfpInterpreter
         return VfpValue.Null;
     }
 
-    private VfpValue ReadExpressionField(VfpSession.WorkArea area, string name)
+    private VfpValue ReadExpressionField(VfpSession.WorkArea area, string name, int index)
     {
-        var column = area.Table.Columns[ColumnIndex(area.Table, name)];
-        return VfpValue.FromClr(ReadField(area, name)).WithFieldScale(column.Type, column.Decimal);
+        if (index < 0) return VfpValue.Null;
+        var column = area.Table.Columns[index];
+        return VfpValue.FromField(ReadField(area, name), column.Type, column.Decimal);
     }
 
     // Field read WITH the buffer overlay: a buffered edit to the current record shadows the on-disk value,

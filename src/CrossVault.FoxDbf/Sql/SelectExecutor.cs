@@ -2750,7 +2750,7 @@ internal sealed class SelectExecutor
     /// <c>alias.field</c> (qualified) and bare <c>field</c> (the single source owning it — an
     /// AMBIGUOUS bare name is rejected). A LEFT-unmatched source's row is null → all its fields read
     /// as <see langword="null"/>.</summary>
-    private sealed class CompositeRowContext : IRowContext
+    private sealed class CompositeRowContext : IRowContext, IVfpValueRow
     {
         private readonly JoinSource[] _src;
         private readonly DbfRecord?[] _recs;
@@ -2784,6 +2784,26 @@ internal sealed class SelectExecutor
             if (count > 1)
                 throw new FoxDbfSqlException($"Column '{name}' is ambiguous; qualify it with an alias.");
             return _recs[found] is { } rec ? ReadField(rec, name, _vfpBlanks) : null;
+        }
+        public VfpValue GetValue(string name)
+        {
+            int dot = name.IndexOf('.');
+            if (dot >= 0)
+            {
+                string alias = name[..dot], field = name[(dot + 1)..];
+                for (int i = 0; i < _src.Length; i++)
+                    if (string.Equals(_src[i].Alias, alias, StringComparison.OrdinalIgnoreCase))
+                        return _recs[i] is { } r && _src[i].ColNames.Contains(field) ? r.GetScaledValue(field, _vfpBlanks) : VfpValue.Null;
+                return _outer is null ? VfpValue.Null : VfpRuntime.GetField(_outer, name); // correlated reference to an outer source
+            }
+
+            int found = -1, count = 0;
+            for (int i = 0; i < _src.Length; i++)
+                if (_src[i].ColNames.Contains(name)) { found = i; count++; }
+            if (count == 0) return _outer is null ? VfpValue.Null : VfpRuntime.GetField(_outer, name);
+            if (count > 1)
+                throw new FoxDbfSqlException($"Column '{name}' is ambiguous; qualify it with an alias.");
+            return _recs[found] is { } rec ? rec.GetScaledValue(name, _vfpBlanks) : VfpValue.Null;
         }
     }
 

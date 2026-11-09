@@ -59,13 +59,27 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     /// <summary>A byte-preserving VFP varbinary value (TYPE/VARTYPE Q).</summary>
     public bool IsBinary => _isBinary;
 
-    // Display precision belongs to the numeric value, not its magnitude. Aggregates retain
+    // Display precision belongs to the numeric value, not its magnitude. Expressions retain
     // it across assignment and later SET DECIMALS changes without rounding their payload.
     internal int DisplayDecimals => _displayDecimalsPlusOne - 1;
     internal VfpValue WithDisplayDecimals(int decimals) => new(_type, _num, _dec, _isExact,
-        _str, _bool, _date, _isBinary, (byte)(Math.Clamp(decimals, 0, 19) + 1));
+        _str, _bool, _date, _isBinary, (byte)(Math.Clamp(decimals, -1, 19) + 1));
+
+    internal static VfpValue FromField(object? value, char type, int decimals) => value switch
+    {
+        null => Null,
+        VfpValue typed => typed.WithFieldScale(type, decimals),
+        _ when type == 'Y' => Currency(FromClr(value).AsNumber),
+        decimal number => new(VfpType.Numeric, (double)number, number, true, null, false, default,
+            displayDecimalsPlusOne: (byte)(Math.Clamp(decimals, 0, 19) + 1)),
+        double number => Number(number, decimals),
+        long number => new(VfpType.Numeric, number, number, true, null, false, default,
+            displayDecimalsPlusOne: (byte)(Math.Clamp(decimals, 0, 19) + 1)),
+        _ => FromClr(value),
+    };
 
     internal VfpValue WithFieldScale(char type, int decimals) => IsNull ? this
+        : type == 'Y' ? Currency(AsNumber)
         : type is 'N' or 'F' or 'B' or 'I' ? WithDisplayDecimals(decimals) : this;
 
     public static VfpValue Varbinary(byte[] bytes) =>
@@ -84,8 +98,12 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     public static VfpValue Number(double d) =>
         new(VfpType.Numeric, d, 0m, false, null, false, default);
 
+    internal static VfpValue Number(double value, int decimals) =>
+        new(VfpType.Numeric, value, 0m, false, null, false, default,
+            displayDecimalsPlusOne: (byte)(Math.Clamp(decimals, -1, 19) + 1));
+
     public static VfpValue Currency(decimal d) =>
-        new(VfpType.Currency, (double)d, d, true, null, false, default);
+        new(VfpType.Currency, (double)d, d, true, null, false, default, displayDecimalsPlusOne: 5);
 
     public static VfpValue Integer(int i) =>
         new(VfpType.Integer, i, i, true, null, false, default);

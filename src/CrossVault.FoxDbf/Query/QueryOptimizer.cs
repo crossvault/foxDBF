@@ -330,7 +330,7 @@ public static class QueryOptimizer
     // ============================================================ residual row adapter
 
     /// <summary>Adapts one <see cref="DbfRecord"/> to the engine's row contract.</summary>
-    private sealed class RowAdapter : IRowContext
+    private sealed class RowAdapter : IRowContext, IVfpValueRow
     {
         private readonly DbfRecord _rec;
         private readonly bool _vfpBlanks;
@@ -343,6 +343,7 @@ public static class QueryOptimizer
         public bool Deleted => _rec.IsDeleted;
         // Character fields at full width, as VFP evaluates them (leading blanks count, == sees the trailing ones);
         // EvaluationContext.VfpBlankFields (a microVFP SQL query): a blank field reads as its typed empty.
+        public VfpValue GetValue(string name) => _rec.GetScaledValue(name, _vfpBlanks);
         public object? GetField(string name) => _vfpBlanks ? _rec.GetVfpValue(name) : _rec.GetExpressionValue(name);
     }
 

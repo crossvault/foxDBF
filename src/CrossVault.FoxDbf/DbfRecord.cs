@@ -192,8 +192,7 @@ public readonly struct DbfRecord
         int index = IndexOfColumn(name);
         if (index < 0) return VfpValue.Null;
         var column = _table.Columns[index];
-        return VfpValue.FromClr(blanks ? GetVfpValue(index) : GetExpressionValue(index))
-            .WithFieldScale(column.Type, column.Decimal);
+        return VfpValue.FromField(blanks ? GetVfpValue(index) : GetExpressionValue(index), column.Type, column.Decimal);
     }
 
     internal object? GetVfpValue(int index)

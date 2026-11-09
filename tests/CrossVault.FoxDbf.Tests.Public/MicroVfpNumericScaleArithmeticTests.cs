@@ -251,6 +251,14 @@ public sealed class MicroVfpNumericScaleArithmeticTests
         ("d4:NTOM(n)", "Y|8|4|$1.2500"),
         ("d4:VAL('1.25')", "N|9|4|1.2500"),
         ("d4:SQRT(n)", "N|10|4|1.1180"),
+        ("d2:MOD(n,q)", "N|9|2|1.25"),
+        ("d2:MOD(c,n)", "Y|8|4|$1.10"),
+        ("d2:n%c", "N|9|2|1.25"),
+        ("d2:MOD(n,c)", "N|9|2|1.25"),
+        ("d2:-$1.5", "Y|8|4|$-1.50"),
+        ("d2:SQRT(c)", "N|20|4|1.5315"),
+        ("d2:-c", "Y|8|4|$-2.35"),
+        ("d2:c^1.5", "N|15|4|3.5924"),
     ];
     internal static string SqlScenario(string name) => $"SET DECIMALS TO {name[1]}\nSELECT {name[3..]} AS x FROM t INTO CURSOR zz\nDIMENSION aa[1]\n=AFIELDS(aa)\nresult=aa[1,2]+'|'+TRANSFORM(aa[1,3])+'|'+TRANSFORM(aa[1,4])+'|'+TRANSFORM(zz.x)";
     [Theory]

@@ -56,7 +56,8 @@ internal static partial class VfpRuntime
         {
             case UnOp.Neg:
                 if (v.IsNull) return VfpValue.Null;
-                return VfpValue.Number(-v.AsDouble).WithDisplayDecimals(v.DisplayDecimals);
+                return v.Type == VfpType.Currency ? VfpValue.Currency(-v.AsNumber)
+                    : VfpValue.Number(-v.AsDouble).WithDisplayDecimals(v.DisplayDecimals);
             case UnOp.Not:
                 if (v.IsNull) return VfpValue.Null;
                 return VfpValue.Logical(!v.AsLogical);
@@ -80,14 +81,14 @@ internal static partial class VfpRuntime
 
         switch (op)
         {
-            case BinOp.Add: return NumericScale(Add(l, r, ctx), l, r, op, ctx, constant);
-            case BinOp.Sub: return NumericScale(Sub(l, r), l, r, op, ctx, constant);
-            case BinOp.Mul: return NumericScale(VfpValue.Number(l.AsDouble * r.AsDouble), l, r, op, ctx, constant);
+            case BinOp.Add: return Add(l, r, ctx, constant);
+            case BinOp.Sub: return Sub(l, r, ctx, constant);
+            case BinOp.Mul: return NumericResult(l.AsDouble * r.AsDouble, l, r, op, ctx, constant);
             case BinOp.Div:
                 return r.AsDouble == 0d ? VfpValue.Null
-                                        : NumericScale(VfpValue.Number(l.AsDouble / r.AsDouble), l, r, op, ctx, constant);
-            case BinOp.Mod: return VfpValue.Number(Modulo(l.AsDouble, r.AsDouble)).WithDisplayDecimals(l.DisplayDecimals);
-            case BinOp.Pow: return NumericScale(VfpValue.Number(Math.Pow(l.AsDouble, r.AsDouble)), l, r, op, ctx, constant);
+                                        : NumericResult(l.AsDouble / r.AsDouble, l, r, op, ctx, constant);
+            case BinOp.Mod: return Remainder(l, r);
+            case BinOp.Pow: return NumericResult(Math.Pow(l.AsDouble, r.AsDouble), l, r, op, ctx, constant);
 
             case BinOp.Eq: return VfpValue.Logical(ValueEquals(l, r, ctx, exact: false));
             case BinOp.ExactEq: return VfpValue.Logical(ValueEquals(l, r, ctx, exact: true));
@@ -103,17 +104,44 @@ internal static partial class VfpRuntime
         }
     }
 
+    // VFP9 first converts both operands to fixed-point currency (half away from zero).
+    // Its fixed-point multiply/divide then round an exact midpoint to the even digit.
+    private static VfpValue CurrencyArithmetic(BinOp op, in VfpValue l, in VfpValue r)
+    {
+        decimal left = Math.Round(l.AsNumber, 4, MidpointRounding.AwayFromZero);
+        decimal right = Math.Round(r.AsNumber, 4, MidpointRounding.AwayFromZero);
+        if (op == BinOp.Div && right == 0) return VfpValue.Null;
+        decimal value = op switch
+        {
+            BinOp.Add => left + right,
+            BinOp.Sub => left - right,
+            BinOp.Mul => left * right,
+            _ => left / right,
+        };
+        return VfpValue.Currency(Math.Round(value, 4, MidpointRounding.ToEven));
+    }
+
+    private static VfpValue Remainder(in VfpValue left, in VfpValue right)
+    {
+        if (left.Type != VfpType.Currency)
+            return VfpValue.Number(Modulo(left.AsDouble, right.AsDouble)).WithDisplayDecimals(left.DisplayDecimals);
+        decimal divisor = right.AsNumber;
+        decimal remainder = divisor == 0 ? 0 : left.AsNumber - divisor * decimal.Floor(left.AsNumber / divisor);
+        return VfpValue.Currency(Math.Round(remainder, 4, MidpointRounding.AwayFromZero));
+    }
+
     // VFP9 uses operand scales for ordinary +/-/*, SET DECIMALS as a minimum for
     // constant arithmetic and powers, and DECIMALS+2 for a nonconstant quotient.
-    private static VfpValue NumericScale(VfpValue value, in VfpValue l, in VfpValue r,
+    private static VfpValue NumericResult(double value, in VfpValue l, in VfpValue r,
         BinOp op, EvaluationContext ctx, bool constant)
     {
-        if (value.Type != VfpType.Numeric) return value;
+        if (op != BinOp.Pow && (l.Type == VfpType.Currency || r.Type == VfpType.Currency))
+            return CurrencyArithmetic(op, l, r);
         int left = Math.Max(0, l.DisplayDecimals), right = Math.Max(0, r.DisplayDecimals);
         int scale = op == BinOp.Mul ? left + right : Math.Max(left, right);
         if (op == BinOp.Div) scale = Math.Max(scale, ctx.NumericDecimals + (constant ? 0 : 2));
         else if (constant || op == BinOp.Pow) scale = Math.Max(scale, ctx.NumericDecimals);
-        return value.WithDisplayDecimals(scale);
+        return VfpValue.Number(value, scale);
     }
 
     /// <summary>True when the LEFT operand alone decides an AND (a logical .F.) or an OR (a logical .T.), so the
@@ -139,7 +167,7 @@ internal static partial class VfpRuntime
         return VfpValue.Logical(false);
     }
 
-    private static VfpValue Add(VfpValue l, VfpValue r, EvaluationContext context)
+    private static VfpValue Add(VfpValue l, VfpValue r, EvaluationContext context, bool constant)
     {
         if (l.Type == VfpType.Character || r.Type == VfpType.Character)
         {
@@ -175,10 +203,10 @@ internal static partial class VfpRuntime
             try { return VfpValue.DateTime(r.AsDateTime.AddSeconds(l.AsDouble), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.DateTime(default); }
         }
-        return VfpValue.Number(l.AsDouble + r.AsDouble);
+        return NumericResult(l.AsDouble + r.AsDouble, l, r, BinOp.Add, context, constant);
     }
 
-    private static VfpValue Sub(VfpValue l, VfpValue r)
+    private static VfpValue Sub(VfpValue l, VfpValue r, EvaluationContext context, bool constant)
     {
         if (l.Type == VfpType.Character || r.Type == VfpType.Character)
             return VfpValue.Character(MinusConcat(l.AsString, r.AsString));
@@ -198,7 +226,7 @@ internal static partial class VfpRuntime
             try { return VfpValue.DateTime(l.AsDateTime.AddSeconds(-r.AsDouble), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.DateTime(default); }
         }
-        return VfpValue.Number(l.AsDouble - r.AsDouble);
+        return NumericResult(l.AsDouble - r.AsDouble, l, r, BinOp.Sub, context, constant);
     }
 
     /// <summary>VFP string "-": move the left operand's trailing blanks to the end.</summary>
@@ -504,10 +532,13 @@ internal static partial class VfpRuntime
             case "GOMONTH": return Gomonth(args);
 
             // ---- numeric ----
-            case "INT": return VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble));
-            case "ROUND": return VfpValue.Number(Round(Arg(args, 0).AsDouble, IntArg(args, 1))).WithDisplayDecimals(IntArg(args, 1));
-            case "ABS": return VfpValue.Number(Math.Abs(Arg(args, 0).AsDouble)).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
-            case "MOD": return VfpValue.Number(Modulo(Arg(args, 0).AsDouble, Arg(args, 1).AsDouble)).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
+            case "INT": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(decimal.Truncate(Arg(args, 0).AsNumber))
+                : VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble));
+            case "ROUND": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency((decimal)Round(Arg(args, 0).AsDouble, IntArg(args, 1)))
+                : VfpValue.Number(Round(Arg(args, 0).AsDouble, IntArg(args, 1))).WithDisplayDecimals(IntArg(args, 1));
+            case "ABS": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(Math.Abs(Arg(args, 0).AsNumber))
+                : VfpValue.Number(Math.Abs(Arg(args, 0).AsDouble)).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
+            case "MOD": return Remainder(Arg(args, 0), Arg(args, 1));
             case "MAX": return MaxMin(args, ctx, max: true);
             case "MIN": return MaxMin(args, ctx, max: false);
 
@@ -930,6 +961,10 @@ internal static partial class VfpRuntime
             int cmp = Compare(a[i], best, ctx);
             if (max ? cmp > 0 : cmp < 0) best = a[i];
         }
+        if (best.Type == VfpType.Currency)
+            foreach (var value in a)
+                if (value.Type != VfpType.Currency)
+                    return VfpValue.Number(best.AsNumber).WithDisplayDecimals(4);
         return best;
     }
 

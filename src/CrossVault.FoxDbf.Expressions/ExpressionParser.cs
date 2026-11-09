@@ -128,7 +128,7 @@ internal sealed class ExpressionParser
             // position '$' stays the substring operator (handled by the binary loop, never reaches here).
             case TokenType.Dollar when _pos + 1 < _tokens.Count && _tokens[_pos + 1].Type == TokenType.Number:
                 Next();
-                return new LiteralNode(VfpValue.Currency(Next().Value.AsNumber));
+                return new LiteralNode(VfpValue.Currency(Math.Round(Next().Value.AsNumber, 4, MidpointRounding.AwayFromZero)));
             case TokenType.True: Next(); return new LiteralNode(VfpValue.Logical(true));
             case TokenType.False: Next(); return new LiteralNode(VfpValue.Logical(false));
             case TokenType.NullLit: Next(); return new LiteralNode(VfpValue.Null);

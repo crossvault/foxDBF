@@ -636,7 +636,7 @@ internal sealed partial class DmlExecutor
     /// <summary>Adapts a <see cref="DbfRecord"/> to <see cref="IRowContext"/> so a SET expression
     /// reads THIS row's own current values (e.g. <c>amount = amount + 1</c>); character fields at full width, so
     /// <c>name = name + 'x'</c> overflows the field exactly as in VFP.</summary>
-    private sealed class RecordRow : IRowContext
+    private sealed class RecordRow : IRowContext, IVfpValueRow
     {
         private readonly DbfRecord _rec;
         public RecordRow(DbfRecord rec, int recNo, int recCount)
@@ -651,6 +651,12 @@ internal sealed partial class DmlExecutor
             int dot = name.LastIndexOf('.');
             string field = dot >= 0 ? name[(dot + 1)..] : name;
             return _rec.GetExpressionValue(field);
+        }
+        public VfpValue GetValue(string name)
+        {
+            int dot = name.LastIndexOf('.');
+            string field = dot >= 0 ? name[(dot + 1)..] : name;
+            return _rec.GetScaledValue(field, false);
         }
     }
 

@@ -64,8 +64,9 @@ internal sealed partial class BinaryNode
         if (basic.Type != VfpType.Numeric) return basic;
         if (l.Type is VfpType.Date or VfpType.DateTime && r.Type is VfpType.Date or VfpType.DateTime)
             return new(VfpType.Numeric, 10);
-        if (l.Type == VfpType.Currency || r.Type == VfpType.Currency)
+        if (_op != BinOp.Pow && (l.Type == VfpType.Currency || (_op != BinOp.Mod && r.Type == VfpType.Currency)))
             return new(VfpType.Currency, 8, 4);
+        bool currencyPower = _op == BinOp.Pow && l.Type == VfpType.Currency;
         l = NumericStorage(l);
         r = NumericStorage(r);
         int decimals = Math.Max(l.Decimals, r.Decimals);
@@ -96,7 +97,7 @@ internal sealed partial class BinaryNode
                 break;
             case BinOp.Pow:
                 decimals = Math.Max(setting, decimals);
-                length = l.Length + 5 + decimals - l.Decimals;
+                length = (currencyPower ? 10 : l.Length) + 5 + decimals - l.Decimals;
                 break;
             case BinOp.Mod:
                 decimals = l.Decimals;
@@ -140,7 +141,7 @@ internal sealed partial class FunctionNode
                     && _args[0].Eval(valSample.Row, valSample.Context).IsNull)
                     return new(VfpType.Numeric, 1);
                 int valScale = schema is SqlInferenceSchema valContext ? valContext.Context.NumericDecimals : 2;
-                return new(VfpType.Numeric, Math.Min(20, arg.Length + valScale + 1), valScale);
+                return new(VfpType.Numeric, Math.Min(20, Math.Min(20, arg.Length) + valScale + 1), valScale);
             case "SQRT":
                 int sqrtScale = Math.Max(number.Decimals, schema is SqlInferenceSchema sqrtContext ? sqrtContext.Context.NumericDecimals : 2);
                 return new(VfpType.Numeric, Math.Min(20, number.Length + sqrtScale - number.Decimals), sqrtScale);
@@ -148,14 +149,16 @@ internal sealed partial class FunctionNode
                 // Within a larger expression SUM/AVG have their argument's width. Only a root
                 // aggregate expands N/F storage to 16 columns (handled by the SQL executor).
                 return arg;
-            case "INT": return new(number.Type, number.Length);
+            case "MTON": return arg.Type == VfpType.Currency ? new(VfpType.Numeric, 20, 4) : arg;
+            case "NTOM": return new(VfpType.Currency, 8, 4);
+            case "INT": return arg.Type == VfpType.Currency ? arg : new(number.Type, number.Length);
             case "ROUND":
+                if (arg.Type == VfpType.Currency) return arg;
                 int decimals = _args.Length > 1 && _args[1].TryConstInt(out int d) ? Math.Max(0, d) : number.Decimals;
                 return new(VfpType.Numeric, Math.Min(20, number.Length + 1 + Math.Max(0, decimals - number.Decimals)), decimals);
             case "MOD":
-                var other = _args.Length > 1 ? BinaryNode.NumericStorage(_args[1].InferSql(schema)) : number;
-                int scale = Math.Max(number.Decimals, other.Decimals);
-                return new(VfpType.Numeric, Math.Min(20, Math.Max(number.Length - number.Decimals, other.Length - other.Decimals) + scale + 1), scale);
+                return arg.Type == VfpType.Currency ? arg
+                    : new(VfpType.Numeric, Math.Min(20, number.Length + 1), number.Decimals);
             case "IIF":
                 if (_args.Length == 3)
                 {
