@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- Faster indexed microVFP writes by reusing parsed INSERT values and avoiding redundant CDX path and file-length queries, preserving VFP9 index bytes, handle release, and rollback behavior.
 - **BREAKING:** microVFP `SET COLLATE` now raises VFP error 1915 when the sequence is unavailable in
   `CPCURRENT()`. `INDEX ON` separately rejects unsupported table-code-page combinations with 1915.
   Maintenance of existing language tags remains independent of SET COLLATE availability.

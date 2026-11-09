@@ -24,8 +24,13 @@ public sealed partial class VfpInterpreter
         var previous = Session.DbcDefaultEvaluator;
         var previousValues = Session.InsertValueEvaluator;
         Session.DbcDefaultEvaluator = _dbcDefaultEvaluator ??= EvalDbcDefault;
-        Session.InsertValueEvaluator = _insertValueEvaluator ??=
-            expression => ParseExpressionCached(MicroVfpExprRewrite.Normalize(expression.Text)).Evaluate(_row, _ctx);
+        Session.InsertValueEvaluator = _insertValueEvaluator ??= expression =>
+        {
+            string normalized = MicroVfpExprRewrite.Normalize(expression.Text);
+            // The SQL parser already produced this immutable AST. Only array/reference
+            // rewrites require a different tree; evaluation still uses the live PRG context.
+            return (normalized == expression.Text ? expression : ParseExpressionCached(normalized)).Evaluate(_row, _ctx);
+        };
         try
         {
             ExecInsertCore(ins);

@@ -47,6 +47,9 @@ internal static class MicroVfpExprRewrite
     public static string Normalize(string s)
     {
         if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
+        // Every rewrite needs a subscript bracket or a function call. Literals and
+        // simple field/arithmetic expressions cannot contain a reference argument.
+        if (s.IndexOfAny(['[', '(']) < 0) return s;
         s = ConvertSubscripts(s);
         s = QuoteArrayFnArg(s, "ALEN");
         s = QuoteArrayFnArg(s, "AERROR");

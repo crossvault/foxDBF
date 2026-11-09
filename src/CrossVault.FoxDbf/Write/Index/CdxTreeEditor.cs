@@ -33,6 +33,7 @@ internal sealed class CdxTreeEditor : IDisposable
     private Dictionary<long, (byte[] Bytes, int Length)>? _undoPages;
     private bool _editing;
     private long _undoLength = -1;
+    private long _editLength = -1;
     private readonly System.Text.Encoding? _textEncoding;   // the table code page tag names/expressions are stored in
 
     public CdxTreeEditor(FileStream rw, System.Text.Encoding? textEncoding = null)
@@ -161,6 +162,7 @@ internal sealed class CdxTreeEditor : IDisposable
         }
         _editing = false;
         _undoLength = -1;
+        _editLength = -1;
     }
 
     internal void RollbackEdit()
@@ -701,10 +703,10 @@ internal sealed class CdxTreeEditor : IDisposable
 
     private CdxHeader ReadCdxHeader(long byteOffset = 0)
     {
-        if (_appendPageCache is null)
+        if (_appendPageCache is null && !_editing)
             return _reader.ReadCdxHeader(byteOffset);
 
-        if (byteOffset < 0 || byteOffset + PageSize > _rw.Length)
+        if (byteOffset < 0 || byteOffset + PageSize > FileLength)
             return default;
 
         var header = TryReadPage(byteOffset);
@@ -718,7 +720,7 @@ internal sealed class CdxTreeEditor : IDisposable
         var buf = new byte[wanted];
         Buffer.BlockCopy(header, 0, buf, 0, PageSize);
 
-        int available = (int)Math.Min(wanted, _rw.Length - byteOffset);
+        int available = (int)Math.Min(wanted, FileLength - byteOffset);
         int tail = available - PageSize;
         if (tail > 0 && !ReadExact(byteOffset + PageSize, buf.AsSpan(PageSize, tail)))
             return default;
@@ -728,7 +730,7 @@ internal sealed class CdxTreeEditor : IDisposable
 
     private IndexNodeHeader? ReadNodeHeader(long byteOffset)
     {
-        if (_appendPageCache is null)
+        if (_appendPageCache is null && !_editing)
             return _reader.ReadNodeHeader(byteOffset);
 
         var page = TryReadPage(byteOffset);
@@ -737,7 +739,7 @@ internal sealed class CdxTreeEditor : IDisposable
 
     private IReadOnlyList<BranchEntry> ReadBranchEntries(long byteOffset, int keyLength)
     {
-        if (_appendPageCache is null)
+        if (_appendPageCache is null && !_editing)
             return _reader.ReadBranchEntries(byteOffset, keyLength);
 
         var page = TryReadPage(byteOffset);
@@ -771,7 +773,7 @@ internal sealed class CdxTreeEditor : IDisposable
 
     private IReadOnlyList<LeafEntry> ReadLeafEntries(long byteOffset, int keyLength, byte pad)
     {
-        if (_appendPageCache is null)
+        if (_appendPageCache is null && !_editing)
             return _reader.ReadLeafEntries(byteOffset, keyLength, pad);
 
         var page = TryReadPage(byteOffset);
@@ -787,7 +789,7 @@ internal sealed class CdxTreeEditor : IDisposable
 
     private IEnumerable<(uint Recno, byte[] Key)> EnumerateCompact(uint root, int keyLength, byte pad)
     {
-        if (_appendPageCache is null)
+        if (_appendPageCache is null && !_editing)
             return IndexTraversal.EnumerateCompact(_reader, root, keyLength, pad);
         return EnumerateCompactCached(root, keyLength, pad);
     }
@@ -839,19 +841,26 @@ internal sealed class CdxTreeEditor : IDisposable
     private byte[] ReadPage(long off)
         => TryReadPage(off) ?? throw new InvalidDataException($"CDX page at {off} is unreadable.");
 
+    // BeginEdit/CommitEdit bracket one mutation under the writer's lock. Its first I/O
+    // observes disk length; subsequent reads see our own page writes. Never retain this
+    // length between mutations: another shared writer may have grown or truncated the tree.
+    private long FileLength => !_editing ? _rw.Length
+        : _editLength < 0 ? _editLength = _rw.Length : _editLength;
+
     private byte[]? TryReadPage(long off)
     {
-        if (_appendPageCache is null)
+        if (_appendPageCache is null && !_editing)
             return _reader.ReadPage(off);
 
-        if (off < 0 || off + PageSize > _rw.Length)
+        if (off < 0 || off + PageSize > FileLength)
             return null;
 
-        if (_appendPageCache.TryGetValue(off, out var cached))
+        if (_appendPageCache?.TryGetValue(off, out var cached) == true)
             return (byte[])cached.Clone();
 
-        var page = _reader.ReadPage(off);
-        if (page is not null)
+        var page = new byte[PageSize];
+        if (!ReadExact(off, page)) return null;
+        if (_appendPageCache is not null)
             _appendPageCache[off] = (byte[])page.Clone();
         return page;
     }
@@ -860,7 +869,7 @@ internal sealed class CdxTreeEditor : IDisposable
     {
         if (_editing)
         {
-            if (_undoLength < 0) _undoLength = _rw.Length;
+            if (_undoLength < 0) _undoLength = FileLength;
             if (off < _undoLength && !(_undoPages?.ContainsKey(off) ?? false))
             {
                 int length = (int)Math.Min(PageSize, _undoLength - off);
@@ -882,6 +891,7 @@ internal sealed class CdxTreeEditor : IDisposable
         }
         _rw.Seek(off, SeekOrigin.Begin);
         _rw.Write(page, 0, PageSize);
+        if (_editing) _editLength = Math.Max(_editLength, off + PageSize);
         AfterPageWriteForTests?.Invoke();
         if (_appendPageCache is not null)
             _appendPageCache[off] = page.AsSpan(0, PageSize).ToArray();
