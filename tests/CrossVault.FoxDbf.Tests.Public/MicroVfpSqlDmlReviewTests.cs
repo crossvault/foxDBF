@@ -111,11 +111,10 @@ public sealed class MicroVfpSqlDmlReviewTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void XbaseUpdate_RemainsLoudlyUnsupported()
+    public void XbaseUpdate_UpdatesTheCurrentAreaFromAnOpenAlias()
     {
-        var error = Assert.Throws<MicroVfpRuntimeException>(() => Run("USE t\nUPDATE ON id FROM other REPLACE n WITH 1"));
-        Assert.Equal(16, error.VfpErrorNumber);
-        Assert.Contains("UPDATE ON", error.Statement);
+        Assert.Equal("1", Run("USE t IN 1\nUSE other IN 2\nSELECT t\nUPDATE ON id FROM other REPLACE n WITH 1\nGO 2\nresult=TRANSFORM(n)",
+            MicroVfpSqlDmlTests.Setup.Replace("id I", "id N(6)").Replace("(99)", "(2)")));
     }
 
     [Fact]

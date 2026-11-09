@@ -162,7 +162,29 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── transactions (snapshot / restore) ───────────────────────────
 
-    private void BeginTransaction() => _txn.Add(new TxnFrame());
+    private void BeginTransaction(bool userCommand = false)
+    {
+        // Error 1548 belongs to the user command, not TABLEUPDATE's atomic write frame.
+        // Membership follows the DBF backlink, independently of the current/open DBC.
+        if (userCommand)
+        {
+            foreach (var area in Session.OpenAreas)
+            {
+                if (area.Table.SourcePath is not { } path
+                    || !_meta.TryGetValue(area.Area, out var meta)
+                    || meta.ExtraIndexes is not { Count: > 0 } indexes) continue;
+                string structural = SidecarFile.ChangeExtension(path, ".cdx");
+                if (!indexes.Any(index => !SamePath(index, structural))) continue;
+                var table = area.Table;
+                if (!table.Version.HasBacklink || table.HeaderLength < 263) continue;
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                stream.Position = table.HeaderLength - 263;
+                if (stream.ReadByte() > 0)
+                    throw new MicroVfpRuntimeException("Cannot start a transaction with non-structural indexes open.", 1548);
+            }
+        }
+        _txn.Add(new TxnFrame());
+    }
 
     private void EndTransaction()
     {
@@ -205,7 +227,19 @@ public sealed partial class VfpInterpreter
     /// (+ sibling <c>.cdx</c>/<c>.fpt</c>) once, into the innermost frame — so a ROLLBACK restores it.</summary>
     private void SnapshotForTxn(string? path)
     {
-        if (_txn.Count == 0 || path is null || Snapshotted(path)) return;
+        if (_txn.Count == 0 || path is null) return;
+        foreach (var frame in _txn)
+        {
+            if (!frame.Snaps.TryGetValue(path, out var snap)) continue;
+            // An index may be opened after the table's first transactional write.
+            foreach (string index in OpenAdditionalIndexPaths(path))
+            {
+                snap.AdditionalIndexTemps ??= new(StringComparer.OrdinalIgnoreCase);
+                if (!snap.AdditionalIndexTemps.ContainsKey(index))
+                    snap.AdditionalIndexTemps[index] = CopyToTempSnapshot(index);
+            }
+            return;
+        }
         _txn[^1].Snaps[path] = CaptureSnapshot(path);
     }
 

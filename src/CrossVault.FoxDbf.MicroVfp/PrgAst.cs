@@ -296,6 +296,8 @@ internal sealed record OnErrorStmt(
 
 internal sealed record ReplaceClause(NameRef Field, PrgExpr Value, bool Additive);
 
+internal sealed record XbaseUpdateStmt(PrgExpr Key, NameRef Source, ReplaceStmt Replacement, bool Random) : PrgStatement;
+
 internal sealed record ReplaceStmt(
     IReadOnlyList<ReplaceClause> Clauses,
     string? Scope,

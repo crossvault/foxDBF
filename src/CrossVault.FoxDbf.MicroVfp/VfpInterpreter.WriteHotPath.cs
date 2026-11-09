@@ -112,16 +112,10 @@ public sealed partial class VfpInterpreter
 
     private void RequireCompactIndexWriteContext(string path)
     {
-        // PRG snapshots include additional CDX/legacy IDX files. Compact IDX retains its existing
-        // transaction restriction; ADO.NET COW and candidate/RI rollback still own only DBF/FPT/CDX.
+        // PRG snapshots include every open additional index, including compact IDX.
+        // ADO.NET COW and candidate/RI rollback retain their separate write restrictions.
         var paths = OpenAdditionalIndexPaths(path);
-        bool compactTransaction = _txn.Count > 0 && paths.Any(p =>
-        {
-            if (!IsIdxPath(p)) return false;
-            using var idx = CrossVault.FoxDbf.Index.IdxFile.Open(p);
-            return idx.Header.IsCompact;
-        });
-        if (paths.Count > 0 && (compactTransaction || Session.TxBeginWritePath is not null
+        if (paths.Count > 0 && (Session.TxBeginWritePath is not null
             || CandidateTagsFor(path) is not null || EnforceReferentialIntegrity))
             throw new MicroVfpRuntimeException("Writing with open standalone indexes is not supported in transactions or with candidate/RI rollback enforcement.");
     }

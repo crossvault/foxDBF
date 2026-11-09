@@ -30,6 +30,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- microVFP supports xBase `UPDATE ON field FROM alias REPLACE ... [RANDOM]`, including
+  sequential source matches, VFP9 record pointers and `_TALLY`, errors, buffering,
+  validation/triggers and index maintenance through the existing REPLACE writer. Assignments
+  validate destination types and normalize numeric precision and Varbinary width/type before the
+  next expression; qualified fields, trailing RANDOM, key-width/type errors, FOUND() and reported
+  buffering follow VFP9. Replacing another field preserves untouched Varchar/Varbinary lengths,
+  including empty keys.
 - microVFP runs UPDATE-SQL and DELETE-SQL (`UPDATE … SET … WHERE`, `DELETE [target] FROM … WHERE`) in
   programs with VFP9's row expressions (memvars, UDFs), left-to-right SET, `_TALLY`, final pointers and work
   areas, error numbers, field/record rules and triggers, buffering, index maintenance and transactions.
@@ -109,6 +116,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   an append that violates a rule. Buffered INSERT FROM ARRAY/MEMVAR retains its supplied values.
 - microVFP SKIP from an indexed table-buffered append resumes at its key position;
   reading fields at buffered EOF returns typed blanks.
+- BREAKING: microVFP `BEGIN TRANSACTION` now raises VFP error 1548 before opening a transaction
+  when any open database member has a non-structural IDX or CDX, even without its database current.
+  TABLEUPDATE's internal transaction remains allowed. Free tables and indexes opened after BEGIN
+  remain accepted; PRG writes with compact IDX now take index snapshots for byte-exact rollback.
+  ADO.NET copy-on-write and candidate/RI standalone-index write restrictions remain in place.
 - BREAKING: With `EnforceReferentialIntegrity = true`, buffered field rules run when `REPLACE`
   changes the field and can reject it immediately; record rules run once at commit (`TABLEUPDATE`
   or the row-buffer commit on a pointer move), as in VFP9. Rule UDFs run once per validation.
@@ -147,8 +159,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   library access remains readable and refuses unsupported maintenance. Native scalar keys retain their
   compiled path. Open nonstructural CDX and legacy IDX files are maintained incrementally alongside compact
   IDX files, without rebuilding the whole index per row. UNIQUE maintenance no longer resurrects previously
-  suppressed duplicates after REPLACE. `DELETE` / `RECALL` re-key only tags whose own KEY/FOR expression
-  depends on the deletion state; like VFP9, a dependence hidden in a UDF (`FOR livefn()`) is not re-keyed.
+  suppressed duplicates after REPLACE. A UDF in a KEY/FOR (`FOR livefn()`) is not re-keyed by
+  DELETE / RECALL, as in VFP9.
 - microVFP `SYS(2335,0)` enables VFP9's unattended index-error behavior: after an array used by an
   open index is released, row and memo writes proceed without a catchable error and the unavailable
   index retains its old entries. `SYS(2335,1)` restores normal missing-function rejection.
@@ -187,7 +199,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   An open table alias does not turn an object assignment into a field update, matching VFP9.
 - Incremental CDX and compact IDX maintenance now preserves VFP9's page-history attributes when
   record-number packing widens, narrows or splits, and writes empty child lists on unlinked branch pages.
-- Deleting or recalling a record now maintains structural CDX keys and filters that depend on `DELETED()`.
+- Deleting or recalling a record now maintains structural and extra CDX tags and open IDX files whose
+  KEY or FOR calls `DELETED()` directly. Every other key stays as stored, as in VFP9: open IDX files
+  are no longer re-keyed on DELETE/RECALL, and `EVALUATE`, random/date/time functions, `SYS` and UDFs
+  do not count as a dependence on the deletion state.
 - BREAKING: CDX and compact IDX bulk builds reproduce DUTCH blank-head compression with secondary
   weights and preserve VFP9's UNIQWT/10000 entry order. Weighted incremental insertion and exact SEEK
   follow VFP9's directional blank comparison and branch search. Exact SEEK also retains compressed-prefix

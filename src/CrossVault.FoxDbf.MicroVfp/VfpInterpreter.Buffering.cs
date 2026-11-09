@@ -30,7 +30,7 @@ public sealed partial class VfpInterpreter
     /// <summary>Buffer a REPLACE for the current record instead of writing through. For an EXISTING row the
     /// pre-change on-disk value is captured once (OLDVAL's buffer-start baseline); for a buffered APPENDED
     /// row the edit lands directly on the append entry (which starts as its own buffer state).</summary>
-    private void BufferReplace(ReplaceStmt rp, int area, VfpSession.WorkArea wa, AreaMeta m)
+    private void BufferReplace(ReplaceStmt rp, int area, VfpSession.WorkArea wa, AreaMeta m, bool normalize = false)
     {
         int rcTable = wa.Table.RecordCount;
         int recno = m.RecNo;
@@ -48,7 +48,12 @@ public sealed partial class VfpInterpreter
         else
         {
             if (recno < 1 || recno > rcTable) { if (buf.IsEmpty) m.Buf = null; return; }
-            if (!buf.Rows.TryGetValue(recno, out edit)) { edit = new RowEdit(); buf.Rows[recno] = edit; }
+            if (!buf.Rows.TryGetValue(recno, out edit))
+            {
+                edit = new RowEdit();
+                // A rejected UPDATE assignment must not mark an otherwise untouched row modified.
+                if (!normalize) buf.Rows[recno] = edit;
+            }
             target = edit.Fields;
         }
 
@@ -61,15 +66,42 @@ public sealed partial class VfpInterpreter
                 edit.Old[field] = ReadFieldOnDisk(wa, field);   // capture the buffer-start (on-disk) value once.
             var v = Eval(clause.Value);
             var col = wa.Table.Columns[idx];
-            target[idx] = v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
+            target[idx] = normalize ? NormalizeUpdateValue(col, v, col.Type == 'Q' ? wa.Table.BinaryTextEncoding : wa.Table.Encoding)
+                : v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr());
             if (edit is not null)
             {
+                if (normalize) buf.Rows[recno] = edit;
                 edit.ValidatedFields.Remove(idx);
                 edit.RecordRuleValidated = false;
                 // VFP checks a changed field immediately; record rules wait for the row to leave.
                 ValidateBufferedRow(wa, recno, edit, changedField: idx, validateRecord: false);
             }
         }
+    }
+
+    private object? NormalizeUpdateValue(DbfColumn column, VfpValue value, Encoding encoding)
+    {
+        bool compatible = value.IsNull || column.Type switch
+        {
+            'C' or 'V' or 'M' => value.Type == VfpType.Character || value.IsBinary,
+            'Q' or 'W' => value.Type == VfpType.Character || value.IsBinary,
+            'G' => false,
+            'I' or 'N' or 'F' or 'B' or 'Y' => value.Type is VfpType.Numeric or VfpType.Integer or VfpType.Currency,
+            'L' => value.Type == VfpType.Logical,
+            'D' => value.Type == VfpType.Date,
+            'T' => value.Type == VfpType.DateTime,
+            _ => true
+        };
+        if (!compatible) throw new MicroVfpRuntimeException("Data type mismatch.", 9);
+        if (value.IsNull) return null;
+        if (column.Type is 'C' or 'V' or 'M') return FitToField(column, value.AsString);
+        if (column.Type is not ('N' or 'F' or 'I' or 'B' or 'Y' or 'D' or 'T' or 'Q')) return value.ToClr();
+        // UPDATE's next assignment observes the destination representation, including rounding.
+        byte[] bytes = new byte[column.Length];
+        bool variableLength = FieldEncoder.Encode(column, value.ToClr(), encoding, bytes);
+        // A Q assignment is already a width-limited binary value when the next clause reads it.
+        if (column.Type == 'Q') return bytes.AsSpan(0, variableLength ? bytes[^1] : bytes.Length).ToArray();
+        return FieldDecoder.Decode(column, bytes, encoding);
     }
 
     /// <summary>Buffer a DELETE/RECALL mark for the current record (existing row or buffered append).</summary>
@@ -667,7 +699,7 @@ public sealed partial class VfpInterpreter
         var wa = Session.AreaAt(area);
         return a[0].AsString.ToUpperInvariant() switch
         {
-            "BUFFERING" => VfpValue.Integer(m.Buffering),
+            "BUFFERING" => VfpValue.Integer(area == _xbaseUpdateUnbufferedArea ? 1 : m.Buffering),
             "SOURCENAME" => VfpValue.Character(m.SourceName ?? wa?.Alias ?? string.Empty),
             "SOURCETYPE" => m.SourceType ?? VfpValue.Integer(0),
             "DATABASE" => VfpValue.Character(m.DatabaseProp ?? string.Empty),
