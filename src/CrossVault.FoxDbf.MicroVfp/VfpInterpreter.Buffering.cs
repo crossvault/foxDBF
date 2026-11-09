@@ -71,7 +71,7 @@ public sealed partial class VfpInterpreter
                     v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr()));
             if (edit is not null)
             {
-                if (normalize) buf.Rows[recno] = edit;
+                if (normalize && recno <= rcTable) buf.Rows[recno] = edit;
                 edit.ValidatedFields.Remove(idx);
                 edit.RecordRuleValidated = false;
                 // VFP checks a changed field immediately; record rules wait for the row to leave.
@@ -830,3 +830,4 @@ public sealed partial class VfpInterpreter
     }
 
 }
+
