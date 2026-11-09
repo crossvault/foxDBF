@@ -276,7 +276,7 @@ public sealed partial class VfpInterpreter
     private static void PositionPointer(AreaMeta m, List<int>? ord, int rec)
     {
         m.RecNo = rec; m.Eof = false; m.Bof = false; m.Cached = null; m.OldVals = null;
-        if (ord is not null) m.OrderPos = ord.IndexOf(rec);
+        m.OrderPos = ord?.IndexOf(rec) ?? -1;
     }
 
     private void ExecSeek(SeekStmt sk)
@@ -1042,7 +1042,7 @@ public sealed partial class VfpInterpreter
             {
                 pos = m.OrderSlots!.GetValueOrDefault(m.RecNo, -1);
                 if (pos >= 0 && ord[pos] < 0 && !m.OrderKeyIsField) pos = -1;
-                if (pos < 0 && InRange(wa, m.RecNo))
+                if (pos < 0 && m.RecNo >= 1 && m.RecNo <= EffCount(area, wa))
                 {
                     // A deletion-dependent FOR can remove the current entry. VFP resumes at
                     // its key's insertion point, in either direction, rather than going to TOP.
@@ -1054,7 +1054,7 @@ public sealed partial class VfpInterpreter
             while (stepsO > 0)
             {
                 pos += dirO;
-                if (pos >= ord.Count) { m.OrderPos = ord.Count; m.RecNo = wa.Table.RecordCount + 1; m.Eof = true; m.Bof = false; return; }
+                if (pos >= ord.Count) { m.OrderPos = ord.Count; m.RecNo = EffCount(area, wa) + 1; m.Eof = true; m.Bof = false; return; }
                 if (pos < 0) { m.OrderPos = -1; m.Bof = true; m.Eof = false; GoTopCore(area); m.Bof = true; return; }
                 if (InRange(wa, ord[pos]) && Visible(wa, ord[pos])) stepsO--;
             }

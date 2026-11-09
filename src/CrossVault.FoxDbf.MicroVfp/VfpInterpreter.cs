@@ -1308,7 +1308,7 @@ public sealed partial class VfpInterpreter
             if (mm.RecNo > rcTable)                                // a buffered appended row.
             {
                 int ai = mm.RecNo - rcTable - 1;
-                if (ai < 0 || ai >= buf.Appends.Count) return null;
+                if (ai < 0 || ai >= buf.Appends.Count) return BlankFor(wa.Table.Columns[idx]);
                 return buf.Appends[ai].Fields.TryGetValue(idx, out var av) ? av : BlankFor(wa.Table.Columns[idx]);
             }
             if (mm.RecNo >= 1 && mm.RecNo <= rcTable && buf.Rows.TryGetValue(mm.RecNo, out var e)
