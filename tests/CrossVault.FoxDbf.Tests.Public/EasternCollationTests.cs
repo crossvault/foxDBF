@@ -9,10 +9,12 @@ namespace CrossVault.FoxDbf.Tests;
 public sealed class EasternCollationTests
 {
     [Fact]
-    public void Turkish_DottedCapitalI_EqualsLowerI_WithExactOff()
+    public void Turkish_DottedCapitalI_SortsBeforeLowerI_WithExactOff()
     {
         var context = new EvaluationContext { Collation = VfpCollations.ByName("TURKISH", 1254), Exact = false };
-        Assert.True(VfpExpression.Parse("'İ' = 'i'").Evaluate(null!, context).AsLogical);
+        // Live GrokCollationVfp9OracleTests: the absent tail is not an explicit zero in this mode.
+        Assert.False(VfpExpression.Parse("'İ' = 'i'").Evaluate(null!, context).AsLogical);
+        Assert.True(VfpExpression.Parse("'İ' < 'i'").Evaluate(null!, context).AsLogical);
     }
 
     [Theory]
