@@ -393,7 +393,32 @@ public readonly struct IndexKey
         }
     }
 
-    private static byte[]? EncodeDate(object value)
+    /// <summary>A direct D/T field retains the distinction between physical emptiness and year one.
+    /// Expression/CLR values use MinValue as their empty sentinel and have already lost that distinction.</summary>
+    internal static byte[] EncodeDateField(DbfRecord record, DbfColumn column)
+    {
+        if (record.Table.ApplyNullFlags && record.IsNullFlagSet(column))
+            return new byte[8];
+        // The field decoder returns null for the physical empty sentinel, but MinValue for
+        // 00010101 / Julian 1721426. Do not pass through GetVfpValue, which collapses both.
+        object? value = record[column.Name];
+        if (value is null)
+            return EncodeTransformedDouble(0);
+        return (column.Type == 'D'
+            ? EncodeDate(value, emptyDefault: false)
+            : EncodeDateTime(value, emptyDefault: false))!;
+    }
+
+    internal static DbfColumn? ResolveDateField(DbfTable table, string expression)
+    {
+        foreach (var column in table.Columns)
+            if (column.Type is 'D' or 'T'
+                && string.Equals(column.Name, expression.Trim(), StringComparison.OrdinalIgnoreCase))
+                return column;
+        return null;
+    }
+
+    private static byte[]? EncodeDate(object value, bool emptyDefault = true)
     {
         DateOnly date = value switch
         {
@@ -404,17 +429,17 @@ public readonly struct IndexKey
         if (value is not DateOnly and not DateTime)
             return null;
         // VFP9's empty date is Julian day zero, not the CLR sentinel's year 1.
-        if (date == default)
+        if (emptyDefault && date == default)
             return EncodeTransformedDouble(0);
         return EncodeTransformedDouble(YmdToJulianDay(date.Year, date.Month, date.Day));
     }
 
-    private static byte[]? EncodeDateTime(object value)
+    private static byte[]? EncodeDateTime(object value, bool emptyDefault = true)
     {
         if (value is not DateTime dt)
             return null;
         // CTOT('') uses the same transformed-zero key as {}.
-        if (dt == default)
+        if (emptyDefault && dt == default)
             return EncodeTransformedDouble(0);
         long jdn = YmdToJulianDay(dt.Year, dt.Month, dt.Day);
         // VFP9 converts total Julian seconds with a rounded reciprocal. Adding a fractional day

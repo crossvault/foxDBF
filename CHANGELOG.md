@@ -22,6 +22,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: SQL `ORDER BY` now compares stored projection values after character truncation and numeric
+  rounding. Non-aggregate `IIF` width and scale follow the branch selected for the first source row. `TOP n`
+  returns at most n rows even when boundary keys tie, matching VFP9's default ENGINEBEHAVIOR 90.
+- CDX and IDX character keys now use the same decoder as field reads when `DetectUtf8` is enabled,
+  so SEEK and indexed filters find the decoded text. Explicit encodings and NOCPTRANS still bypass detection.
+- Direct Date/DateTime field indexes preserve a real `0001-01-01` from DBF bytes during creation,
+  reindexing and index maintenance, instead of merging its key with the empty-date key.
+
 - microVFP `INSERT` error handling is verified against VFP9: unknown column names (including truncated
   DBC field names) raise error 12; a buffered INSERT omitting a NOT NULL field under `SET NULL ON` raises
   1581. `TRY/CATCH` and `AERROR()` retain those numbers, `ERROR()` is 0 inside CATCH, and these failures

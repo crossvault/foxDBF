@@ -12,8 +12,8 @@ namespace CrossVault.FoxDbf.Tests;
 /// Targeted regression tests for the Phase-1b SELECT-executor MUST-FIX items:
 /// (1) whole-table aggregate over an EMPTY set still emits one row; (2) projected row CLR types
 /// match <see cref="SqlColumn.ClrType"/> on both <c>*</c> and expression paths; (4) HAVING <c>=</c>
-/// honours SQL/ANSI semantics; (5) GROUP BY / DISTINCT honour the session collation; (6) TOP n keeps
-/// ORDER BY ties; (7) a compound HAVING is rejected (not silently mis-run). SAFETY: temp tables only.
+/// honours SQL/ANSI semantics; (5) GROUP BY / DISTINCT honour the session collation; (6) TOP n limits
+/// tied ORDER BY results; (7) a compound HAVING is rejected (not silently mis-run). SAFETY: temp tables only.
 /// </summary>
 public sealed class SqlExecutorFixTests : IDisposable
 {
@@ -210,23 +210,22 @@ public sealed class SqlExecutorFixTests : IDisposable
     }
 
     // ======================================================================================
-    //  FIX 6 — TOP n keeps ALL rows whose ORDER BY key ties the nth row's key
+    //  FIX 6 — VFP9 TOP n does not extend an ORDER BY boundary tie
     // ======================================================================================
 
     [Fact]
-    public void Top_Includes_OrderBy_Ties()
+    public void Top_DoesNotExtend_OrderBy_Ties()
     {
         using var s = PersonSession(); // default SET DELETED ON → 9 live rows
         // live amounts DESC: 400, 300, 300, 250, 250, 200, 150, 100, 50.
         var all = SqlTestSupport.Materialize(s.Execute("SELECT amount FROM person ORDER BY amount DESC")!);
         Assert.Equal(9, all.Count);
 
-        // TOP 2 lands the boundary on 300, whose key ties the next 300 → VFP returns 3 rows, not 2.
+        // FinalReviewSqlVfp9OracleTests probes this exact table/query: VFP9 returns 400, 300.
         var top = SqlTestSupport.Materialize(s.Execute("SELECT TOP 2 amount FROM person ORDER BY amount DESC")!);
-        Assert.Equal(3, top.Count);
+        Assert.Equal(2, top.Count);
         Assert.Equal(400m, SqlTestSupport.Norm(top[0][0]));
         Assert.Equal(300m, SqlTestSupport.Norm(top[1][0]));
-        Assert.Equal(300m, SqlTestSupport.Norm(top[2][0]));
     }
 
     [Fact]

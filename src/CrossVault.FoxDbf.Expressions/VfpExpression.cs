@@ -107,6 +107,9 @@ public sealed class VfpExpression
 
     internal VfpTypeInfo InferSqlType(ISchema schema) => _root.InferSql(schema);
 
+    internal VfpTypeInfo InferSqlType(ISchema schema, IRowContext row, EvaluationContext context)
+        => _root.InferSql(new SqlInferenceSchema(schema, row, context));
+
     internal static VfpExpression ParseSql(string text)
     {
         var (root, normalized) = ExpressionParser.ParseSql(text);
