@@ -33,6 +33,9 @@ public sealed class MicroVfpRuntimeException : Exception, IVfpErrorCode
     public string? Details { get; init; }
 
     // The failing DML's area/type survive rollback, work-area changes and rethrow to AERROR().
+    // A failed field ERROR expression aborts the candidate; an error in CHECK itself does not.
+    internal bool FromFieldErrorExpression { get; set; }
+
     internal int TriggerArea { get; init; }
     internal int TriggerType { get; init; }
 

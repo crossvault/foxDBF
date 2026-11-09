@@ -113,6 +113,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- `REPLACE` rejects incompatible field types before evaluating later clauses and retains the
+  accepted prefix on error 9. Errors in field ERROR expressions discard the candidate; errors
+  in CHECK evaluation retain it as in VFP9. Record rules still run on a partial replacement,
+  including `UPDATE ON`, but their failure no longer replaces the pending error 9.
+
 - `INSERT ... SELECT` stops after the current candidate when a nested DEFAULT fails validation.
   VFP9 retains that candidate unbuffered and discards it with row/table buffering; later source
   rows are never inserted. `INSERT FROM ARRAY` continues to leave omitted fields blank.

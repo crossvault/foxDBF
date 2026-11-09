@@ -83,11 +83,9 @@ public sealed partial class VfpInterpreter
 
     private static void CheckReplaceValueType(DbfColumn column, VfpValue value)
     {
-        // REPLACE accepts date/empty-date conversions that UPDATE ON rejects, but it never
-        // converts a numeric/logical value into character storage implicitly.
-        if (column.Type is 'C' or 'V' or 'M' && !value.IsNull
-            && value.Type != VfpType.Character && !value.IsBinary)
-            throw new MicroVfpRuntimeException("Data type mismatch.", 9);
+        // Unlike UPDATE ON, REPLACE permits date/datetime conversion in either direction.
+        if (column.Type is 'D' or 'T' && value.Type is VfpType.Date or VfpType.DateTime) return;
+        CheckUpdateValueType(column, value);
     }
 
     private static void CheckUpdateValueType(DbfColumn column, VfpValue value)

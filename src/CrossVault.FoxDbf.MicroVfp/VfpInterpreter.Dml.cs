@@ -133,6 +133,11 @@ public sealed partial class VfpInterpreter
         bool supplied = row.Values.TryGetValue(field, out var candidate);
         row.Values[field] = ReadFieldOnDisk(area, field);
         try { return EvalTextLoud(expression); }
+        catch (MicroVfpRuntimeException error)
+        {
+            error.FromFieldErrorExpression = true;
+            throw;
+        }
         finally
         {
             if (supplied) row.Values[field] = candidate;
@@ -718,18 +723,28 @@ public sealed partial class VfpInterpreter
                     assigned++;
                 }
             }
-            catch (MicroVfpRuntimeException error) when (error.VfpErrorNumber == 9 && assigned > 0)
+            catch (MicroVfpRuntimeException error) when (error.VfpErrorNumber == 9 && !error.FromFieldErrorExpression && assigned > 0)
             {
                 // Publish the accepted prefix before surfacing a later assignment's type error.
                 assignmentError = error;
             }
-            if (candidate is not null)
-                WithImportRow(wa, m.RecNo, candidate, () =>
-                {
-                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
-                        fieldsToValidate: new HashSet<string>(), validateRecord: true, rules: rules);
-                    return true;
-                });
+            try
+            {
+                if (candidate is not null)
+                    WithImportRow(wa, m.RecNo, candidate, () =>
+                    {
+                        DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalRuleExpression, evaluateFieldError: EvalFieldRuleError,
+                            fieldsToValidate: new HashSet<string>(), validateRecord: true, rules: rules);
+                        return true;
+                    });
+            }
+            catch when (assignmentError is not null)
+            {
+                // VFP still runs the record rule, but a pending type error has precedence.
+                // A rejected record leaves the original row intact.
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(assignmentError).Throw();
+                throw;
+            }
             writer.UpdateRecord(recIndex, values);
             writer.Flush();
         }
