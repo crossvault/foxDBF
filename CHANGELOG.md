@@ -12,6 +12,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   including fractional-component truncation, NULL component defaults and empty results for impossible
   calendar dates, as in VFP9. Invalid arguments now raise VFP errors 11, 1229 or 1230
   instead of returning the current timestamp.
+- GERMAN collation with VFP9-exact index keys on code pages 1252, 437 and 10000, including umlaut
+  and sharp-s expansions. Index creation, maintenance of existing GERMAN tags, SEEK and microVFP
+  `SET COLLATE TO "GERMAN"` use the table's code page. GERMAN on code page 850 remains unsupported.
 
 ### Fixed
 
@@ -29,6 +32,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   compound expressions. Ungrouped aggregates still produce one row; grouped empty inputs produce none.
 - SQL `CREATE TABLE` and `ALTER TABLE ADD COLUMN` interpret `B(3)` as an eight-byte Double with
   three decimal places, rather than rejecting it as a three-byte Double.
+- GENERAL is now exact on code pages 852, 857, 861, 863, 865, 1254, 10000, 10029, 620 and 895.
+  Index keys are byte-identical to VFP9, allowing index creation and maintenance, SEEK in both directions
+  and Rushmore narrowing on these tables. Previously these combinations were approximate and index writes
+  and SEEK were refused.
 
 ## [0.11.0] - 2026-11-09
 
