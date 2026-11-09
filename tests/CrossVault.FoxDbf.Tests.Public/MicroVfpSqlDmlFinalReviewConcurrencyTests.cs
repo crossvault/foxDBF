@@ -95,7 +95,7 @@ public sealed class MicroVfpSqlDmlFinalReviewConcurrencyTests
         byte[] originalIndex = ReadShared(index);
         vfp.Execute("BEGIN TRANSACTION\nREPLACE id WITH 2");
         byte[] innerDbf = ReadShared(dir.File("t.dbf"));
-        vfp.Execute("BEGIN TRANSACTION\nSET INDEX TO [" + index + "]\nREPLACE id WITH 3");
+        vfp.Execute("BEGIN TRANSACTION\nSET INDEX TO " + Path.GetFileName(index) + "\nREPLACE id WITH 3");
         Assert.False(originalIndex.SequenceEqual(ReadShared(index)));
         vfp.Execute(commitInner ? "END TRANSACTION" : "ROLLBACK");
         if (!commitInner)
