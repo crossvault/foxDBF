@@ -8,10 +8,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
-- **BREAKING:** microVFP `SET COLLATE` now raises VFP error 1915 when the sequence is unavailable in
+- BREAKING: microVFP `SET COLLATE` now raises VFP error 1915 when the sequence is unavailable in
   `CPCURRENT()`. `INDEX ON` separately rejects unsupported table-code-page combinations with 1915.
   Maintenance of existing language tags remains independent of SET COLLATE availability.
-- **BREAKING:** unsupported GENERAL/SPANISH code-page combinations are classified as Unsupported,
+- BREAKING: unsupported GENERAL/SPANISH code-page combinations are classified as Unsupported,
   rather than approximated using CP1252 weights. Index casing now follows the selected session's
   VFP byte table; writer defaults use the table's own session, including OEM/Mac case tables.
 - microVFP character SEEK converts session values into the table code page using VFP9's
@@ -31,12 +31,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - VFP9-derived SPANISH index weights on code pages 437 and 10000, and UNIQWT and DUTCH weights on
   1252, 437, 850 and 10000. These combinations support index creation, maintenance of VFP-made tags,
   SEEK, Rushmore and microVFP `SET COLLATE TO` / `INDEX ON`. UNIQWT preserves case and accent distinctions.
-- **BREAKING:** SPANISH expression and SQL comparisons now reproduce VFP9's ligature truncation rules,
+- BREAKING: SPANISH expression and SQL comparisons now reproduce VFP9's ligature truncation rules,
   including `ß = s` with EXACT OFF, `ßx > ss`, and the asymmetric SQL ANSI OFF comparison `s < ß`.
 - VFP9-exact TURKISH collation on code pages 1254/857, RUSSIAN on 1251/866/10007 and GREEK
   on 1253/737/10006, including index creation and maintenance, prefix SEEK, Rushmore and microVFP
   `SET COLLATE TO` / `INDEX ON` / `SEEK`.
-- **BREAKING:** `UPPER()` and `LOWER()` with these eight code pages now use VFP9's language byte
+- BREAKING: `UPPER()` and `LOWER()` with these eight code pages now use VFP9's language byte
   mappings instead of Unicode casing, including in index expressions. Turkish dotted-I comparisons
   treat an absent secondary weight like a zero weight with EXACT ON or SQL ANSI OFF, as VFP9 does.
 - CZECH and SLOVAK collations on code pages 1250, 852 and 895; POLISH on 1250, 852 and 620;
@@ -55,7 +55,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `ADDITIVE`, `BLANK`, `MEMO`, and `FIELDS` lists, `LIKE` and `EXCEPT` patterns.
 - microVFP `REPLACE` supports `ALL`, `FOR`, `WHILE`, `NEXT`, `REST` and `RECORD`, preserving VFP9's final
   record position, visibility under SET DELETED/FILTER/KEY, buffering and index maintenance.
-- **BREAKING:** `DATETIME(year, month, day [, hour [, minute [, second]]])` in expressions, SQL and microVFP,
+- BREAKING: `DATETIME(year, month, day [, hour [, minute [, second]]])` in expressions, SQL and microVFP,
   including fractional-component truncation, NULL component defaults and empty results for impossible
   calendar dates, as in VFP9. Invalid arguments now raise VFP errors 11, 1229 or 1230
   instead of returning the current timestamp.
@@ -80,7 +80,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   conversions, binary conversions and lexical path functions, now execute in expressions, filters, SQL
   and index maintenance; `ASCAN` supports array searches through the interpreter. The legacy `UNPACK`
   compatibility function returns VFP9's `.F.`, including for NULL. `NVL`/`EVL` now handle NULL/empty values before generic NULL propagation.
-- **BREAKING:** The duplicate `VfpType.Binary` and `VfpValue.Binary` APIs are removed. Binary values from
+- BREAKING: The duplicate `VfpType.Binary` and `VfpValue.Binary` APIs are removed. Binary values from
   `CREATEBINARY`, Q fields and record objects consistently use `VfpValue.Varbinary`
   (`VfpType.Character` with `IsBinary`); `TYPE`/`VARTYPE` report Q and `TRANSFORM` returns hexadecimal.
   Byte comparisons, concatenation, substrings, code-page conversions and binary index keys preserve VFP9
@@ -90,7 +90,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `DTOC(d)+x`, `TTOC(t)`, date arithmetic and literals. Logical index expressions store VFP9's F/T keys.
 - BREAKING: `DTOC` of an empty date returns VFP9's date separators (`"  /  /    "`) instead of ten spaces;
   `TTOC` now honours its format argument and VFP9's empty DateTime representation.
-- **BREAKING:** with `SET EXACT OFF`, unpadded SWEFIN `Æ < AE`, TURKISH `İ < i` and
+- BREAKING: with `SET EXACT OFF`, unpadded SWEFIN `Æ < AE`, TURKISH `İ < i` and
   HUNGARY `CH < ch` comparisons now match VFP9: a missing left secondary weight sorts
   before an explicit zero. SQL ANSI OFF still equates these pairs; embedded secondary
   weights retain their positions. Accent differences now precede a missing primary suffix
@@ -104,10 +104,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   VFP9's error numbers and text, including 10 for a missing `NEXT`/`RECORD` expression.
 - microVFP `REPLACE` preserves fields named `all`, `rest`, `next` or `record` in values and
   predicates instead of misreading them as trailing record scopes.
-- **BREAKING:** with RI enforcement enabled, unbuffered `APPEND BLANK` fires the insert trigger
+- BREAKING: with RI enforcement enabled, unbuffered `APPEND BLANK` fires the insert trigger
   after DEFAULTs and removes the new row on rejection; rejected `REPLACE` updates now raise
   VFP error 1539 after restoring the original row, matching VFP9.
-- **BREAKING:** dotted assignments to a missing object now raise VFP error 1923 instead of 1924.
+- BREAKING: dotted assignments to a missing object now raise VFP error 1923 instead of 1924.
   An open table alias does not turn an object assignment into a field update, matching VFP9.
 - Incremental CDX and compact IDX maintenance now preserves VFP9's page-history attributes when
   record-number packing widens, narrows or splits, and writes empty child lists on unlinked branch pages.
@@ -118,18 +118,16 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   comparison state, including native hits and misses on displaced keys.
 - CDX and compact IDX build statistics count changes in the current unpadded key prefix, matching VFP9
   for MACHINE NUL/TAB/blank keys. Append and update retain those corrected build statistics until REINDEX.
-
 - BREAKING: Bulk CDX/compact IDX creation now reproduces VFP9's blank-head compression at leaf
   boundaries, including NORDAN/ICELAND NBSP keys. Weighted `SEEK` follows VFP9's tree descent and
   trailing blank-weight comparisons, including TAB. This also reproduces native misses on those
   bulk-compressed keys; row-by-row index maintenance retains the original key weights.
-- **BREAKING:** With `EnforceReferentialIntegrity = true`, microVFP now raises VFP error 1539
+- BREAKING: With `EnforceReferentialIntegrity = true`, microVFP now raises VFP error 1539
   when a DELETE or unbuffered INSERT trigger rejects a row, instead of silently returning.
   Rejected rows remain unchanged or rolled back. TRY/CATCH and ON ERROR retain the trigger type
   in `AERROR()`; enforced ADO.NET writes continue to report `FoxDbfException` with error 1539.
   RI triggers resolve by DBC table identity even under a renamed alias when the logical table name
   differs from the DBF file name; rejected aliased INSERTs reach both error handlers and roll back.
-
 - BREAKING: microVFP INSERT positions the target on the appended record and keeps a previously closed target
   open. Row buffering reports a positive record number; table buffering reports a provisional negative number.
   An explicit navigation command after INSERT can therefore commit a row buffer, as it does in VFP9.
@@ -137,17 +135,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   evaluates expressions once and propagates evaluation errors instead of silently buffering NULL.
 - EnforceRules leaves fields beyond a short INSERT FROM ARRAY row blank, even with DBC DEFAULTs or SET NULL ON.
 - Assigning a CATCH object's property updates that object; it no longer creates a separate dotted memory variable.
-- **BREAKING:** SQL validates HAVING and DISTINCT/ORDER BY before evaluating result rows, including
+- BREAKING: SQL validates HAVING and DISTINCT/ORDER BY before evaluating result rows, including
   empty inputs: non-grouped HAVING fields raise 1803, unknown/generated HAVING names raise 1806,
   and DISTINCT ordered by an unselected field raises 1808. HAVING subqueries now report 1810
   through SQL and microVFP instead of an unnumbered error or error 10.
 - Rushmore preserves the leading dot of `.AND.`, `.OR.` and `.NOT.` after numeric literals,
   using the expression lexer's recognition rules so adjacent boolean operators remain indexable.
-- **BREAKING:** SQL `VAL(...)` with a NULL first source argument now has VFP9's N(1,0) cursor schema,
+- BREAKING: SQL `VAL(...)` with a NULL first source argument now has VFP9's N(1,0) cursor schema,
   chosen before WHERE and ORDER BY. Numeric SQL cursor overflow now yields the VFP all-star value
   (exposed as `double.PositiveInfinity`) instead of retaining an out-of-width number or reading it
   as NULL after materialization. INTO writes the same star bytes; `STR` and microVFP `TRANSFORM` render stars.
-- **BREAKING:** SQL `SUM` over an empty input now returns NULL, like AVG/MIN/MAX, including in
+- BREAKING: SQL `SUM` over an empty input now returns NULL, like AVG/MIN/MAX, including in
   compound expressions. Ungrouped aggregates still produce one row; grouped empty inputs produce none.
 - SQL `CREATE TABLE` and `ALTER TABLE ADD COLUMN` interpret `B(3)` as an eight-byte Double with
   three decimal places, rather than rejecting it as a three-byte Double.
