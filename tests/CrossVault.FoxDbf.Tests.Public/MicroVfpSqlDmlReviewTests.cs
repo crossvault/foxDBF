@@ -93,6 +93,8 @@ public sealed class MicroVfpSqlDmlReviewTests(ITestOutputHelper output)
     [InlineData("rule_3_one_record", "0|1")]
     [InlineData("rule_3_move_record", "0|1")]
     [InlineData("rule_5_all_sql", "1|0")]
+    [InlineData("rule_5_one_sql", "1|0")]
+    [InlineData("rule_5_one_sql_record", "1|0")]
     [InlineData("rule_5_all_sql_record", "1|0")]
     [InlineData("rule_3_one_sql_record", "1|0")]
     [InlineData("tally_empty", "ERR:52|77")]

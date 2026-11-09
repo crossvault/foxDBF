@@ -169,6 +169,16 @@ public sealed class MicroVfpSqlDmlConsolidatedTests(ITestOutputHelper output)
     }
 
     [Theory]
+    [InlineData(1, false)]
+    [InlineData(1, true)]
+    [InlineData(3, false)]
+    [InlineData(3, true)]
+    [InlineData(5, false)]
+    [InlineData(5, true)]
+    public void Rules_OnError(int buffering, bool record) => Assert.Equal(RuleExpected[$"bad/{buffering}/{record}"],
+        Run(RulesSetup("bad", record), RulesScenario("onerror", buffering, record), RuleProcedure, true));
+
+    [Theory]
     [InlineData("DELETE FOR from = 1", "ERR:36|")]
     [InlineData("DELETE FOR from>1", "ERR:1|")]
     public void Parser_FromField(string command, string expected) => Assert.Equal(expected,
