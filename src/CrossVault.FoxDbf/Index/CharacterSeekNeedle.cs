@@ -62,14 +62,20 @@ internal sealed class CharacterSeekNeedle
     /// <summary>
     /// Unsigned compare of <see cref="Bytes"/> with the start of <paramref name="key"/> (exact: with the whole key,
     /// <see cref="Bytes"/> padded with <see cref="Pad"/>): 0 when the key carries the needle bytes (exact: equals
-    /// it), negative when the needle sorts before the key, positive after. The trailing blanks are not part of it,
-    /// see <see cref="Matches"/>.
+    /// it), negative when the needle sorts before the key, positive after. Exact weighted needles also compare
+    /// their terminal blank heads with padding. Prefix trailing blanks are handled by <see cref="Matches"/>.
     /// </summary>
     internal int CompareBytes(ReadOnlySpan<byte> key)
     {
         int n = Math.Min(Bytes.Length, key.Length);
+        int blankSuffix = Bytes.Length;
+        if (Exact && BlankHead != 0)
+            while (blankSuffix > 0 && Bytes[blankSuffix - 1] == BlankHead)
+                blankSuffix--;
         for (int i = 0; i < n; i++)
         {
+            if (i >= blankSuffix && key[i] == Pad)
+                continue;
             int diff = Bytes[i] - key[i];
             if (diff != 0)
                 return diff;
@@ -81,6 +87,23 @@ internal sealed class CharacterSeekNeedle
         for (int i = Bytes.Length; i < key.Length; i++)
             if (key[i] != Pad)
                 return Pad - key[i];
+        return 0;
+    }
+
+    internal int CompareForSeek(ReadOnlySpan<byte> key)
+    {
+        int compare = CompareBytes(key);
+        if (compare != 0)
+            return compare;
+        int end = Math.Min(key.Length, Bytes.Length + TrailingBlanks);
+        for (int i = Bytes.Length; i < end; i++)
+        {
+            if (key[i] < 0x10)
+                continue;
+            int difference = BlankHead - key[i];
+            if (difference != 0)
+                return difference;
+        }
         return 0;
     }
 

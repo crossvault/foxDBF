@@ -82,6 +82,27 @@ VfpValue result = interp.Call("CalcOrderTotal", VfpValue.Integer(1138));
 Console.WriteLine(result.AsNumber);
 ```
 
+Select the VFP startup code page per interpreter with
+`new VfpInterpreter(session, sessionCodePage: 1250)` (or set `EvaluationContext.SessionCodePage`
+before constructing it). `CPCURRENT()` reports that page throughout private data sessions.
+The default remains the process culture's ANSI code page. `DefaultEncoding` is a DBF fallback,
+not the session setting. VFP9 ignores startup pages 1255/1256 and falls back to the system ANSI page.
+
+`SET COLLATE` checks session availability and raises 1915 at that statement if unavailable;
+`INDEX ON` separately checks the table code page and raises 1915 there if necessary.
+Existing VFP-made tags can still be maintained from a different session. Their weights always
+follow the table page, while `UPPER`/`LOWER` inside index expressions apply the session's case
+map directly to the stored table bytes, without converting them first. Character `SEEK` operands
+are converted from the session page to the table page using VFP9's measured single-byte maps.
+Multibyte conversion and the Phase 4 collations remain deferred.
+
+For the writer, use `DbfOptions.SessionCodePage` when opening or
+`DbfCreateOptions.SessionCodePage` when creating a table. Null means the table's own code-page
+session; an explicit `EvaluationContext.SessionCodePage` on a build overrides that default.
+Use the same session code page when reopening a writer to maintain or rebuild expression tags:
+VFP does not persist CPCURRENT in a CDX/IDX header. OEM/Mac sessions have their own case maps;
+select the corresponding Windows page explicitly to reproduce a Windows-session-built tag.
+
 Or run a self-contained snippet with no `.dbc` at all. There's no `?`/`??` console output, so return
 the value from a `FUNCTION` and read it back with `Call(...)`:
 

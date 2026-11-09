@@ -76,6 +76,9 @@ public sealed partial class VfpInterpreter
     // Session.Context; re-pointed on SET DATASESSION. Non-readonly so a switch can mirror the new session.
     private EvaluationContext _ctx;
 
+    /// <summary>The interpreter startup code page returned by CPCURRENT().</summary>
+    public int SessionCodePage { get; }
+
     // ── transactions (snapshot-and-restore over the live DBC tables; see §Transaktionen) ──
     private sealed class TxnFrame { public readonly Dictionary<string, FileSnapshot> Snaps = new(StringComparer.OrdinalIgnoreCase); }
     // 6.3: a rollback pre-image streams the live .dbf/.cdx/.fpt to TEMP FILES (paths below) instead of holding
@@ -150,7 +153,11 @@ public sealed partial class VfpInterpreter
     private int _errLine;                 // LINENO()  — the offending source line (cleared on handler exit).
 
     /// <summary>Creates an interpreter bound to <paramref name="session"/>.</summary>
-    public VfpInterpreter(VfpSession session)
+    public VfpInterpreter(VfpSession session) : this(session, null) { }
+
+    /// <summary>Creates an interpreter with an explicit CPCURRENT code page, independent of table
+    /// encodings. Null uses the context setting, then the process ANSI code page.</summary>
+    public VfpInterpreter(VfpSession session, int? sessionCodePage)
     {
         Session = session ?? throw new ArgumentNullException(nameof(session));
         Memory = new MemoryStore();
@@ -164,6 +171,12 @@ public sealed partial class VfpInterpreter
         _ctx.IndexEvaluator = EvaluateIndex;
         _ctx.NormalizeIndexExpression = MicroVfpExprRewrite.Normalize;
         _ctx.ValidateIndexFunction = ValidateIndexFunction;
+        bool explicitCodePage = sessionCodePage.HasValue || _ctx.SessionCodePage.HasValue;
+        SessionCodePage = sessionCodePage ?? _ctx.SessionCodePage ?? System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage;
+        if (SessionCodePage is 1255 or 1256) SessionCodePage = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage;
+        _ctx.SessionCodePage = SessionCodePage;
+        if (explicitCodePage)
+            _ctx.Encoding ??= ConnectionEncoding();
         // VFP runtime defaults the SP corpus + oracle harness run under: SET DELETED ON, MACHINE collation and
         // SET EXACT OFF (VFP's default; with full-width C field reads, see header, field = field and
         // field = literal compare as in VFP).
@@ -1425,6 +1438,10 @@ public sealed partial class VfpInterpreter
         int dot = t.LastIndexOf('.');
         if (dot > 0 && t.IndexOfAny(new[] { '(', '[' }) < 0)
         {
+            // An open alias does not make an object assignment a field write in VFP9.
+            string head = t[..dot];
+            if (!head.Contains('.') && !IsDefinedName(head))
+                throw new MicroVfpRuntimeException($"Object {head} is not found.", 1923) { Details = head };
             if (!TryGetObject(EvalTextLoud(t[..dot]), out var obj))
                 throw new MicroVfpRuntimeException($"{t[..dot]} is not an object.", 1924);
             obj.Set(t[(dot + 1)..], value);

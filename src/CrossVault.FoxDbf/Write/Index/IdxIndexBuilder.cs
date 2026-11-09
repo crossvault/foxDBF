@@ -62,6 +62,7 @@ internal static class IdxIndexBuilder
             Encoding = schema.Encoding,
             IndexEvaluator = evalContext?.IndexEvaluator,
             Random = evalContext?.Random ?? new VfpRandom(),
+            SessionCodePage = evalContext?.SessionCodePage ?? schema.IndexSessionCodePage ?? schema.Encoding.CodePage,
         };
 
         var (keyType, keyLen, _) = CdxIndexBuilder.ResolveKey(schema, keyExpr, ctx);

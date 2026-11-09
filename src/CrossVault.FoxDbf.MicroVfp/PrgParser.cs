@@ -1203,7 +1203,6 @@ public static class PrgParser
             // A leading scope (ALL / REST / NEXT n / RECORD n) precedes the first field-WITH pair;
             // peel it off so ToNameRef never builds a malformed field like "ALL setup.value".
             var (scope, fieldList) = CarveLeadingScope(body);
-            scope ??= PeelTrailingScope(ref fieldList);
             var clauses = new List<ReplaceClause>();
             foreach (var piece in PrgScan.SplitTopCommas(fieldList))
             {
@@ -1212,6 +1211,12 @@ public static class PrgParser
                 if (withPos < 0) continue;
                 var field = ToNameRef(PrgScan.FoldArrowTarget(piece.Substring(0, withPos)).Trim());   // alias->f = alias.f
                 string valText = piece.Substring(withPos + 4).Trim();
+                // Scope keywords are also legal field names. Only peel actual trailing syntax.
+                if (!PrgExpr.Parse(valText).IsParsed)
+                {
+                    string? trailingScope = PeelTrailingScope(ref valText);
+                    scope ??= trailingScope;
+                }
                 bool additive = false;
                 int addPos = PrgScan.IndexOfKeyword(valText, "ADDITIVE");
                 if (addPos >= 0 && valText.Substring(addPos).Trim().Equals("ADDITIVE", StringComparison.OrdinalIgnoreCase))
@@ -1228,7 +1233,11 @@ public static class PrgParser
                 if (k is "FOR" or "WHILE")
                 {
                     string expression = b;
-                    scope ??= PeelTrailingScope(ref expression);
+                    if (!PrgExpr.Parse(expression).IsParsed)
+                    {
+                        string? trailingScope = PeelTrailingScope(ref expression);
+                        scope ??= trailingScope;
+                    }
                     if (k == "FOR") forE = PrgExpr.Parse(expression);
                     else whileE = PrgExpr.Parse(expression);
                 }

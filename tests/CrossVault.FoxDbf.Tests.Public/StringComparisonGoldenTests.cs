@@ -27,15 +27,6 @@ public sealed class StringComparisonGoldenTests
         return Encoding.GetEncoding(1252);
     }
 
-    // SPANISH ligatures (ß, Æ, Œ: two heads, no tails) where a cutting mode (SET EXACT OFF, SET ANSI OFF) splits
-    // them follow no rule we could derive from VFP9's answers: 'ß' = 's' and 'Æ' = 'A' hold, 'ßx' = 'ss' does not
-    // (and 'ßx' > 'ss' even under SQL ANSI OFF), while the same pairs under GENERAL behave like the rest. These pairs
-    // keep their deviation; every other SPANISH case, ch / ll included, matches.
-    private static readonly HashSet<(string, string)> SpanishLigatureDeviations = new()
-    {
-        ("ß", "s"), ("ßx", "s"), ("ßx", "ss"), ("Æ", "A"), ("œ", "o"),
-    };
-
     [Fact]
     public void Operators_MatchVfp9()
     {
@@ -56,7 +47,6 @@ public sealed class StringComparisonGoldenTests
                 Eval(expr, row, new EvaluationContext { Collation = collation, Exact = exact, SqlSemantics = true, Ansi = true }));
             if (got == want) continue;
             string key = $"{coll} {f[1]} [{f[2]}] {op} [{f[3]}]";
-            if (coll == "SPANISH" && SpanishLigatureDeviations.Contains((f[2], f[3]))) continue;
             diff.Add($"{key}: vfp {want} ours {got}");
         }
         Assert.True(diff.Count == 0, $"{diff.Count} comparisons differ from VFP9:\n" + string.Join("\n", diff));

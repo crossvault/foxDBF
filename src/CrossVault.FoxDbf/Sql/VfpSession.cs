@@ -517,6 +517,7 @@ public sealed class VfpSession : IDisposable
         Collation = Context.Collation,
         Culture = Context.Culture,
         Encoding = Context.Encoding,
+        SessionCodePage = Context.SessionCodePage,
     };
 
     // ---- SELECT … INTO TABLE | CURSOR materialization -------------------------------------
@@ -733,6 +734,7 @@ public sealed class VfpSession : IDisposable
             dbf = DbfTable.Open(path, new DbfOptions
             {
                 LockMode = exclusive ? Write.LockMode.Exclusive : Write.LockMode.Shared,
+                SessionCodePage = Context.SessionCodePage,
             });
         }
 
@@ -825,6 +827,7 @@ public sealed class VfpSession : IDisposable
             writer = DbfWriter.Open(path, new DbfOptions
             {
                 LockMode = exclusive ? Write.LockMode.Exclusive : Write.LockMode.Shared,
+                SessionCodePage = Context.SessionCodePage,
             }, NamesOf(readColumns));
             writer.IndexContext = Context;
         }

@@ -112,6 +112,27 @@ internal sealed class CollationTable
         new([(byte)'l', (byte)'l'], new([110], [])),
     };
 
+    public static CollationTable Spanish437 { get; } = new(437, SpanishWeights437.Head, SpanishWeights437.Tail,
+        SpanishWeights437.Expansions, SpanishWeights437.Contractions, Map437.Value);
+    public static CollationTable Spanish10000 { get; } = new(10000, SpanishWeights10000.Head, SpanishWeights10000.Tail,
+        SpanishWeights10000.Expansions, SpanishWeights10000.Contractions, HighCharMap(GeneralWeights10000.HighChars));
+    public static CollationTable Uniqwt1252 { get; } = new(1252, UniqwtWeights1252.Head, UniqwtWeights1252.Tail,
+        UniqwtWeights1252.Expansions, UniqwtWeights1252.Contractions, Map1252.Value);
+    public static CollationTable Uniqwt437 { get; } = new(437, UniqwtWeights437.Head, UniqwtWeights437.Tail,
+        UniqwtWeights437.Expansions, UniqwtWeights437.Contractions, Map437.Value);
+    public static CollationTable Uniqwt850 { get; } = new(850, UniqwtWeights850.Head, UniqwtWeights850.Tail,
+        UniqwtWeights850.Expansions, UniqwtWeights850.Contractions, Map850.Value);
+    public static CollationTable Uniqwt10000 { get; } = new(10000, UniqwtWeights10000.Head, UniqwtWeights10000.Tail,
+        UniqwtWeights10000.Expansions, UniqwtWeights10000.Contractions, HighCharMap(GeneralWeights10000.HighChars));
+    public static CollationTable Dutch1252 { get; } = new(1252, DutchWeights1252.Head, DutchWeights1252.Tail,
+        DutchWeights1252.Expansions, DutchWeights1252.Contractions, Map1252.Value);
+    public static CollationTable Dutch437 { get; } = new(437, DutchWeights437.Head, DutchWeights437.Tail,
+        DutchWeights437.Expansions, DutchWeights437.Contractions, Map437.Value);
+    public static CollationTable Dutch850 { get; } = new(850, DutchWeights850.Head, DutchWeights850.Tail,
+        DutchWeights850.Expansions, DutchWeights850.Contractions, Map850.Value);
+    public static CollationTable Dutch10000 { get; } = new(10000, DutchWeights10000.Head, DutchWeights10000.Tail,
+        DutchWeights10000.Expansions, DutchWeights10000.Contractions, HighCharMap(GeneralWeights10000.HighChars));
+
     public static CollationTable German1252 { get; } = new(1252, GermanWeights.Head1252, GermanWeights.Tail1252,
         GermanWeights.Expansions1252, NoContractions, Map1252.Value);
     public static CollationTable German437 { get; } = new(437, GermanWeights.Head437, GermanWeights.Tail437,

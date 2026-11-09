@@ -100,7 +100,7 @@ public sealed partial class VfpInterpreter
     private DbfWriter OpenWriter(string path)
     {
         RequireCompactIndexWriteContext(path);
-        var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared }, ReadNamesFor(path));
+        var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared, SessionCodePage = SessionCodePage }, ReadNamesFor(path));
         try
         {
             writer.IndexContext = _ctx;
@@ -158,7 +158,7 @@ public sealed partial class VfpInterpreter
     /// names, which VFP9 writes into the tag KEY text.</summary>
     private DbfWriter OpenExclusiveWriter(string path, Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? names)
     {
-        var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive }, names);
+        var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive, SessionCodePage = SessionCodePage }, names);
         writer.IndexContext = _ctx;
         return writer;
     }

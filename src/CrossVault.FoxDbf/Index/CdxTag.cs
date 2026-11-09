@@ -178,13 +178,19 @@ public sealed class CdxTag
         if (_collationSupport != CollationSupport.Exact || _collation is not GeneralCollation general)
             return new CharacterSeekNeedle(EncodeCharacterKey(s), exact, KeyPad);
         if (exact || s.Length == WeightedKeyWidth)
-            return new CharacterSeekNeedle(EncodeCharacterKey(s), exact: true, KeyPad);
+            return new CharacterSeekNeedle(EncodeCharacterKey(s), exact: true, KeyPad, blankHead: general.BlankHead);
         int trimmed = s.Length;
         while (trimmed > 0 && s[trimmed - 1] == ' ') trimmed--;
         var heads = general.GetHeadKey(s.AsSpan(0, trimmed));
         if (heads.Length >= KeyLength)
             return new CharacterSeekNeedle(heads.AsSpan(0, KeyLength).ToArray(), exact: false, KeyPad);
-        return new CharacterSeekNeedle(heads, exact: false, KeyPad, s.Length - trimmed, general.BlankHead);
+        int headLength = heads.Length;
+        while (headLength > 0 && heads[headLength - 1] == general.BlankHead)
+            headLength--;
+        int blanks = s.Length - trimmed + heads.Length - headLength;
+        // VFP compares terminal blank WEIGHTS, including TAB/NBSP primary heads, with padding.
+        return new CharacterSeekNeedle(heads.AsSpan(0, headLength).ToArray(),
+            exact: false, KeyPad, blanks, general.BlankHead);
     }
 
     /// <summary>
@@ -290,11 +296,13 @@ public sealed class CdxTag
     /// </summary>
     internal uint? Seek(CharacterSeekNeedle needle)
     {
-        // Every matching key carries needle.Bytes, so the walk starts at the first key >= them and ends once the
-        // keys sort past them; keys in between that fail the trailing-blank rule are skipped.
-        foreach (var entry in EnumerateFrom(needle.Bytes))
+        // VFP descends with the literal blank heads, then scans the leaf with blank/pad
+        // equivalence. Control heads between a short key and its blank-suffixed equivalent
+        // make that distinction observable (including on native bulk-compressed keys).
+        byte[] lowerBound = needle.TrailingBlanks > 0 ? needle.SortKey(KeyLength) : needle.Bytes;
+        foreach (var entry in EnumerateFrom(lowerBound))
         {
-            int cmp = needle.CompareBytes(entry.Key);
+            int cmp = needle.CompareForSeek(entry.Key);
             if (cmp < 0)
                 break;
             if (cmp == 0 && needle.TrailingBlanksMatch(entry.Key))
@@ -347,7 +355,10 @@ public sealed class CdxTag
         // A character tag whose expression could not be typed (e.g. a UDF) still holds character keys.
         if ((KeyType == IndexKeyType.Character || (KeyType == IndexKeyType.Unknown && IsCharacterKey)) && value is string s)
         {
-            if (_collationSupport == CollationSupport.Unsupported)
+            // Keep the existing loud refusal for GENERAL/SPANISH cells formerly classified
+            // as approximate; changing their classification must not turn a bad key into a miss.
+            if (_collationSupport == CollationSupport.Unsupported
+                && Collation is not ("GENERAL" or "SPANISH"))
                 return NotFound;
             var needle = CreateCharacterSeekNeedle(s, exact: false);
             return needle.Bytes.Length == 0 && needle.TrailingBlanks == 0 ? NotFound : Seek(needle);

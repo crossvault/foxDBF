@@ -8,11 +8,9 @@ namespace CrossVault.FoxDbf.Expressions;
 /// </summary>
 /// <remarks>
 /// VFP9 weights a key by its byte in the table code page, so weighted collations are per-code-page tables.
-/// Byte-exact with VFP9: MACHINE (any code page), GENERAL on code pages <b>1252</b>, <b>850</b>, <b>437</b> and
-/// <b>1250</b>, SPANISH on <b>1252</b> and <b>850</b>, GERMAN on <b>1252</b>, <b>437</b> and <b>10000</b>.
-/// GENERAL / SPANISH on any other code page fall back to the
-/// CP1252 table (right for ASCII, approximate beyond); any other sequence (DUTCH, ...) or unlisted GERMAN code page is unsupported and
-/// falls back to MACHINE.
+/// Supported sequence/code-page cells are byte-exact. Unavailable combinations return
+/// Unsupported from Resolve and the MACHINE fallback from ByName; no approximate weights are used.
+/// Session availability is a separate gate at SET COLLATE; existing tag maintenance uses the table page.
 /// </remarks>
 public static class VfpCollations
 {
@@ -29,8 +27,7 @@ public static class VfpCollations
 
     /// <summary>
     /// Resolves a collation by its VFP name (case-insensitive) for a table in <paramref name="codePage"/>
-    /// (e.g. <c>Encoding.CodePage</c> of the table: 1252, 850, 437, 1250, 10000): MACHINE, GENERAL, SPANISH or GERMAN. GENERAL /
-    /// SPANISH on a code page without its own table use the CP1252 table; unknown or empty names fall back to MACHINE.
+    /// (e.g. <c>Encoding.CodePage</c> of the table). Unavailable combinations and empty names fall back to MACHINE.
     /// </summary>
     public static IVfpCollation ByName(string? name, int codePage)
     {
@@ -56,8 +53,7 @@ public static class VfpCollations
     /// <summary>
     /// Resolves <paramref name="name"/> for <paramref name="codePage"/> and reports how faithfully the result
     /// reproduces VFP9's keys: <see cref="CollationSupport.Exact"/> (byte-identical),
-    /// <see cref="CollationSupport.Approximate"/> (GENERAL / SPANISH on a code page without its own table: the
-    /// CP1252 table) or <see cref="CollationSupport.Unsupported"/> (unknown sequence; <paramref name="collation"/>
+    /// or <see cref="CollationSupport.Unsupported"/> (unavailable combination; <paramref name="collation"/>
     /// is the MACHINE fallback and its keys are NOT the stored ones).
     /// </summary>
     internal static CollationSupport Resolve(string? name, int codePage, out IVfpCollation collation)
@@ -87,6 +83,20 @@ public static class VfpCollations
         {
             collation = Machine;
             return CollationSupport.Exact;
+        }
+
+        switch ((n.ToUpperInvariant(), codePage))
+        {
+            case ("SPANISH", 437): collation = GeneralCollation.Spanish437; return CollationSupport.Exact;
+            case ("SPANISH", 10000): collation = GeneralCollation.Spanish10000; return CollationSupport.Exact;
+            case ("UNIQWT", 1252): collation = GeneralCollation.Uniqwt1252; return CollationSupport.Exact;
+            case ("UNIQWT", 437): collation = GeneralCollation.Uniqwt437; return CollationSupport.Exact;
+            case ("UNIQWT", 850): collation = GeneralCollation.Uniqwt850; return CollationSupport.Exact;
+            case ("UNIQWT", 10000): collation = GeneralCollation.Uniqwt10000; return CollationSupport.Exact;
+            case ("DUTCH", 1252): collation = GeneralCollation.Dutch1252; return CollationSupport.Exact;
+            case ("DUTCH", 437): collation = GeneralCollation.Dutch437; return CollationSupport.Exact;
+            case ("DUTCH", 850): collation = GeneralCollation.Dutch850; return CollationSupport.Exact;
+            case ("DUTCH", 10000): collation = GeneralCollation.Dutch10000; return CollationSupport.Exact;
         }
 
         if (n.Equals("GERMAN", StringComparison.OrdinalIgnoreCase))
@@ -229,8 +239,8 @@ public static class VfpCollations
                 collation = general ? GeneralCollation.Instance : GeneralCollation.Spanish1252;
                 return CollationSupport.Exact;
             default:
-                collation = general ? GeneralCollation.Instance : GeneralCollation.Spanish1252;
-                return CollationSupport.Approximate;
+                collation = Machine;
+                return CollationSupport.Unsupported;
         }
     }
 }
@@ -241,9 +251,6 @@ internal enum CollationSupport
 {
     /// <summary>Byte-identical to VFP9.</summary>
     Exact,
-
-    /// <summary>A related table (CP1252) stands in for a code page without its own: right for ASCII only.</summary>
-    Approximate,
 
     /// <summary>Unknown sequence: the MACHINE fallback does not reproduce the stored keys at all.</summary>
     Unsupported,

@@ -197,6 +197,8 @@ public sealed partial class DbfTable : IDisposable
     internal (int varlenBit, int nullBit) GetVarlenNullBits(DbfColumn column)
         => _bitMap.TryGetValue(column, out var bits) ? bits : (-1, -1);
 
+    internal int? IndexSessionCodePage { get; }
+
     private DbfTable(Stream stream, bool leaveOpen, DbfHeader header, IReadOnlyList<DbfColumn> physical, DbfOptions options, string? dbfPath)
     {
         _stream = stream;
@@ -217,6 +219,7 @@ public sealed partial class DbfTable : IDisposable
         RecordCount = header.RecordCount;
         _headerLength = header.HeaderLength;
         _recordLength = header.RecordLength;
+        IndexSessionCodePage = options.SessionCodePage;
         // §A7 selection order: explicit DbfOptions.Encoding override → header code page
         // → DbfOptions.DefaultEncoding (default CP1252, applied inside ResolveEncoding).
         Encoding = options.Encoding

@@ -6,16 +6,34 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** microVFP `SET COLLATE` now raises VFP error 1915 when the sequence is unavailable in
+  `CPCURRENT()`. `INDEX ON` separately rejects unsupported table-code-page combinations with 1915.
+  Maintenance of existing language tags remains independent of SET COLLATE availability.
+- **BREAKING:** unsupported GENERAL/SPANISH code-page combinations are classified as Unsupported,
+  rather than approximated using CP1252 weights. Index casing now follows the selected session's
+  VFP byte table; writer defaults use the table's own session, including OEM/Mac case tables.
+- microVFP character SEEK converts session values into the table code page using VFP9's
+  measured single-byte conversion maps, including its lossy accent/best-fit substitutions.
+
 ### Added
 
+- Per-interpreter `sessionCodePage` / `CPCURRENT()` and writer `SessionCodePage` options for VFP9
+  session-dependent `UPPER()`/`LOWER()` in CDX and IDX expressions, including rebuilds and maintenance.
+- VFP9-exact CZECH, SLOVAK and POLISH index weights on Macintosh Central European code page 10029.
+- Complete non-deferred collation matrix tests and VFP9 session availability oracles.
+- VFP9-derived SPANISH index weights on code pages 437 and 10000, and UNIQWT and DUTCH weights on
+  1252, 437, 850 and 10000. These combinations support index creation, maintenance of VFP-made tags,
+  SEEK, Rushmore and microVFP `SET COLLATE TO` / `INDEX ON`. UNIQWT preserves case and accent distinctions.
+- **BREAKING:** SPANISH expression and SQL comparisons now reproduce VFP9's ligature truncation rules,
+  including `ß = s` with EXACT OFF, `ßx > ss`, and the asymmetric SQL ANSI OFF comparison `s < ß`.
 - VFP9-exact TURKISH collation on code pages 1254/857, RUSSIAN on 1251/866/10007 and GREEK
   on 1253/737/10006, including index creation and maintenance, prefix SEEK, Rushmore and microVFP
   `SET COLLATE TO` / `INDEX ON` / `SEEK`.
 - **BREAKING:** `UPPER()` and `LOWER()` with these eight code pages now use VFP9's language byte
   mappings instead of Unicode casing, including in index expressions. Turkish dotted-I comparisons
   also treat an absent secondary weight like a zero weight, as VFP9 does.
-  Case-expression parity is verified in the matching language sessions; selecting a different VFP
-  session code page for index-expression evaluation is not currently supported by the writer.
 - CZECH and SLOVAK collations on code pages 1250, 852 and 895; POLISH on 1250, 852 and 620;
   HUNGARY on 1250 and 852. VFP9-exact keys support bulk and incremental index creation, existing-tag
   maintenance, SEEK with EXACT OFF/ON, Rushmore ranges and microVFP `SET COLLATE TO` / `INDEX ON`.
@@ -65,6 +83,18 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `DTOC(d)+x`, `TTOC(t)`, date arithmetic and literals. Logical index expressions store VFP9's F/T keys.
 - BREAKING: `DTOC` of an empty date returns VFP9's date separators (`"  /  /    "`) instead of ten spaces;
   `TTOC` now honours its format argument and VFP9's empty DateTime representation.
+- microVFP `REPLACE` preserves fields named `all`, `rest`, `next` or `record` in values and
+  predicates instead of misreading them as trailing record scopes.
+- **BREAKING:** with RI enforcement enabled, unbuffered `APPEND BLANK` fires the insert trigger
+  after DEFAULTs and removes the new row on rejection; rejected `REPLACE` updates now raise
+  VFP error 1539 after restoring the original row, matching VFP9.
+- **BREAKING:** dotted assignments to a missing object now raise VFP error 1923 instead of 1924.
+  An open table alias does not turn an object assignment into a field update, matching VFP9.
+
+- BREAKING: Bulk CDX/compact IDX creation now reproduces VFP9's blank-head compression at leaf
+  boundaries, including NORDAN/ICELAND NBSP keys. Weighted `SEEK` follows VFP9's tree descent and
+  trailing blank-weight comparisons, including TAB. This also reproduces native misses on those
+  bulk-compressed keys; row-by-row index maintenance retains the original key weights.
 - **BREAKING:** With `EnforceReferentialIntegrity = true`, microVFP now raises VFP error 1539
   when a DELETE or unbuffered INSERT trigger rejects a row, instead of silently returning.
   Rejected rows remain unchanged or rolled back. TRY/CATCH and ON ERROR retain the trigger type

@@ -84,6 +84,16 @@ public sealed class GeneralCollation : IVfpCollation
     internal static readonly GeneralCollation German437 = new("GERMAN", CollationTable.German437);
     internal static readonly GeneralCollation German10000 = new("GERMAN", CollationTable.German10000);
 
+    internal static readonly GeneralCollation Spanish437 = new("SPANISH", CollationTable.Spanish437);
+    internal static readonly GeneralCollation Spanish10000 = new("SPANISH", CollationTable.Spanish10000);
+    internal static readonly GeneralCollation Uniqwt1252 = new("UNIQWT", CollationTable.Uniqwt1252);
+    internal static readonly GeneralCollation Uniqwt437 = new("UNIQWT", CollationTable.Uniqwt437);
+    internal static readonly GeneralCollation Uniqwt850 = new("UNIQWT", CollationTable.Uniqwt850);
+    internal static readonly GeneralCollation Uniqwt10000 = new("UNIQWT", CollationTable.Uniqwt10000);
+    internal static readonly GeneralCollation Dutch1252 = new("DUTCH", CollationTable.Dutch1252);
+    internal static readonly GeneralCollation Dutch437 = new("DUTCH", CollationTable.Dutch437);
+    internal static readonly GeneralCollation Dutch850 = new("DUTCH", CollationTable.Dutch850);
+    internal static readonly GeneralCollation Dutch10000 = new("DUTCH", CollationTable.Dutch10000);
     internal static readonly GeneralCollation Turkish1254 = new("TURKISH", CollationTable.Turkish1254);
     internal static readonly GeneralCollation Turkish857 = new("TURKISH", CollationTable.Turkish857);
     internal static readonly GeneralCollation Russian1251 = new("RUSSIAN", CollationTable.Russian1251);
@@ -186,7 +196,7 @@ public sealed class GeneralCollation : IVfpCollation
     /// <see cref="Compare(ReadOnlySpan{char}, ReadOnlySpan{char})"/>; the cutting modes keep trailing blanks and the 0x00
     /// tails, cut the head run (of the left operand, or of the longer one) to the other's head count and compare the
     /// heads, then the tails, where tails that merely extend the other operand's tails count as equal. VFP9-verified
-    /// for GENERAL; SPANISH ligatures under SET EXACT OFF keep the deviations listed in <c>StringComparisonGoldenTests</c>.
+    /// for GENERAL. SPANISH uses the untrimmed total weight length to choose the cut side, including ligatures.
     /// </summary>
     internal int Compare(ReadOnlySpan<char> left, ReadOnlySpan<char> right, StringCompareMode mode)
     {
@@ -206,6 +216,8 @@ public sealed class GeneralCollation : IVfpCollation
         {
             BuildKey(left, hL, tL, out int hcL, out int tcL, trim: false);
             BuildKey(right, hR, tR, out int hcR, out int tcR, trim: false);
+            if (_name == "SPANISH")
+                return CompareSpanishCutKeys(hL[..hcL], tL[..tcL], hR[..hcR], tR[..tcR], mode);
             if (mode == StringCompareMode.TruncateLeft) hcL = Math.Min(hcL, hcR);
             else hcL = hcR = Math.Min(hcL, hcR);
 
@@ -235,6 +247,54 @@ public sealed class GeneralCollation : IVfpCollation
             if (rhR is not null) ArrayPool<byte>.Shared.Return(rhR);
             if (rtR is not null) ArrayPool<byte>.Shared.Return(rtR);
         }
+    }
+
+    // VFP9 chooses the cut side by the COMPLETE untrimmed key length. Tail-less expansions make
+    // that differ from the primary length: ßx > ss, but ß = s (EXACT OFF), and SQL s < ß.
+    // Keep the index key builder unchanged: this is an expression-comparison length rule.
+    private static int CompareSpanishCutKeys(ReadOnlySpan<byte> leftHeads, ReadOnlySpan<byte> leftTails,
+        ReadOnlySpan<byte> rightHeads, ReadOnlySpan<byte> rightTails, StringCompareMode mode)
+    {
+        bool shorterLeft = leftHeads.Length + leftTails.Length < rightHeads.Length + rightTails.Length;
+        bool cutLeft = false, cutRight = false;
+        if (!shorterLeft)
+        {
+            cutLeft = leftHeads.Length > rightHeads.Length;
+            leftHeads = leftHeads[..Math.Min(leftHeads.Length, rightHeads.Length)];
+        }
+        else if (mode == StringCompareMode.Shorter)
+        {
+            cutRight = rightHeads.Length > leftHeads.Length;
+            rightHeads = rightHeads[..Math.Min(leftHeads.Length, rightHeads.Length)];
+        }
+
+        int common = Math.Min(leftHeads.Length, rightHeads.Length);
+        int comparison = leftHeads[..common].SequenceCompareTo(rightHeads[..common]);
+        if (comparison != 0) return Math.Sign(comparison);
+        if (leftHeads.Length > rightHeads.Length) return 1;
+        if (leftHeads.Length < rightHeads.Length)
+        {
+            // For a shorter total key, a nonzero accent can decide before the missing primary suffix.
+            if (shorterLeft)
+                for (int i = 0; i < leftTails.Length; i++)
+                {
+                    byte right = i < rightTails.Length ? rightTails[i] : (byte)0;
+                    if (leftTails[i] != right) return leftTails[i] < right ? -1 : 1;
+                }
+            return -1;
+        }
+
+        // Cutting a primary run supplies zero secondary weights for missing positions. Without a cut,
+        // an absent tail remains absent (Æ = AE is false in Xbase, true under SQL ANSI OFF).
+        int leftLength = cutLeft ? Math.Max(leftTails.Length, rightTails.Length) : leftTails.Length;
+        int rightLength = cutRight ? Math.Max(leftTails.Length, rightTails.Length) : rightTails.Length;
+        for (int i = 0; i < Math.Min(leftLength, rightLength); i++)
+        {
+            byte left = i < leftTails.Length ? leftTails[i] : (byte)0;
+            byte right = i < rightTails.Length ? rightTails[i] : (byte)0;
+            if (left != right) return left < right ? -1 : 1;
+        }
+        return leftLength >= rightLength || mode == StringCompareMode.Shorter ? 0 : -1;
     }
 
     /// <summary>Stack-buffer threshold (bytes). Inputs whose worst-case head/tail buffer fits are

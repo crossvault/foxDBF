@@ -193,7 +193,7 @@ internal static class CdxIndexBuilder
         var pages = leaves.Concat(branches.SelectMany(level => level.Select(node => node.Page))).GetEnumerator();
         var groups = branches.Select(level => level.Select(node => node.Count).ToList()).ToList();
         return BuildTree(sink, () => { pages.MoveNext(); return pages.Current; },
-            plan.Entries, plan.KeyLen, plan.Pad, indexOn: true, groups: groups, branchesCarryLeafData: true);
+            plan.Entries, plan.KeyLen, plan.Pad, indexOn: true, groups: groups, branchesCarryLeafData: true, blankHead: plan.BlankHead);
     }
 
     // ---- compact standalone .idx (INDEX ON … TO x.idx COMPACT) ------------------------------------
@@ -227,7 +227,7 @@ internal static class CdxIndexBuilder
         var pages = leafPages.Concat(branches.SelectMany(level => level.Select(node => node.Page))).GetEnumerator();
         var groups = branches.Select(level => level.Select(node => node.Count).ToList()).ToList();
         uint root = BuildTree(sink, () => { pages.MoveNext(); return pages.Current; },
-            p.Entries, p.KeyLen, p.Pad, indexOn: true, groups: groups, branchesCarryLeafData: true);
+            p.Entries, p.KeyLen, p.Pad, indexOn: true, groups: groups, branchesCarryLeafData: true, blankHead: p.BlankHead);
 
         var header = sink.At(0);
         WriteHeaderCommon(header, root: root, keyLen: p.KeyLen, options: p.Options, signature: p.Signature,
@@ -298,6 +298,7 @@ internal static class CdxIndexBuilder
         public byte Signature;
         public string? SortOrder;
         public bool Descending;
+        public byte BlankHead;
         public byte[] KeyExpr = Array.Empty<byte>();
         public byte[] ForExpr = Array.Empty<byte>();
     }
@@ -382,7 +383,9 @@ internal static class CdxIndexBuilder
             Entries = entries,
             KeyLen = computer.KeyLen,
             Pad = computer.Pad,
-            LeafCount = PackLeaves(entries, computer.KeyLen, computer.Pad).Count,
+            BlankHead = computer.IsChar && computer.Collation is GeneralCollation weighted ? weighted.BlankHead : (byte)0,
+            LeafCount = PackLeaves(entries, computer.KeyLen, computer.Pad, blankHead:
+                computer.IsChar && computer.Collation is GeneralCollation weights ? weights.BlankHead : (byte)0).Count,
             Options = options,
             Signature = tagSig,
             SortOrder = computer.Collation.Name,
@@ -514,6 +517,7 @@ internal static class CdxIndexBuilder
             Encoding = schema.Encoding,
             IndexEvaluator = evalContext?.IndexEvaluator,
             Random = evalContext?.Random ?? new VfpRandom(),
+            SessionCodePage = evalContext?.SessionCodePage ?? schema.IndexSessionCodePage ?? schema.Encoding.CodePage,
         };
 
         var (keyType, baseLen, isChar) = ResolveKey(schema, def.KeyExpression, ctx);
@@ -674,9 +678,9 @@ internal static class CdxIndexBuilder
     /// (default: <see cref="BranchLayout"/> from the first leaf's page); <paramref name="branchesCarryLeafData"/>
     /// gives every branch node the 0x04 bit of the first leaf, as VFP9 does on the trees it grows key by key.</summary>
     private static uint BuildTree(PageSink sink, Func<int> alloc, List<Entry> entries, int keyLen, byte pad, bool indexOn,
-        List<List<int>>? groups = null, bool branchesCarryLeafData = false)
+        List<List<int>>? groups = null, bool branchesCarryLeafData = false, byte blankHead = 0)
     {
-        var leaves = PackLeaves(entries, keyLen, pad, indexOn);
+        var leaves = PackLeaves(entries, keyLen, pad, indexOn, blankHead);
 
         // Assign page offsets to every leaf first (so siblings can reference each other).
         foreach (var leaf in leaves)
@@ -788,7 +792,7 @@ internal static class CdxIndexBuilder
     /// all-blank keys, empty tags, hand-made recno runs): every leaf page reproduces byte for byte.
     /// </para>
     /// </summary>
-    private static List<LeafNode> PackLeaves(List<Entry> entries, int keyLen, byte pad, bool indexOn = true)
+    private static List<LeafNode> PackLeaves(List<Entry> entries, int keyLen, byte pad, bool indexOn = true, byte blankHead = 0)
     {
         var leaves = new List<LeafNode>();
         var standard = LeafGeometry.For(keyLen, EmptyTagMaxRecno);
@@ -810,6 +814,8 @@ internal static class CdxIndexBuilder
         var geom = LeafGeometry.For(keyLen, 1);
         var opened = standard;             // the geometry the current leaf was opened with
         ushort attr = Narrower(geom, opened);
+        bool displacedPrefix = false;
+        int fastEntryBytes = 3;
 
         foreach (var e in entries)
         {
@@ -818,6 +824,48 @@ internal static class CdxIndexBuilder
             uint max = Math.Max(maxRecno, e.Recno);
             var need = LeafGeometry.For(keyLen, max);
             bool widen = need.RecnoBits > geom.RecnoBits;
+            // VFP's append reservation starts at three info bytes and shrinks only after
+            // a slow insert. That path reserves one more info plus twelve scratch bytes,
+            // and treats terminal blank heads like padding for an existing shorter key.
+            // A split can move a DIFFERENT key to the new leaf while the append cache still
+            // holds e.Key; the next fast prefix then copies that displaced key's bytes.
+            // This is INDEX ON behavior, not a collation-weight or maintenance rule.
+            fastEntryBytes = Math.Max(fastEntryBytes, need.BytesPerEntry);
+            bool slow = indexOn && blankHead != 0 && cur.Count > 0
+                && used + (cur.Count + 1) * fastEntryBytes + 12 >= LeafBudget;
+            if (slow)
+                fastEntryBytes = need.BytesPerEntry;
+            if (slow && (displacedPrefix || (trail < keyLen && e.Key[keyLen - trail - 1] == blankHead)))
+            {
+                var decoded = DecodeBulkItems(cur, keyLen, pad);
+                int position = BulkInsertPosition(decoded, e, keyLen, pad, blankHead);
+                if (displacedPrefix || position < decoded.Count)
+                {
+                    decoded.Insert(position, e);
+                    int count = decoded.Count;
+                    while (BulkUsed(decoded, count, keyLen, pad) > LeafBudget)
+                        count--;
+                    if (count < decoded.Count)
+                    {
+                        var left = RepackBulkItems(decoded.GetRange(0, count), keyLen, pad);
+                        left.AttrExtra = widen ? AttrData : leaves.Count == 0 ? attr : (ushort)0;
+                        leaves.Add(left);
+                        opened = left.Geom;
+                        decoded = decoded.GetRange(count, decoded.Count - count);
+                    }
+                    var replacement = RepackBulkItems(decoded, keyLen, pad);
+                    cur = replacement.Items;
+                    used = LeafBudget - replacement.FreeSpace - cur.Count * replacement.Geom.BytesPerEntry;
+                    maxRecno = decoded.Max(item => item.Recno);
+                    geom = replacement.Geom;
+                    fastEntryBytes = geom.BytesPerEntry;
+                    attr = Narrower(geom, opened);
+                    prev = e.Key;
+                    prevTrail = trail;
+                    displacedPrefix = true;
+                    continue;
+                }
+            }
             if (cur.Count > 0 && used + Room(len, trail, keyLen) + (cur.Count + 1) * need.BytesPerEntry > LeafBudget)
             {
                 // Current leaf is full: flush it and start a fresh one (dup resets to 0).
@@ -826,6 +874,8 @@ internal static class CdxIndexBuilder
                 Flush();
                 opened = geom;
                 cur = new List<LeafItem>();
+                displacedPrefix = false;
+                fastEntryBytes = 3;
                 used = 0;
                 (dup, trail) = DupTrail(e.Key, null, keyLen, keyLen, pad);
                 len = keyLen - dup - trail;
@@ -853,12 +903,95 @@ internal static class CdxIndexBuilder
 
         void Flush()
         {
-            var leaf = MakeLeafNode(cur, used, maxRecno, keyLen, prev!);
+            var lastKey = displacedPrefix ? DecodeBulkItems(cur, keyLen, pad)[^1].Key : prev!;
+            var leaf = MakeLeafNode(cur, used, maxRecno, keyLen, lastKey);
             leaf.AttrExtra = indexOn ? attr : DataBit(leaf.Geom);
             leaves.Add(leaf);
         }
 
         static ushort Narrower(LeafGeometry geom, LeafGeometry than) => geom.RecnoBits < than.RecnoBits ? AttrData : (ushort)0;
+    }
+
+    private static List<Entry> DecodeBulkItems(List<LeafItem> items, int keyLen, byte pad)
+    {
+        var entries = new List<Entry>(items.Count);
+        byte[] previous = new byte[keyLen];
+        foreach (var item in items)
+        {
+            var key = new byte[keyLen];
+            previous.AsSpan(0, item.Dup).CopyTo(key);
+            item.Fresh.CopyTo(key, item.Dup);
+            key.AsSpan(keyLen - item.Trail).Fill(pad);
+            entries.Add(new Entry(key, item.Recno));
+            previous = key;
+        }
+        return entries;
+    }
+
+    private static int BulkInsertPosition(List<Entry> entries, Entry incoming, int keyLen, byte pad, byte blankHead)
+    {
+        int length = keyLen - TrailingPad(incoming.Key, keyLen, pad);
+        int trimmed = length;
+        while (trimmed > 0 && incoming.Key[trimmed - 1] == blankHead)
+            trimmed--;
+        // A terminal blank changes placement only if its shorter, padded key is in this leaf.
+        if (trimmed == length || !entries.Any(e => e.Key.AsSpan(0, trimmed).SequenceEqual(incoming.Key.AsSpan(0, trimmed))
+                && TrailingPad(e.Key, keyLen, pad) == keyLen - trimmed))
+            return entries.Count;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var other = entries[i];
+            int compare = other.Key.AsSpan(0, trimmed).SequenceCompareTo(incoming.Key.AsSpan(0, trimmed));
+            if (compare > 0)
+                return i;
+            if (compare != 0)
+                continue;
+            int end = keyLen - TrailingPad(other.Key, keyLen, pad);
+            while (end > trimmed && other.Key[end - 1] == blankHead)
+                end--;
+            if (end > trimmed || other.Recno >= incoming.Recno)
+                return i;
+        }
+        return entries.Count;
+    }
+
+    private static int BulkUsed(List<Entry> entries, int count, int keyLen, byte pad)
+    {
+        int used = 0;
+        uint max = 0;
+        byte[]? previous = null;
+        int previousTrail = keyLen;
+        for (int i = 0; i < count; i++)
+        {
+            var e = entries[i];
+            var (dup, trail) = DupTrail(e.Key, previous, previousTrail, keyLen, pad);
+            used += keyLen - dup - trail;
+            previous = e.Key;
+            previousTrail = trail;
+            max = Math.Max(max, e.Recno);
+        }
+        return used + count * LeafGeometry.For(keyLen, max).BytesPerEntry
+            + (previousTrail == keyLen ? 1 : 0);
+    }
+
+    private static LeafNode RepackBulkItems(List<Entry> entries, int keyLen, byte pad)
+    {
+        var items = new List<LeafItem>(entries.Count);
+        byte[]? previous = null;
+        int previousTrail = keyLen;
+        int used = 0;
+        uint max = 0;
+        foreach (var e in entries)
+        {
+            var (dup, trail) = DupTrail(e.Key, previous, previousTrail, keyLen, pad);
+            byte[] fresh = e.Key.AsSpan(dup, keyLen - dup - trail).ToArray();
+            items.Add(new LeafItem(e.Recno, dup, trail, fresh));
+            used += fresh.Length;
+            max = Math.Max(max, e.Recno);
+            previous = e.Key;
+            previousTrail = trail;
+        }
+        return MakeLeafNode(items, used, max, keyLen, previous!);
     }
 
     /// <summary>The room an entry needs in a leaf: its distinct key bytes, one more for an all-pad key (VFP9 leaves

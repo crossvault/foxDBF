@@ -1081,6 +1081,10 @@ public sealed partial class VfpInterpreter
         string? identity = tag ?? DefaultOrderIdentity(area);
         if (identity is null) { m.Found = false; return false; }
 
+        if (key.Type == VfpType.Character && !key.IsBinary)
+            key = VfpValue.Character(VfpSessionText.ForTable(key.AsString, ConnectionEncoding(), wa.Table.Encoding,
+                byteString: _ctx.Encoding?.CodePage == System.Text.Encoding.Latin1.CodePage));
+
         using var src = OpenOrderSource(area, identity);
         if (src is null) { m.Found = false; return false; }
 

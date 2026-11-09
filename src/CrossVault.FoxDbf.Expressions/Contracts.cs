@@ -170,6 +170,10 @@ public sealed class EvaluationContext
     // VFP runtime SYS(2335,0) suppresses missing index functions while committing the row.
     internal Func<string?, bool>? SkipUnavailableIndexExpression { get; set; }
     internal VfpRandom Random { get; set; } = new();
+    /// <summary>VFP session code page (CPCURRENT), independent of the table/CHR encoding.
+    /// Index expressions apply this session's case table to the table's raw bytes.
+    /// Null preserves the standalone expression engine's existing casing defaults.</summary>
+    public int? SessionCodePage { get; set; }
 
     /// <summary>A fresh context with VFP defaults (EXACT OFF, MACHINE collation).</summary>
     public static EvaluationContext Default => new();

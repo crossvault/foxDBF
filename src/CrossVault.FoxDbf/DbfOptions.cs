@@ -17,6 +17,11 @@ namespace CrossVault.FoxDbf;
 /// </remarks>
 public sealed record DbfOptions
 {
+    /// <summary>Session code page for UPPER/LOWER in index KEY/FOR expressions.
+    /// Null uses the table's own code page. Does not change the DBF encoding or
+    /// restrict maintenance of existing tags from another language session.</summary>
+    public int? SessionCodePage { get; init; }
+
     /// <summary>
     /// When false (the default) system columns such as <c>_NullFlags</c> are hidden
     /// from <see cref="DbfTable.Columns"/> and the public record accessors; when true
