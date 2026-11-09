@@ -30,6 +30,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- SQL and microVFP `CREATE TABLE` / `CREATE DBF` support `FREE` and `CODEPAGE = expression`,
+  including VFP9 language-driver bytes, memo encoding and invalid-code-page errors.
+
 - microVFP scoped `DELETE` and `RECALL`: `ALL`, `NEXT`, `RECORD`, `REST`, `FOR`, `WHILE`,
   `IN` and `NOOPTIMIZE`, with VFP9 record order, visibility, final pointers and `_TALLY`.
   Includes row/table buffering, partial progress on predicate or delete-trigger failure,
@@ -84,6 +87,25 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   directory, as VFP9 resolves them against SET DEFAULT. `FILETOSTR()` reads a table, CDX or memo
   file the session uses SHARED and raises VFP9's error 1705 for one it holds EXCLUSIVE or another
   process locks; it used to fail with error 1 in all these cases.
+- BREAKING: `CREATE TABLE` validates referenced tables/tags and multiple primary keys before writing,
+  resolves self references in VFP9 declaration order, and makes implicit `AUTOINC` columns
+  non-nullable under `SET NULL ON`. Newly created microVFP cursors report their DBC membership.
+- DBC member creation permits shared readers and prepares the catalog/index together under
+  VFP locks; failed publication restores the DBC/DCT/DCX and removes the new table files.
+- Candidate-key refusals leave DBF/FPT/CDX unchanged, including memo updates and batch collisions
+  (VFP9 itself leaves the grown memo file behind; foxDbf keeps refused writes atomic).
+  Append validation and index maintenance use each row's new `RECCOUNT()`; memo expressions
+  read the proposed content before allocation and the live memo stream during maintenance.
+- BREAKING: `CREATE TABLE` no longer silently ignores constraints or trailing clauses, or creates
+  an unregistered free table while a database is current. `NAME` without a current database,
+  `NAME` with `FREE`, invalid clause order and database-only constraints on free tables raise
+  the corresponding VFP9 errors. CREATE now registers tables in the current DBC, including `NAME`,
+  long field names, backlinks, DEFAULT/CHECK/ERROR properties, primary/candidate tags and REFERENCES
+  relationships. `FREE` explicitly bypasses membership. Candidate keys reject duplicate inserts and
+  updates after reopening; ADO.NET rollback restores the DBC, its memo and its index together.
+- `CREATE TABLE` / `CREATE DBF` accept AFIELDS-style microVFP arrays with 4–18 columns, including
+  field rules, table properties and autoincrement seeds. Declarations support `AUTOINC NEXTVALUE ...
+  STEP ...` and `NOCPTRANS`, with VFP9 descriptor bytes and validation errors.
 - microVFP builds and maintains index KEY/FOR expressions that call loaded UDFs, arrays or interpreter
   functions, including existing VFP9-created tags. Missing functions are rejected before writes by default; plain
   library access remains readable and refuses unsupported maintenance. Native scalar keys retain their

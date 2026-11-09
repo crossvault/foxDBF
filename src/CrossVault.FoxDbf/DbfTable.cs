@@ -51,8 +51,13 @@ public sealed partial class DbfTable : IDisposable
     /// </summary>
     public MemoFile? Memo => _memo;
 
-    // A writer's schema shares its DBF stream; attach the resolved sidecar without reopening the DBF.
-    internal void AttachMemo(string path) => _memo ??= MemoFile.Open(string.Empty, Version, path);
+    // A writer's schema shares its DBF stream and has no discovery path. Share the live
+    // FPT stream too, so index expressions can read newly appended and existing memos.
+    internal void AttachWriterMemo(Stream stream)
+    {
+        _memo?.Dispose();
+        _memo = new FoxproMemoFile(stream, leaveOpen: true);
+    }
 
     /// <summary>
     /// Decode an <c>M</c> (memo) field's pointer and resolve it against <see cref="Memo"/>

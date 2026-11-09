@@ -62,6 +62,158 @@ public sealed record DbcCreateOptions
 /// </summary>
 public static class DbfDatabaseBuilder
 {
+    [ThreadStatic]
+    internal static Action<string>? AddTableFaultForTests;
+
+    // CREATE TABLE uses the same record/property encoding as CREATE DATABASE. Append to the
+    // existing container: rebuilding it would discard procedures, views, RI and user properties.
+    internal static void AddTable(string dbcPath, string tableName, string relativePath,
+        IReadOnlyList<Sql.ColumnDefinition> columns, IReadOnlyList<Sql.CreateTableKey> keys,
+        string? check, string? error, string? insertTrigger, string? updateTrigger,
+        string? deleteTrigger, string? comment)
+    {
+        // Keep the VFP file AND append locks until all three files are published or undone.
+        // Shared readers may stay open; preparing a private copy prevents a failed DCX build
+        // from exposing catalog records that the live DCX cannot yet find.
+        using var gate = DbfWriter.Open(dbcPath, new DbfOptions
+            { LockMode = LockMode.Shared, MemoPath = SidecarFile.ChangeExtension(dbcPath, ".dct") });
+        using var fileLock = gate.LockFileScope();
+        gate.LockHeader();
+        string stage = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(dbcPath))!, ".foxdbf-ddl-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(stage);
+        var targets = new List<FileStream>();
+        var before = new List<byte[]>();
+        try
+        {
+            string[] paths = [dbcPath, SidecarFile.ChangeExtension(dbcPath, ".dct"), SidecarFile.ChangeExtension(dbcPath, ".dcx")];
+            foreach (string path in paths)
+            {
+                // Admit every write handle before changing any file (sharing failures are harmless).
+                var target = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+                targets.Add(target);
+                using var bytes = new MemoryStream();
+                target.CopyTo(bytes);
+                before.Add(bytes.ToArray());
+                File.WriteAllBytes(Path.Combine(stage, Path.GetFileName(path)), before[^1]);
+            }
+            string stagedDbc = Path.Combine(stage, Path.GetFileName(dbcPath));
+            AddTableCore(stagedDbc, tableName, relativePath, columns, keys, check, error,
+                insertTrigger, updateTrigger, deleteTrigger, comment);
+            try
+            {
+                // Publish the container header last: its record count is the visibility boundary.
+                foreach (int i in new[] { 1, 2, 0 })
+                {
+                    Write(targets[i], File.ReadAllBytes(Path.Combine(stage, Path.GetFileName(paths[i]))));
+                    AddTableFaultForTests?.Invoke("published" + i);
+                }
+            }
+            catch
+            {
+                for (int i = 0; i < targets.Count; i++) Write(targets[i], before[i]);
+                throw;
+            }
+        }
+        finally
+        {
+            foreach (var target in targets) target.Dispose();
+            // Cleanup must not turn a committed catalog change into a failed CREATE whose
+            // caller removes the new member. The writer releases both locks on disposal.
+            try { Directory.Delete(stage, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        static void Write(FileStream target, byte[] bytes)
+        {
+            target.Position = 0;
+            target.Write(bytes);
+            target.SetLength(bytes.Length);
+            target.Flush(flushToDisk: true);
+        }
+    }
+
+    private static void AddTableCore(string dbcPath, string tableName, string relativePath,
+        IReadOnlyList<Sql.ColumnDefinition> columns, IReadOnlyList<Sql.CreateTableKey> keys,
+        string? check, string? error, string? insertTrigger, string? updateTrigger,
+        string? deleteTrigger, string? comment)
+    {
+        using (var writer = DbfWriter.Open(dbcPath,
+                   new DbfOptions { LockMode = LockMode.Exclusive, MemoPath = SidecarFile.ChangeExtension(dbcPath, ".dct") }))
+        {
+            var enc = writer.Schema.Encoding;
+            var records = writer.Schema.EnumerateAll(includeDeleted: true).ToArray();
+            // Sessions cache the catalog. Recheck the fresh snapshot under the publication locks.
+            if (records.Any(r => !r.IsDeleted && Equals(r["OBJECTTYPE"], "Table") &&
+                string.Equals(r["OBJECTNAME"] as string, tableName, StringComparison.OrdinalIgnoreCase)))
+                throw new Sql.FoxDbfSqlException($"Table '{tableName}' already exists.") { VfpErrorNumber = 1571 };
+            int nextId = records
+                .Select(r => Convert.ToInt32(r["OBJECTID"])).DefaultIfEmpty(0).Max() + 1;
+            byte[] Properties(params (byte Id, string? Value)[] values)
+                => values.Where(v => v.Value is not null)
+                    .SelectMany(v => Property(v.Id, enc.GetBytes(v.Value! + "\0"))).ToArray();
+            int tableId = nextId++;
+            var tableProperties = TablePropertyBlob(relativePath.ToLowerInvariant(), enc);
+            int tableRecord = writer.RecordCount;
+            writer.AppendRecord(tableId, 1, "Table", tableName.ToLowerInvariant(), tableProperties, null, null, null);
+            foreach (var entry in new (byte Id, string? Value)[]
+                { (9, check), (10, error), (14, insertTrigger), (15, updateTrigger), (16, deleteTrigger), (7, comment) })
+            {
+                if (entry.Value is null) continue;
+                tableProperties = tableProperties.Concat(Properties(entry)).ToArray();
+                writer.ReplaceContainerProperty(tableRecord, tableProperties);
+            }
+            foreach (var column in columns)
+            {
+                int fieldRecord = writer.RecordCount;
+                writer.AppendRecord(nextId++, tableId, "Field", column.Name.ToLowerInvariant(), null, null, null, null);
+                byte[] properties = [];
+                foreach (var entry in new (byte Id, string? Value)[] { (11, column.Default), (9, column.Check), (10, column.Error) })
+                {
+                    if (entry.Value is null) continue;
+                    properties = properties.Concat(Properties(entry)).ToArray();
+                    writer.ReplaceContainerProperty(fieldRecord, properties);
+                }
+            }
+            var indexRecords = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var key in keys)
+            {
+                byte[] indexProperties = Property(17, [(byte)(key.Kind is "PRIMARY" or "UNIQUE" ? 1 : 0)]);
+                // VFP replaces a repeated tag definition and keeps one catalog Index object.
+                if (indexRecords.TryGetValue(key.Tag, out int indexRecord))
+                    writer.ReplaceContainerProperty(indexRecord, indexProperties);
+                else
+                {
+                    indexRecords.Add(key.Tag, writer.RecordCount);
+                    writer.AppendRecord(nextId++, tableId, "Index", key.Tag.ToLowerInvariant(),
+                        indexProperties, null, null, null);
+                }
+                // VFP assigns PrimaryKey after creating its Index object. A PROPERTY that
+                // outgrows its current memo block relocates at this point (the old block remains).
+                if (key.Kind == "PRIMARY")
+                    writer.ReplaceContainerProperty(tableRecord,
+                        tableProperties.Concat(Properties((20, key.Tag.ToLowerInvariant()))).ToArray());
+            }
+            int relation = 0;
+            foreach (var key in keys.Where(k => k.ReferencedTable is not null))
+                writer.AppendRecord(nextId++, tableId, "Relation", $"Relation {++relation}",
+                    Properties((13, key.Tag.ToLowerInvariant()), (18, key.ReferencedTable!.ToLowerInvariant()),
+                        (19, key.ReferencedTag?.ToLowerInvariant())), null, null, null);
+        }
+        AddTableFaultForTests?.Invoke("before_dcx");
+        BuildStructuralDcx(dbcPath);
+    }
+
+    private static byte[] Property(byte id, byte[] value)
+    {
+        var bytes = new byte[7 + value.Length];
+        BinaryPrimitives.WriteInt32LittleEndian(bytes, bytes.Length);
+        bytes[4] = 1;
+        bytes[6] = id;
+        value.CopyTo(bytes, 7);
+        return bytes;
+    }
+
     /// <summary>
     /// Build the container at <paramref name="dbcPath"/> with the given member <paramref name="tables"/>
     /// (plan §D6). Creates each member <c>.dbf</c> via <see cref="DbfWriter.Create(string, System.Collections.Generic.IEnumerable{DbfColumnDef}, DbfCreateOptions)"/>

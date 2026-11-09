@@ -343,11 +343,17 @@ internal static class CdxIndexBuilder
 
         entries.Sort(EntryComparer.Instance);
 
+        if (def.Candidate)
+            for (int i = 1; i < entries.Count; i++)
+                if (entries[i - 1].Key.AsSpan().SequenceEqual(entries[i].Key))
+                    throw new DbfWriteException($"Uniqueness of index '{def.Name}' is violated.", 1884);
+
         if (def.Unique)
             entries = DropDuplicateKeys(entries);
 
         byte options = standalone ? (byte)0x20 : (byte)0x60; // [compound |] compact
         if (def.Unique) options |= 0x01;
+        if (def.Candidate) options |= 0x04;
         if (hasFor) options |= 0x08;
 
         // Tag signature (byte 15): 0x01 for an IDENTITY/MACHINE collation, 0x02 only for a real
@@ -393,6 +399,7 @@ internal static class CdxIndexBuilder
         public required Encoding CharacterEncoding;
         public required Func<IRowContext, VfpValue> KeyFn;
         public DbfColumn? DateField;
+        public DbfColumn? UnfilteredFixedField;
         public required Func<IRowContext, VfpValue>? ForFn;
         public required bool Unique;
         public required bool Descending;
@@ -401,6 +408,7 @@ internal static class CdxIndexBuilder
         /// DELETED(), EVALUATE(), a volatile function or a host (non-engine) function that might call DELETED().
         /// A DELETE/RECALL re-keys only such tags; every other key is provably unchanged.</summary>
         public bool DependsOnDeletionState;
+        public bool DependsOnRecordCount;
 
         /// <summary>
         /// Evaluate the tag's FOR filter and KEY over <paramref name="record"/>. Returns <see langword="true"/>
@@ -519,6 +527,12 @@ internal static class CdxIndexBuilder
         {
             ValidateHost = validateHost,
             DependsOnDeletionState = dependsOnDeletion,
+            // A bulk append must preserve historical keys for count-dependent expressions.
+            DependsOnRecordCount = new[] { def.KeyExpression, def.ForExpression }
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .Any(text => VfpExpression.Parse(text!).ContainsFunction((name, _) =>
+                    VfpFunctionAbbreviations.Canonical(name) is "RECCOUNT" or "EVALUATE" ||
+                    !VfpRuntime.EngineFunctionNames.Contains(VfpFunctionAbbreviations.Canonical(name)))),
             KeyType = keyType,
             KeyLen = keyLen,
             IsChar = isChar,
@@ -527,6 +541,9 @@ internal static class CdxIndexBuilder
             CharacterEncoding = IndexKey.ResolveCharacterEncoding(schema, def.KeyExpression),
             KeyFn = keyFn,
             DateField = IndexKey.ResolveDateField(schema, def.KeyExpression),
+            UnfilteredFixedField = forFn is null ? schema.Columns.FirstOrDefault(c =>
+                !c.IsNullable && c.Type is 'C' or 'I' or 'N' or 'F' or 'B' or 'Y' or 'D' or 'T' or 'L' &&
+                string.Equals(c.Name, def.KeyExpression.Trim(), StringComparison.OrdinalIgnoreCase)) : null,
             ForFn = forFn,
             Unique = def.Unique,
             Descending = def.Descending,

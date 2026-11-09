@@ -149,6 +149,10 @@ public sealed partial class DbfWriter
                 appended.Add((diskCount + r + 1, record));   // 1-based recno + exact written bytes
             }
 
+            // Reject candidate collisions before starting a DBF/CDX edit. A constraint refusal
+            // must not leave the writer marked as needing index repair after a successful undo.
+            ValidateCandidateBatch(appended, rows);
+
             // Commit every prepared record. NO per-row 0x1A / SetLength / flush — the next row's
             // data offset overwrites where the per-row path would have stamped 0x1A, and the final
             // single EOF below lands at exactly the same byte.

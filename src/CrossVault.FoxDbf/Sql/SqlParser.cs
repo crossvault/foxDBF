@@ -986,29 +986,143 @@ public static class SqlParser
 
             var (db, table) = ParseDbTable();
 
-            if (Current.Kind != TokKind.LParen) throw Err("Expected '(' to open the column list.");
-            Advance();
+            string? longName = null;
+            bool free = false;
+            VfpExpression? codePage = null;
+            if (IsKw("NAME"))
+            {
+                Advance();
+                longName = ExpectName("a long table name");
+            }
+            else if (IsKw("FREE"))
+            {
+                Advance();
+                free = true;
+            }
+            if (IsKw("CODEPAGE"))
+            {
+                Advance();
+                if (Current.Kind != TokKind.Eq) throw CreateSyntaxError();
+                Advance();
+                codePage = ParseCreateCodePage();
+            }
 
+            string? fromArray = null, check = null, error = null;
+            var keys = new List<CreateTableKey>();
             var cols = new List<ColumnDefinition>();
-            do { cols.Add(ParseColumnDefinition()); }
-            while (TryComma());
+            if (IsKw("FROM"))
+            {
+                Advance();
+                ExpectKw("ARRAY");
+                fromArray = ExpectWord("an array name");
+            }
+            else
+            {
+                if (Current.Kind != TokKind.LParen) throw CreateSyntaxError();
+                Advance();
+                do
+                {
+                    if (IsKw("CHECK"))
+                    {
+                        Advance();
+                        check = ReadCreateExpression("ERROR");
+                        if (IsKw("ERROR")) { Advance(); error = ReadCreateExpression(); }
+                    }
+                    else if (IsKwAny("PRIMARY", "FOREIGN", "UNIQUE"))
+                        keys.Add(ParseCreateKey(null));
+                    else
+                        cols.Add(ParseColumnDefinition(keys));
+                }
+                while (TryComma());
+                if (Current.Kind != TokKind.RParen) throw CreateSyntaxError();
+                Advance();
+            }
 
-            if (Current.Kind != TokKind.RParen) throw Err("Expected ')' to close the column list.");
-            Advance();
+            // VFP9 places constraints INSIDE the column list. Text after ')' is error 36.
+            if (!AtEnd && Current.Kind != TokKind.Semicolon)
+                throw new FoxDbfSqlException("Command contains unrecognized phrase/keyword.", Current.Start)
+                    { VfpErrorNumber = 36 };
 
-            // Trailing options (NOCONSOLE / NAME longname / etc.) are accepted and ignored.
-            while (!AtEnd && Current.Kind != TokKind.Semicolon) Advance();
-
-            return new CreateTableStatement(db, table, cols);
+            return new CreateTableStatement(db, table, cols)
+            {
+                Free = free,
+                LongName = longName,
+                CodePage = codePage,
+                FromArray = fromArray,
+                Keys = keys,
+                Check = check,
+                Error = error,
+                RequiresDatabase = check is not null || keys.Any(k => k.Kind != "UNIQUE") ||
+                    cols.Any(c => c.Default is not null || c.Check is not null),
+            };
         }
 
-        // colname Type[(len[,dec])] [NULL | NOT NULL] [other column constraints, ignored]
-        private ColumnDefinition ParseColumnDefinition()
+        private FoxDbfSqlException CreateSyntaxError()
+            => new("Syntax error.", Current.Start) { VfpErrorNumber = 10 };
+
+        private VfpExpression ParseCreateCodePage()
+        {
+            int start = _pos;
+            int depth = 0;
+            while (!AtEnd && Current.Kind != TokKind.Semicolon)
+            {
+                if (depth == 0)
+                {
+                    if (IsKwAny("FREE", "NAME", "CODEPAGE")) throw CreateSyntaxError();
+                    if (IsKw("FROM")) break;
+                    // A column declaration starts with name + type; parentheses belonging to
+                    // the numeric expression (including function calls) must stay in that expression.
+                    if (Current.Kind == TokKind.LParen && _pos > start &&
+                        Peek().Kind == TokKind.Word && Peek(2).Kind == TokKind.Word) break;
+                }
+                if (Current.Kind == TokKind.LParen) depth++;
+                if (Current.Kind == TokKind.RParen) depth--;
+                Advance();
+            }
+            if (_pos == start) throw CreateSyntaxError();
+            try { return BuildExpr(RangeText(start, _pos), _t[start].Start); }
+            catch (FoxDbfSqlException) { throw CreateSyntaxError(); }
+        }
+
+        private string ReadCreateExpression(params string[] stops)
+        {
+            int start = _pos, depth = 0;
+            while (!AtEnd)
+            {
+                if (depth == 0 && (Current.Kind is TokKind.Comma or TokKind.RParen or TokKind.Semicolon ||
+                    stops.Any(IsKw))) break;
+                if (Current.Kind == TokKind.LParen) depth++;
+                if (Current.Kind == TokKind.RParen) depth--;
+                Advance();
+            }
+            if (_pos == start) throw CreateSyntaxError();
+            return RangeText(start, _pos).Trim();
+        }
+
+        private CreateTableKey ParseCreateKey(string? field)
+        {
+            string kind = Current.Text.ToUpperInvariant();
+            Advance();
+            if (kind is "PRIMARY" or "FOREIGN") ExpectKw("KEY");
+            string expression = field ?? ReadCreateExpression("TAG", "REFERENCES");
+            string tag = field ?? "";
+            if (IsKw("TAG")) { Advance(); tag = ExpectWord("a tag name"); }
+            if (tag.Length == 0) throw CreateSyntaxError();
+            string? parent = null, parentTag = null;
+            if (kind == "REFERENCES" || IsKw("REFERENCES"))
+            {
+                if (kind != "REFERENCES") Advance();
+                parent = ExpectName("a referenced table");
+                if (IsKw("TAG")) { Advance(); parentTag = ExpectWord("a referenced tag"); }
+            }
+            return new CreateTableKey(kind, expression, tag, parent, parentTag);
+        }
+
+        private ColumnDefinition ParseColumnDefinition(List<CreateTableKey>? keys = null)
         {
             string name = ExpectWord("a column name");
             string typeWord = ExpectWord("a column type");
             char type = char.ToUpperInvariant(typeWord[0]);
-
             int? len = null, dec = null;
             if (Current.Kind == TokKind.LParen)
             {
@@ -1018,41 +1132,45 @@ public static class SqlParser
                 if (Current.Kind != TokKind.RParen) throw Err("Expected ')' after the column length.");
                 Advance();
             }
-
-            // B(n) specifies decimal places, not the fixed eight-byte storage width.
-            if (type == 'B' && len is not null && dec is null)
-            {
-                dec = len;
-                len = 8;
-            }
-
-            // Scan the rest of this column's clause for NULL / NOT NULL, skipping (but tolerating) any
-            // other column constraints (DEFAULT expr, CHECK (expr), PRIMARY KEY, UNIQUE, ...). Stop at a
-            // top-level comma (next column) or the closing ')' of the column list.
+            if (type == 'B' && len is not null && dec is null) { dec = len; len = 8; }
             bool? nullable = null;
-            int depth = 0;
-            while (!AtEnd)
+            bool binary = false;
+            Write.DbfAutoIncrement? auto = null;
+            string? def = null, check = null, error = null;
+            string[] modifiers = ["NULL", "NOT", "DEFAULT", "CHECK", "ERROR", "PRIMARY", "UNIQUE", "REFERENCES", "AUTOINC", "NOCPTRANS"];
+            while (!AtEnd && Current.Kind is not (TokKind.Comma or TokKind.RParen or TokKind.Semicolon))
             {
-                var t = Current;
-                if (t.Kind == TokKind.LParen) { depth++; Advance(); continue; }
-                if (t.Kind == TokKind.RParen)
+                if (IsKw("NULL")) { nullable = true; Advance(); }
+                else if (IsKw("NOT")) { Advance(); ExpectKw("NULL"); nullable = false; }
+                else if (IsKw("NOCPTRANS")) { Advance(); binary = true; }
+                else if (IsKw("DEFAULT")) { Advance(); def = ReadCreateExpression(modifiers); }
+                else if (IsKw("CHECK")) { Advance(); check = ReadCreateExpression(modifiers); }
+                else if (IsKw("ERROR")) { Advance(); error = ReadCreateExpression(modifiers); }
+                else if (IsKwAny("PRIMARY", "UNIQUE", "REFERENCES"))
                 {
-                    if (depth == 0) break;
-                    depth--; Advance(); continue;
+                    var key = ParseCreateKey(name);
+                    keys?.Add(key);
                 }
-                if (depth == 0 && t.Kind == TokKind.Comma) break;
-                if (depth == 0 && t.Kind == TokKind.Semicolon) break;
-                if (depth == 0 && IsKw("NULL")) { nullable = true; Advance(); continue; }
-                if (depth == 0 && IsKw("NOT"))
+                else if (IsKw("AUTOINC"))
                 {
                     Advance();
-                    if (IsKw("NULL")) { Advance(); nullable = false; }
-                    continue;
+                    int next = 1, step = 1;
+                    if (IsKw("NEXTVALUE"))
+                    {
+                        Advance();
+                        bool negative = Current.Text == "-";
+                        if (negative) Advance();
+                        next = ExpectInt("an autoincrement seed");
+                        if (negative) next = -next;
+                    }
+                    if (IsKw("STEP")) { Advance(); step = ExpectInt("an autoincrement step"); }
+                    if (step is < 1 or > 255) throw CreateSyntaxError();
+                    auto = new Write.DbfAutoIncrement(unchecked((uint)next), checked((byte)step));
                 }
-                Advance();
+                else throw CreateSyntaxError();
             }
-
-            return new ColumnDefinition(name, type, len, dec, nullable);
+            return new ColumnDefinition(name, type, len, dec, nullable)
+                { NoCpTrans = binary, AutoIncrement = auto, Default = def, Check = check, Error = error };
         }
 
         // =================================================================

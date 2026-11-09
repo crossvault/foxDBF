@@ -210,6 +210,12 @@ public sealed class FoxDbfTransaction : DbTransaction
     private static IEnumerable<string> CompanionFiles(string dbfPath)
     {
         yield return dbfPath;
+        if (Path.GetExtension(dbfPath).Equals(".dbc", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return SidecarFile.ChangeExtension(dbfPath, ".dct");
+            yield return SidecarFile.ChangeExtension(dbfPath, ".dcx");
+            yield break;
+        }
         yield return SidecarFile.ChangeExtension(dbfPath, ".fpt"); // VFP memo
         yield return SidecarFile.ChangeExtension(dbfPath, ".dbt"); // dBase memo
         yield return SidecarFile.ChangeExtension(dbfPath, ".cdx"); // structural compound index
@@ -290,7 +296,10 @@ public sealed class FoxDbfTransaction : DbTransaction
         {
             if (_copies.Count > 0 || _ddlSnapshots.Count > 0)
                 _connection.QuiesceForRollback();
-            RestoreDdlSnapshots();
+            if (_connection.Session.DatabasePath is { } dbc && _ddlSnapshots.ContainsKey(dbc))
+                _connection.Session.RewriteDatabase(_ => RestoreDdlSnapshots());
+            else
+                RestoreDdlSnapshots();
         }
         finally
         {

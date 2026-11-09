@@ -30,6 +30,9 @@ public sealed record CdxTagDefinition
     /// <summary>True to build a UNIQUE tag — only the first record (lowest recno) per distinct key is kept.</summary>
     public bool Unique { get; init; }
 
+    /// <summary>Enforce distinct keys (VFP CANDIDATE / SQL UNIQUE), including deleted records.</summary>
+    public bool Candidate { get; init; }
+
     /// <summary>Store <see cref="KeyExpression"/>/<see cref="ForExpression"/> byte-for-byte as given instead of
     /// the decompiled text VFP's <c>INDEX ON</c> and <c>REINDEX</c> write (<c>UPPER( name )</c> →
     /// <c>UPPER(name)</c>). For a tag that keeps the text already on disk — a sibling preserved while another

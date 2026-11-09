@@ -46,6 +46,7 @@ public readonly struct CdxHeader
     public string ForExpression { get; }
 
     public bool IsUnique => (Options & 0x01) != 0;
+    public bool IsCandidate => (Options & 0x04) != 0;
     public bool HasFor => (Options & 0x08) != 0;
     public bool IsCompact => (Options & 0x20) != 0;
     public bool IsCompound => (Options & 0x40) != 0;

@@ -36,12 +36,62 @@ public sealed partial class DbfWriter
     private CdxTreeEditor? _cdxMaintEditor;
     private List<(CdxTreeEditor.TagHandle Tag, CdxIndexBuilder.TagKeyComputer Computer)>? _cdxMaintPlans;
     private CdxMaintMode _cdxMaintMode;
+    private bool _hasCandidateTags;
 
     private enum CdxMaintMode
     {
         None,
         Append,
         Update,
+    }
+
+    private DbfRecord CandidateRecord(byte[] bytes, object?[] values)
+    {
+        var record = new DbfRecord(_schema, bytes);
+        for (int i = 0; i < _schema.Columns.Count; i++)
+        {
+            var column = _schema.Columns[i];
+            if (column.Type is not ('M' or 'W' or 'G' or 'P') || i >= values.Length || values[i] is null or DBNull)
+                continue;
+            byte[] content = values[i] is byte[] binary ? binary : EncodeMemoText(column,
+                Convert.ToString(values[i], System.Globalization.CultureInfo.InvariantCulture) ?? "");
+            object value = column.Type == 'M'
+                ? (column.IsBinary ? System.Text.Encoding.Latin1 : _schema.Encoding).GetString(content) : content;
+            record.SetPendingMemoValue(i, value);
+        }
+        return record;
+    }
+
+    private void ValidateCandidateKeys(int recNo, byte[] bytes, object?[] values, int recordCount, byte[]? previous = null)
+    {
+        var record = CandidateRecord(bytes, values);
+        foreach (var (tag, computer) in _cdxMaintPlans!)
+        {
+            if (!tag.Header.IsCandidate || !computer.TryComputeKey(record, recNo, recordCount, out var key)) continue;
+            // Updating a row without changing its key must not collide with that row's own entry.
+            if (previous is { } old && computer.TryComputeKey(new DbfRecord(_schema, old), recNo, recordCount, out var oldKey)
+                && key.AsSpan().SequenceEqual(oldKey)) continue;
+            if (_cdxMaintEditor!.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
+                throw new DbfWriteException($"Uniqueness of index '{tag.Name}' is violated.", 1884);
+        }
+    }
+
+    private void ValidateCandidateBatch(IReadOnlyList<(int RecNo, byte[] Record)> records, IReadOnlyList<object?[]> values)
+    {
+        if (!_hasCandidateTags) return;
+        foreach (var (tag, computer) in _cdxMaintPlans!)
+        {
+            if (!tag.Header.IsCandidate) continue;
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < records.Count; i++)
+            {
+                var (recNo, bytes) = records[i];
+                if (!computer.TryComputeKey(CandidateRecord(bytes, values[i]), recNo, recNo, out var key)) continue;
+                if (!keys.Add(Convert.ToHexString(key)) ||
+                    _cdxMaintEditor!.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
+                    throw new DbfWriteException($"Uniqueness of index '{tag.Name}' is violated.", 1884);
+            }
+        }
     }
 
     internal int CdxAppendPageCachePageCountForTests
@@ -138,6 +188,7 @@ public sealed partial class DbfWriter
             _cdxMaintStream = rw;
             _cdxMaintEditor = editor;
             _cdxMaintPlans = plans;
+            _hasCandidateTags = plans.Any(p => p.Tag.Header.IsCandidate);
             var validators = plans.Where(p => p.Computer.ValidateHost is not null).Select(p => p.Computer.ValidateHost!).ToArray();
             _hostIndexValidators = validators.Length == 0 ? null : validators;
             _cdxMaintMode = mode;
@@ -200,6 +251,7 @@ public sealed partial class DbfWriter
         _cdxMaintEditor = null;
         _cdxMaintStream = null;
         _cdxMaintPlans = null;
+        _hasCandidateTags = false;
         _hostIndexValidators = null;
         _cdxMaintMode = CdxMaintMode.None;
     }
@@ -249,6 +301,10 @@ public sealed partial class DbfWriter
             var editor = _cdxMaintEditor!;
             foreach (var (tag, computer) in _cdxMaintPlans!)
             {
+                // A bare, non-nullable fixed-field key without FOR cannot change if its bytes
+                // did not change. Avoid decoding/allocating two keys for ordinary non-key updates.
+                if (computer.UnfilteredFixedField is { } field &&
+                    oldRecord.GetRawField(field).SequenceEqual(newRecord.GetRawField(field))) continue;
                 bool oldIn = computer.TryComputeKey(oldRecord, recNo, _recordCount, out var oldKey);
                 bool newIn = computer.TryComputeKey(newRecord, recNo, _recordCount, out var newKey);
 
@@ -332,7 +388,7 @@ public sealed partial class DbfWriter
             // be mistaken for derivable just because its width happens to match.
             if (IndexExpressionSupported(hdr.KeyExpression) && IndexExpressionSupported(forExpr))
             {
-                var def = new CdxTagDefinition(tag.Name, hdr.KeyExpression, forExpr, hdr.Descending, hdr.SortOrder, hdr.IsUnique);
+                var def = new CdxTagDefinition(tag.Name, hdr.KeyExpression, forExpr, hdr.Descending, hdr.SortOrder, hdr.IsUnique) { Candidate = hdr.IsCandidate };
 
                 // No ambient EvaluationContext on the raw write path → VFP-neutral defaults (EXACT/ANSI OFF), the
                 // same defaults the bulk builder uses when CreateTag/Reindex run without a context.

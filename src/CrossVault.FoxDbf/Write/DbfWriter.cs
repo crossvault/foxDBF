@@ -188,7 +188,6 @@ public sealed partial class DbfWriter : IDisposable
                     // read path (MemoFile.cs), so the byte-range-lock multi-writer design holds for memo
                     // tables too.
                     fpt = new FileStream(fptPath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
-                    schema.AttachMemo(fptPath);
                     var head = new byte[8];
                     fpt.Seek(0, SeekOrigin.Begin);
                     int read = fpt.ReadAtLeast(head, 8, throwOnEndOfStream: false);
@@ -199,6 +198,7 @@ public sealed partial class DbfWriter : IDisposable
                     }
                     if (blockSize <= 0)
                         blockSize = 512;
+                    schema.AttachWriterMemo(fpt);
                 }
             }
         }
@@ -595,8 +595,9 @@ public sealed partial class DbfWriter : IDisposable
             }
 
             byte[] record = RecordEncoder.Encode(_schema, positional, deleted: false, blankWhenNull);
-            using var mutation = BeginIndexMutation(dataOffset, append: true);
+            if (_hasCandidateTags) ValidateCandidateKeys(newCount, record, positional, newCount);
             PatchMemoPointers(record, positional);
+            using var mutation = BeginIndexMutation(dataOffset, append: true);
 
             // Write the row (overwriting any pre-existing EOF byte), the fresh EOF, and pin the
             // exact file length so no stale trailing bytes survive.
@@ -708,8 +709,6 @@ public sealed partial class DbfWriter : IDisposable
 
             byte[] record = RecordEncoder.Encode(_schema, toEncode, deleted: false);
             record[0] = deletionMarker;
-            using var mutation = BeginIndexMutation(offset, append: false, before: existing);
-            PatchMemoPointers(record, toEncode);
 
             if (hasKeep && existing is not null)
             {
@@ -724,6 +723,9 @@ public sealed partial class DbfWriter : IDisposable
                 }
             }
 
+            if (_hasCandidateTags) ValidateCandidateKeys(index + 1, record, toEncode, _recordCount, existing);
+            PatchMemoPointers(record, toEncode);
+            using var mutation = BeginIndexMutation(offset, append: false, before: existing);
             _stream.Seek(offset, SeekOrigin.Begin);
             _stream.Write(record, 0, record.Length);
             writtenRecord = record;   // the exact bytes just written — reused for index maintenance
