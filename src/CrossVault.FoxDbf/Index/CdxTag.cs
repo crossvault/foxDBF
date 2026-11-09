@@ -40,6 +40,8 @@ public sealed class CdxTag
     /// </summary>
     public bool IsUnique { get; }
 
+    internal bool IsCandidate { get; init; }
+
     /// <summary>True when the tag was created DESCENDING (header @502).</summary>
     public bool Descending { get; }
 

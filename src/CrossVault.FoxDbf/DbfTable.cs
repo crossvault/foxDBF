@@ -27,7 +27,7 @@ public sealed partial class DbfTable : IDisposable
 
     // The sidecar memo reader (.fpt/.dbt/.dct), auto-opened beside the .dbf when present
     // (plan §A6). Owned by this table and disposed with it.
-    private readonly MemoFile? _memo;
+    private MemoFile? _memo;
 
     // The opt-in query accelerator (Highlike) attached to this table, if any. The ONLY
     // Core surface the accelerator sub-project plugs into. Null → the Core QueryOptimizer
@@ -50,6 +50,14 @@ public sealed partial class DbfTable : IDisposable
     /// together with it.
     /// </summary>
     public MemoFile? Memo => _memo;
+
+    // A writer's schema shares its DBF stream and has no discovery path. Share the live
+    // FPT stream too, so index expressions can read newly appended and existing memos.
+    internal void AttachWriterMemo(Stream stream)
+    {
+        _memo?.Dispose();
+        _memo = new FoxproMemoFile(stream, leaveOpen: true);
+    }
 
     /// <summary>
     /// Decode an <c>M</c> (memo) field's pointer and resolve it against <see cref="Memo"/>

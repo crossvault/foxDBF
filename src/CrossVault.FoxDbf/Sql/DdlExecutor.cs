@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using CrossVault.FoxDbf.Expressions;
+using CrossVault.FoxDbf.Index;
 using CrossVault.FoxDbf.Write;
 
 namespace CrossVault.FoxDbf.Sql;
@@ -61,16 +62,18 @@ internal sealed class DdlExecutor
                 throw new FoxDbfSqlException("Field name is a duplicate or invalid.") { VfpErrorNumber = 1712 };
             if (column.AutoIncrement is not null && column.Type != 'I')
                 throw new FoxDbfSqlException("Invalid autoincrement field type.") { VfpErrorNumber = 1804 };
-            if (column.AutoIncrement is not null && (column.Nullable ?? _session.Context.NullSetting))
+            if (column.AutoIncrement is not null && column.Nullable == true)
                 throw new FoxDbfSqlException("Function argument value, type, or count is invalid.") { VfpErrorNumber = 11 };
             if (column.NoCpTrans && column.Type is not ('C' or 'V' or 'M'))
                 throw new FoxDbfSqlException("Syntax error.") { VfpErrorNumber = 10 };
         }
         if (st.Keys.Any(k => k.Tag.Length > 10))
             throw new FoxDbfSqlException("Tag name is too long.") { VfpErrorNumber = 1888 };
+        if (st.Keys.Count(k => k.Kind == "PRIMARY") > 1)
+            throw new FoxDbfSqlException("A primary key already exists.") { VfpErrorNumber = 1883 };
         string logicalName = st.LongName ?? Path.GetFileNameWithoutExtension(st.Table);
         if (member && _session.Database!.TableNames.Contains(logicalName, StringComparer.OrdinalIgnoreCase))
-            throw new FoxDbfSqlException($"Table '{logicalName}' already exists.");
+            throw new FoxDbfSqlException($"Table '{logicalName}' already exists.") { VfpErrorNumber = 1571 };
 
         string path = TargetPath(st.Table);
         if (File.Exists(path))
@@ -96,34 +99,99 @@ internal sealed class DdlExecutor
             }
             defs.Add(ToColumnDef(col with { Name = name }));
         }
-        var keys = st.Keys.Select(k => k with
-        {
-            ReferencedTag = k.ReferencedTable is not null && k.ReferencedTag is null
-                ? _session.Database!.GetTableRules(k.ReferencedTable).PrimaryKey : k.ReferencedTag
-        }).ToArray();
+        var keys = ResolveReferences(st.Keys, logicalName);
         string? backlink = member ? Path.GetRelativePath(Path.GetDirectoryName(path)!, _session.DatabasePath!).ToLowerInvariant() : null;
-        using (DbfWriter.Create(path, defs, new DbfCreateOptions { CodePage = codePage, BacklinkPath = backlink })) { }
-        if (keys.Length > 0)
+        string[] createdFiles = [path, SidecarFile.ChangeExtension(path, ".fpt"), SidecarFile.ChangeExtension(path, ".cdx")];
+        if (createdFiles.Skip(1).Any(File.Exists))
+            throw new FoxDbfSqlException("A sidecar for the new table already exists.");
+        string stagedPath = Path.Combine(Path.GetDirectoryName(path)!, ".foxdbf-create-" + Guid.NewGuid().ToString("N") + ".dbf");
+        string[] stagedFiles = [stagedPath, Path.ChangeExtension(stagedPath, ".fpt"), Path.ChangeExtension(stagedPath, ".cdx")];
+        var published = new List<string>();
+        bool registered = false;
+        try
         {
-            using var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive },
-                physical => DbfDatabase.ApplyLongNames(physical, columns.Select(c => c.Name).ToArray()));
-            foreach (var key in keys)
-                writer.CreateTag(new CdxTagDefinition(key.Tag.ToUpperInvariant(), key.Expression, collation: _session.Context.Collation.Name)
-                    { Candidate = key.Kind is "PRIMARY" or "UNIQUE" }, _session.SqlContext());
-        }
-        if (member)
-        {
-            _session.SnapshotForDdl(_session.DatabasePath!);
-            _session.RewriteDatabase(dbc => DbfDatabaseBuilder.AddTable(dbc, logicalName,
-                Path.GetRelativePath(Path.GetDirectoryName(dbc)!, path), columns, keys, Normalize(st.Check), Normalize(st.Error),
-                Normalize(st.InsertTrigger), Normalize(st.UpdateTrigger), Normalize(st.DeleteTrigger), st.Comment));
-        }
+            using (DbfWriter.Create(stagedPath, defs, new DbfCreateOptions { CodePage = codePage, BacklinkPath = backlink })) { }
+            if (keys.Length > 0)
+            {
+                using var writer = DbfWriter.Open(stagedPath, new DbfOptions { LockMode = LockMode.Exclusive },
+                    physical => DbfDatabase.ApplyLongNames(physical, columns.Select(c => c.Name).ToArray()));
+                foreach (var key in keys)
+                    writer.CreateTag(new CdxTagDefinition(key.Tag.ToUpperInvariant(), key.Expression, collation: _session.Context.Collation.Name)
+                        { Candidate = key.Kind is "PRIMARY" or "UNIQUE" }, _session.SqlContext());
+            }
+            // VFP CREATE leaves an empty DBF at the end of its header; the first append writes EOF.
+            using (var empty = new FileStream(stagedPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                empty.SetLength(empty.Length - 1);
 
-        // VFP CREATE leaves an empty DBF at the end of its header; the first append writes EOF.
-        using (var empty = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-            empty.SetLength(empty.Length - 1);
+            // No-overwrite moves also protect files created by another session since validation.
+            foreach (int i in new[] { 1, 2, 0 })
+            {
+                if (!File.Exists(stagedFiles[i])) continue;
+                File.Move(stagedFiles[i], createdFiles[i]);
+                published.Add(createdFiles[i]);
+            }
+            if (member)
+            {
+                _session.SnapshotForDdl(_session.DatabasePath!);
+                _session.RewriteDatabase(dbc =>
+                {
+                    DbfDatabaseBuilder.AddTable(dbc, logicalName,
+                        Path.GetRelativePath(Path.GetDirectoryName(dbc)!, path), columns, keys, Normalize(st.Check), Normalize(st.Error),
+                        Normalize(st.InsertTrigger), Normalize(st.UpdateTrigger), Normalize(st.DeleteTrigger), st.Comment);
+                    registered = true;
+                });
+            }
+        }
+        catch
+        {
+            if (!registered)
+                foreach (string file in published) File.Delete(file);
+            throw;
+        }
+        finally
+        {
+            foreach (string file in stagedFiles) File.Delete(file);
+        }
 
         return SqlResult.Dml(0);
+    }
+
+    private CreateTableKey[] ResolveReferences(IReadOnlyList<CreateTableKey> keys, string tableName)
+    {
+        var resolved = new List<CreateTableKey>();
+        foreach (var key in keys)
+        {
+            if (key.ReferencedTable is null)
+            {
+                resolved.Add(key);
+                continue;
+            }
+            string? parentTag = key.ReferencedTag;
+            if (string.Equals(key.ReferencedTable, tableName, StringComparison.OrdinalIgnoreCase))
+            {
+                // VFP resolves keys in declaration order, including self references.
+                parentTag ??= resolved.LastOrDefault(k => k.Kind == "PRIMARY")?.Tag;
+                if (parentTag is null)
+                    throw new FoxDbfSqlException("No primary key is defined for the table.") { VfpErrorNumber = 1879 };
+                if (resolved.LastOrDefault(k => string.Equals(k.Tag, parentTag, StringComparison.OrdinalIgnoreCase))?.Kind is not ("PRIMARY" or "UNIQUE"))
+                    throw new FoxDbfSqlException("Index tag is not found.") { VfpErrorNumber = 1882 };
+            }
+            else
+            {
+                if (!_session.Database!.TryGetTableRules(key.ReferencedTable, out var rules))
+                    throw new FoxDbfSqlException($"Table '{key.ReferencedTable}' is not in the database.") { VfpErrorNumber = 1880 };
+                parentTag ??= rules.PrimaryKey;
+                if (parentTag is null)
+                    throw new FoxDbfSqlException("No primary key is defined for the table.") { VfpErrorNumber = 1879 };
+                string? parentPath = _session.Database.GetTablePath(key.ReferencedTable);
+                string? cdxPath = parentPath is null ? null : SidecarFile.ChangeExtension(parentPath, ".cdx");
+                using var cdx = cdxPath is not null && File.Exists(cdxPath) ? CdxFile.Open(cdxPath) : null;
+                if (cdx?.Tag(parentTag)?.IsCandidate != true)
+                    throw new FoxDbfSqlException("Index tag is not found.") { VfpErrorNumber = 1882 };
+            }
+            resolved.Add(key with { ReferencedTag = parentTag });
+        }
+        return resolved.ToArray();
     }
 
     private static string? Normalize(string? expression)
@@ -238,7 +306,7 @@ internal sealed class DdlExecutor
             type: type,
             length: c.Length ?? 0,
             decimalCount: DefaultDecimals(type, c.Decimals),
-            nullable: c.Nullable ?? _session.Context.NullSetting,
+            nullable: c.AutoIncrement is null && (c.Nullable ?? _session.Context.NullSetting),
             binary: binary,
             autoIncrement: c.AutoIncrement);
     }

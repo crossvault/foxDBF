@@ -460,6 +460,7 @@ internal static class CdxIndexBuilder
         public required Encoding CharacterEncoding;
         public required Func<IRowContext, VfpValue> KeyFn;
         public DbfColumn? DateField;
+        public DbfColumn? UnfilteredFixedField;
         public required Func<IRowContext, VfpValue>? ForFn;
         public required bool Unique;
         public required bool Descending;
@@ -468,6 +469,7 @@ internal static class CdxIndexBuilder
         /// DELETED(), EVALUATE(), a volatile function or a host (non-engine) function that might call DELETED().
         /// A DELETE/RECALL re-keys only such tags; every other key is provably unchanged.</summary>
         public bool DependsOnDeletionState;
+        public bool DependsOnRecordCount;
 
         /// <summary>
         /// Evaluate the tag's FOR filter and KEY over <paramref name="record"/>. Returns <see langword="true"/>
@@ -586,6 +588,12 @@ internal static class CdxIndexBuilder
         {
             ValidateHost = validateHost,
             DependsOnDeletionState = dependsOnDeletion,
+            // A bulk append must preserve historical keys for count-dependent expressions.
+            DependsOnRecordCount = new[] { def.KeyExpression, def.ForExpression }
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .Any(text => VfpExpression.Parse(text!).ContainsFunction((name, _) =>
+                    VfpFunctionAbbreviations.Canonical(name) is "RECCOUNT" or "EVALUATE" ||
+                    !VfpRuntime.EngineFunctionNames.Contains(VfpFunctionAbbreviations.Canonical(name)))),
             KeyType = keyType,
             KeyLen = keyLen,
             IsChar = isChar,
@@ -594,6 +602,9 @@ internal static class CdxIndexBuilder
             CharacterEncoding = IndexKey.ResolveCharacterEncoding(schema, def.KeyExpression),
             KeyFn = keyFn,
             DateField = IndexKey.ResolveDateField(schema, def.KeyExpression),
+            UnfilteredFixedField = forFn is null ? schema.Columns.FirstOrDefault(c =>
+                !c.IsNullable && c.Type is 'C' or 'I' or 'N' or 'F' or 'B' or 'Y' or 'D' or 'T' or 'L' &&
+                string.Equals(c.Name, def.KeyExpression.Trim(), StringComparison.OrdinalIgnoreCase)) : null,
             ForFn = forFn,
             Unique = def.Unique,
             Descending = def.Descending,

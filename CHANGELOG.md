@@ -70,6 +70,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: `CREATE TABLE` validates referenced tables/tags and multiple primary keys before writing,
+  resolves self references in VFP9 declaration order, and makes implicit `AUTOINC` columns
+  non-nullable under `SET NULL ON`. Newly created microVFP cursors report their DBC membership.
+- DBC member creation permits shared readers and prepares the catalog/index together under
+  VFP locks; failed publication restores the DBC/DCT/DCX and removes the new table files.
+- Candidate-key refusals leave DBF/FPT/CDX unchanged, including memo updates and batch collisions.
+  Append validation and index maintenance use each row's new `RECCOUNT()`; memo expressions
+  read the proposed content before allocation and the live memo stream during maintenance.
+
 - BREAKING: `CREATE TABLE` no longer silently ignores constraints or trailing clauses, or creates
   an unregistered free table while a database is current. `NAME` without a current database,
   `NAME` with `FREE`, invalid clause order and database-only constraints on free tables raise

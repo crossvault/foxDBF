@@ -13,18 +13,19 @@ public sealed class SqlDdlCreateClausesTests
         using var dir = new SqlTestSupport.TempDir();
         using var session = new VfpSession();
         session.OpenDirectory(dir.Path);
-        session.Execute("CREATE TABLE t (id I UNIQUE)");
-        using (var writer = DbfWriter.Open(dir.File("t.dbf"))) writer.AppendRecord(1);
-        var before = File.ReadAllBytes(dir.File("t.dbf"));
+        session.Execute("CREATE TABLE t (id I UNIQUE, note M)");
+        using (var writer = DbfWriter.Open(dir.File("t.dbf"))) writer.AppendRecord(1, "original");
+        string[] files = ["t.dbf", "t.fpt", "t.cdx"];
+        var before = files.Select(f => File.ReadAllBytes(dir.File(f))).ToArray();
         using (var writer = DbfWriter.Open(dir.File("t.dbf")))
         {
-            Assert.Equal(1884, Assert.Throws<DbfWriteException>(() => writer.AppendRecords(new object?[][] { [2], [2] })).VfpErrorNumber);
+            Assert.Equal(1884, Assert.Throws<DbfWriteException>(() => writer.AppendRecords(new object?[][] { [2, "new"], [1, "duplicate"] })).VfpErrorNumber);
             Assert.False(writer.ReindexNeeded);
         }
-        Assert.Equal(before, File.ReadAllBytes(dir.File("t.dbf")));
+        for (int i = 0; i < files.Length; i++) Assert.Equal(before[i], File.ReadAllBytes(dir.File(files[i])));
         using (var writer = DbfWriter.Open(dir.File("t.dbf")))
         {
-            writer.AppendRecord(3);
+            writer.AppendRecord(3, "accepted");
             Assert.Equal(2, writer.RecordCount);
         }
     }

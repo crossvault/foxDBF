@@ -36,6 +36,8 @@ public sealed partial class DbfWriter
     private CdxTreeEditor? _cdxMaintEditor;
     private List<(CdxTreeEditor.TagHandle Tag, CdxIndexBuilder.TagKeyComputer Computer)>? _cdxMaintPlans;
     private CdxMaintMode _cdxMaintMode;
+    private bool _hasCandidateTags;
+    private bool _hasCountSensitiveTags;
 
     private enum CdxMaintMode
     {
@@ -44,29 +46,48 @@ public sealed partial class DbfWriter
         Update,
     }
 
-    private void ValidateCandidateKeys(int recNo, DbfRecord record, DbfRecord? previous = null)
+    private DbfRecord CandidateRecord(byte[] bytes, object?[] values)
     {
-        if (_cdxMaintPlans is null || _cdxMaintEditor is null) return;
-        foreach (var (tag, computer) in _cdxMaintPlans)
+        var record = new DbfRecord(_schema, bytes);
+        for (int i = 0; i < _schema.Columns.Count; i++)
         {
-            if (!tag.Header.IsCandidate || !computer.TryComputeKey(record, recNo, _recordCount, out var key)) continue;
+            var column = _schema.Columns[i];
+            if (column.Type is not ('M' or 'W' or 'G' or 'P') || i >= values.Length || values[i] is null or DBNull)
+                continue;
+            byte[] content = values[i] is byte[] binary ? binary : EncodeMemoText(column,
+                Convert.ToString(values[i], System.Globalization.CultureInfo.InvariantCulture) ?? "");
+            object value = column.Type == 'M'
+                ? (column.IsBinary ? System.Text.Encoding.Latin1 : _schema.Encoding).GetString(content) : content;
+            record.SetPendingMemoValue(i, value);
+        }
+        return record;
+    }
+
+    private void ValidateCandidateKeys(int recNo, byte[] bytes, object?[] values, int recordCount, byte[]? previous = null)
+    {
+        var record = CandidateRecord(bytes, values);
+        foreach (var (tag, computer) in _cdxMaintPlans!)
+        {
+            if (!tag.Header.IsCandidate || !computer.TryComputeKey(record, recNo, recordCount, out var key)) continue;
             // Updating a row without changing its key must not collide with that row's own entry.
-            if (previous is { } old && computer.TryComputeKey(old, recNo, _recordCount, out var oldKey)
+            if (previous is { } old && computer.TryComputeKey(new DbfRecord(_schema, old), recNo, recordCount, out var oldKey)
                 && key.AsSpan().SequenceEqual(oldKey)) continue;
-            if (_cdxMaintEditor.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
+            if (_cdxMaintEditor!.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
                 throw new DbfWriteException($"Uniqueness of index '{tag.Name}' is violated.", 1884);
         }
     }
 
-    private void ValidateCandidateBatch(IReadOnlyList<(int RecNo, byte[] Record)> records, int finalCount)
+    private void ValidateCandidateBatch(IReadOnlyList<(int RecNo, byte[] Record)> records, IReadOnlyList<object?[]> values)
     {
+        if (!_hasCandidateTags) return;
         foreach (var (tag, computer) in _cdxMaintPlans!)
         {
             if (!tag.Header.IsCandidate) continue;
             var keys = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var (recNo, bytes) in records)
+            for (int i = 0; i < records.Count; i++)
             {
-                if (!computer.TryComputeKey(new DbfRecord(_schema, bytes), recNo, finalCount, out var key)) continue;
+                var (recNo, bytes) = records[i];
+                if (!computer.TryComputeKey(CandidateRecord(bytes, values[i]), recNo, recNo, out var key)) continue;
                 if (!keys.Add(Convert.ToHexString(key)) ||
                     _cdxMaintEditor!.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
                     throw new DbfWriteException($"Uniqueness of index '{tag.Name}' is violated.", 1884);
@@ -168,6 +189,8 @@ public sealed partial class DbfWriter
             _cdxMaintStream = rw;
             _cdxMaintEditor = editor;
             _cdxMaintPlans = plans;
+            _hasCandidateTags = plans.Any(p => p.Tag.Header.IsCandidate);
+            _hasCountSensitiveTags = plans.Any(p => p.Computer.DependsOnRecordCount);
             var validators = plans.Where(p => p.Computer.ValidateHost is not null).Select(p => p.Computer.ValidateHost!).ToArray();
             _hostIndexValidators = validators.Length == 0 ? null : validators;
             _cdxMaintMode = mode;
@@ -230,6 +253,8 @@ public sealed partial class DbfWriter
         _cdxMaintEditor = null;
         _cdxMaintStream = null;
         _cdxMaintPlans = null;
+        _hasCandidateTags = false;
+        _hasCountSensitiveTags = false;
         _hostIndexValidators = null;
         _cdxMaintMode = CdxMaintMode.None;
     }
@@ -256,7 +281,7 @@ public sealed partial class DbfWriter
                 var record = new DbfRecord(_schema, bytes);
                 foreach (var (tag, computer) in plans)
                 {
-                    if (!computer.TryComputeKey(record, recNo, _recordCount, out var key))
+                    if (!computer.TryComputeKey(record, recNo, recNo, out var key))
                         continue;
                     if (computer.Unique && editor.ContainsKey(tag.HeaderOffset, key, computer.KeyLen, computer.Pad))
                         continue;
@@ -272,8 +297,8 @@ public sealed partial class DbfWriter
         }
     }
 
-    private static bool ShouldBulkBuildIndexesAfterAppendBatch(int appendedCount, int existingRecordCount)
-        => appendedCount > 0 && appendedCount >= existingRecordCount;
+    private bool ShouldBulkBuildIndexesAfterAppendBatch(int appendedCount, int existingRecordCount)
+        => !_hasCountSensitiveTags && appendedCount > 0 && appendedCount >= existingRecordCount;
 
     [ThreadStatic]
     internal static Action? AfterBulkIndexRebuildForTests;
@@ -360,6 +385,10 @@ public sealed partial class DbfWriter
             var editor = _cdxMaintEditor!;
             foreach (var (tag, computer) in _cdxMaintPlans!)
             {
+                // A bare, non-nullable fixed-field key without FOR cannot change if its bytes
+                // did not change. Avoid decoding/allocating two keys for ordinary non-key updates.
+                if (computer.UnfilteredFixedField is { } field &&
+                    oldRecord.GetRawField(field).SequenceEqual(newRecord.GetRawField(field))) continue;
                 bool oldIn = computer.TryComputeKey(oldRecord, recNo, _recordCount, out var oldKey);
                 bool newIn = computer.TryComputeKey(newRecord, recNo, _recordCount, out var newKey);
 

@@ -153,12 +153,7 @@ public sealed partial class DbfWriter
 
             // Reject candidate collisions before starting a DBF/CDX edit. A constraint refusal
             // must not leave the writer marked as needing index repair after a successful undo.
-            bool hasCandidate = _cdxMaintPlans?.Any(p => p.Tag.Header.IsCandidate) == true;
-            if (hasCandidate)
-            {
-                for (int r = 0; r < n; r++) PatchMemoPointers(appended[r].Record, rows[r]);
-                ValidateCandidateBatch(appended, finalCount);
-            }
+            ValidateCandidateBatch(appended, rows);
 
             // Commit every prepared record. NO per-row 0x1A / SetLength / flush — the next row's
             // data offset overwrites where the per-row path would have stamped 0x1A, and the final
@@ -168,7 +163,7 @@ public sealed partial class DbfWriter
             for (int r = 0; r < n; r++)
             {
                 var (_, record) = appended[r];
-                if (!hasCandidate) PatchMemoPointers(record, rows[r]);
+                PatchMemoPointers(record, rows[r]);
 
                 long dataOffset = _headerLength + (long)(diskCount + r) * _recordLength;
                 _stream.Seek(dataOffset, SeekOrigin.Begin);

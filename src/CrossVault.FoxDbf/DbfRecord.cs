@@ -61,6 +61,13 @@ public readonly struct DbfRecord
     /// <summary>The decoded value of the column at <paramref name="columnIndex"/> (§A5).</summary>
     public object? GetValue(int columnIndex) => this[columnIndex];
 
+    // Candidate validation sees the proposed memo content before its FPT block is allocated.
+    internal void SetPendingMemoValue(int columnIndex, object? value)
+    {
+        _cache[columnIndex] = value;
+        _decoded[columnIndex] = Decoded;
+    }
+
     /// <summary>
     /// The decoded value of the column named <paramref name="name"/> (§A5), or
     /// <see langword="null"/> for blank/NULL/unknown-column. Decoded values are

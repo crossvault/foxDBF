@@ -1488,12 +1488,18 @@ public sealed partial class VfpInterpreter
     {
         try
         {
-            Session.Use(name, inArea: 0);
+            string? member = Session.Database?.TableNames.FirstOrDefault(table =>
+                SamePath(Session.Database.GetTablePath(table), TargetDbfPath(name)));
+            Session.Use(member ?? name, inArea: 0, alias: Path.GetFileNameWithoutExtension(name));
             var wa = Session.OpenAreas
                 .FirstOrDefault(w => SamePath(w.Table.SourcePath, TargetDbfPath(name)));
             if (wa is not null)
             {
-                _meta[wa.Area] = new AreaMeta();
+                _meta[wa.Area] = new AreaMeta
+                {
+                    SourceName = member,
+                    DatabaseProp = member is null ? null : Session.DatabasePath,
+                };
                 Session.SelectArea(wa.Area);
                 GoTop(wa.Area);
             }
