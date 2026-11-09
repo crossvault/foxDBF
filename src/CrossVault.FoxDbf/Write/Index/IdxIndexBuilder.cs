@@ -60,15 +60,17 @@ internal static class IdxIndexBuilder
             Ansi = evalContext?.Ansi ?? false,
             Culture = evalContext?.Culture,
             Encoding = schema.Encoding,
+            IndexEvaluator = evalContext?.IndexEvaluator,
+            Random = evalContext?.Random ?? new VfpRandom(),
         };
 
-        var (keyType, keyLen, _) = CdxIndexBuilder.ResolveKey(schema, keyExpr);
+        var (keyType, keyLen, _) = CdxIndexBuilder.ResolveKey(schema, keyExpr, ctx);
         Encoding characterEncoding = ResolveCharacterEncoding(schema, keyExpr);
 
-        var keyFn = VfpExpression.Parse(keyExpr).Compile(ctx);
+        var keyFn = CdxIndexBuilder.CompileIndex(keyExpr, ctx);
         var dateField = IndexKey.ResolveDateField(schema, keyExpr);
         Func<IRowContext, VfpValue>? forFn = !string.IsNullOrWhiteSpace(forExpr)
-            ? VfpExpression.Parse(forExpr!).Compile(ctx)
+            ? CdxIndexBuilder.CompileIndex(forExpr!, ctx)
             : null;
 
         int recCount = rows.Count;
@@ -119,10 +121,11 @@ internal static class IdxIndexBuilder
 
         object? clr = type switch
         {
+            IndexKeyType.Logical => value.IsNull ? null : (object)value.AsLogical,
             IndexKeyType.Integer => value.IsNull ? null : (object)value.AsInteger,
             IndexKeyType.Numeric => value.IsNull ? null : (object)value.AsDouble,
-            IndexKeyType.Date => value.IsNull ? null : (object)value.AsDate,
-            IndexKeyType.DateTime => value.IsNull ? null : (object)value.AsDateTime,
+            IndexKeyType.Date => value.IsNull ? null : value.ToClr(),
+            IndexKeyType.DateTime => value.IsNull ? null : value.ToClr(),
             _ => null,
         };
         byte[]? encoded = clr is null ? null : IndexKey.Encode(clr, type);

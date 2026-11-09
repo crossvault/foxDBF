@@ -23,6 +23,8 @@ public enum VfpType
     DateTime,
     /// <summary>Logical (VFP type L).</summary>
     Logical,
+    /// <summary>VFP Varbinary (Q).</summary>
+    Binary,
 }
 
 /// <summary>
@@ -56,6 +58,9 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     public static readonly VfpValue Null =
         new(VfpType.Null, 0d, 0m, false, null, false, default);
 
+    public static VfpValue Binary(byte[] bytes) =>
+        new(VfpType.Binary, 0d, 0m, false, System.Text.Encoding.Latin1.GetString(bytes), false, default);
+
     public static VfpValue Character(string? s) =>
         new(VfpType.Character, 0d, 0m, false, s ?? string.Empty, false, default);
 
@@ -80,6 +85,14 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     public static VfpValue DateTime(System.DateTime dt) =>
         new(VfpType.DateTime, 0d, 0m, false, null, false, dt);
 
+    // CLR MinValue historically denotes an empty value. Index rows carry the separate on-disk
+    // emptiness bit so the valid year-one value survives conversions and intermediate UDF values.
+    internal static VfpValue Date(DateOnly date, bool empty) =>
+        new(VfpType.Date, 0d, 0m, false, null, !empty, date.ToDateTime(TimeOnly.MinValue));
+    internal static VfpValue DateTime(System.DateTime date, bool empty) =>
+        new(VfpType.DateTime, 0d, 0m, false, null, !empty, date);
+    internal bool IsEmptyDate => _date == default && !_bool;
+
     /// <summary>
     /// Maps a raw CLR field value (as returned by <see cref="IRowContext.GetField"/>)
     /// to a <see cref="VfpValue"/>. <c>null</c> becomes VFP <c>.NULL.</c>.
@@ -87,6 +100,8 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     public static VfpValue FromClr(object? value) => value switch
     {
         null => Null,
+        VfpValue v => v,
+        byte[] bytes => Binary(bytes),
         string s => Character(s),
         bool b => Logical(b),
         char c => Character(c.ToString()),
@@ -157,9 +172,10 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     {
         VfpType.Null => null,
         VfpType.Character => _str ?? string.Empty,
+        VfpType.Binary => System.Text.Encoding.Latin1.GetBytes(AsString),
         VfpType.Logical => _bool,
-        VfpType.Date => AsDate,
-        VfpType.DateTime => _date,
+        VfpType.Date => _date == default && _bool ? this : AsDate,
+        VfpType.DateTime => _date == default && _bool ? this : _date,
         VfpType.Currency => _dec,
         VfpType.Integer => (int)_dec,
         _ => _isExact ? _dec : _num,   // Numeric: decimal when exact, else double.
@@ -171,9 +187,9 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         return _type switch
         {
             VfpType.Null => true,
-            VfpType.Character => string.Equals(_str, other._str, StringComparison.Ordinal),
+            VfpType.Character or VfpType.Binary => string.Equals(_str, other._str, StringComparison.Ordinal),
             VfpType.Logical => _bool == other._bool,
-            VfpType.Date or VfpType.DateTime => _date == other._date,
+            VfpType.Date or VfpType.DateTime => _date == other._date && IsEmptyDate == other.IsEmptyDate,
             VfpType.Numeric or VfpType.Currency or VfpType.Integer => AsDouble == other.AsDouble,
             _ => false,
         };
@@ -183,9 +199,9 @@ public readonly struct VfpValue : IEquatable<VfpValue>
 
     public override int GetHashCode() => _type switch
     {
-        VfpType.Character => _str?.GetHashCode(StringComparison.Ordinal) ?? 0,
+        VfpType.Character or VfpType.Binary => _str?.GetHashCode(StringComparison.Ordinal) ?? 0,
         VfpType.Logical => _bool.GetHashCode(),
-        VfpType.Date or VfpType.DateTime => _date.GetHashCode(),
+        VfpType.Date or VfpType.DateTime => HashCode.Combine(_date, IsEmptyDate),
         VfpType.Numeric or VfpType.Currency or VfpType.Integer => AsDouble.GetHashCode(),
         _ => (int)_type,
     };

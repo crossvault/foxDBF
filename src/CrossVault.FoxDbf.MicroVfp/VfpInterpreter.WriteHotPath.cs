@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using CrossVault.FoxDbf;
 using CrossVault.FoxDbf.Expressions;
 using CrossVault.FoxDbf.Sql;
@@ -82,7 +83,7 @@ public sealed partial class VfpInterpreter
         string key = Path.GetFullPath(path);
         if (_cachedWriters.TryGetValue(key, out var w))
         {
-            w.SetOpenCompactIndexes(OpenCompactIdxPaths(path), _ctx);
+            w.SetOpenAdditionalIndexes(OpenAdditionalIndexPaths(path), _ctx);
             return w;
         }
         var writer = OpenWriter(path);
@@ -102,7 +103,8 @@ public sealed partial class VfpInterpreter
         var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Shared }, ReadNamesFor(path));
         try
         {
-            writer.SetOpenCompactIndexes(OpenCompactIdxPaths(path), _ctx);
+            writer.IndexContext = _ctx;
+            writer.SetOpenAdditionalIndexes(OpenAdditionalIndexPaths(path), _ctx);
             return writer;
         }
         catch { writer.Dispose(); throw; }
@@ -110,31 +112,21 @@ public sealed partial class VfpInterpreter
 
     private void RequireCompactIndexWriteContext(string path)
     {
-        // Extra CDX files and legacy IDX files do not pass through structural-CDX maintenance.
-        // USE may open their VFP built-ins, but a write still needs an executable KEY and FOR.
-        foreach (var area in Session.OpenAreas)
+        // PRG snapshots include additional CDX/legacy IDX files. Compact IDX retains its existing
+        // transaction restriction; ADO.NET COW and candidate/RI rollback still own only DBF/FPT/CDX.
+        var paths = OpenAdditionalIndexPaths(path);
+        bool compactTransaction = _txn.Count > 0 && paths.Any(p =>
         {
-            if (!_meta.TryGetValue(area.Area, out var meta) || meta.ExtraIndexes is not { Count: > 0 }
-                || !SamePath(area.Table.SourcePath, path))
-                continue;
-            foreach (var index in IndexInventory(area.Area))
-            {
-                if (index.Structural) continue;
-                string? function = VfpRuntime.UnsupportedIndexFunction(index.KeyExpr)
-                    ?? VfpRuntime.UnsupportedIndexFunction(index.ForExpr);
-                if (function is not null && VfpFunctionNames.IsBuiltin(function))
-                    throw new DbfWriteException($"Cannot maintain index '{index.Name}': function {function}() is not supported by the index engine.");
-            }
-        }
-
-        // These rollback mechanisms snapshot DBF/FPT/CDX only. Refuse before a write
-        // rather than letting an IDX retain keys for a row that was rolled back.
-        if (OpenCompactIdxPaths(path).Count > 0 && (_txn.Count > 0 || Session.TxBeginWritePath is not null
+            if (!IsIdxPath(p)) return false;
+            using var idx = CrossVault.FoxDbf.Index.IdxFile.Open(p);
+            return idx.Header.IsCompact;
+        });
+        if (paths.Count > 0 && (compactTransaction || Session.TxBeginWritePath is not null
             || CandidateTagsFor(path) is not null || EnforceReferentialIntegrity))
             throw new MicroVfpRuntimeException("Writing with open standalone indexes is not supported in transactions or with candidate/RI rollback enforcement.");
     }
 
-    private IReadOnlyList<string> OpenCompactIdxPaths(string path)
+    private IReadOnlyList<string> OpenAdditionalIndexPaths(string path)
     {
         List<string>? paths = null;
         HashSet<string>? seen = null;
@@ -147,11 +139,9 @@ public sealed partial class VfpInterpreter
                 continue;
             foreach (string file in extra)
             {
-                if (!IsIdxPath(file)) continue;
                 string full = Path.GetFullPath(file);
                 if (!(seen ??= new(StringComparer.OrdinalIgnoreCase)).Add(full)) continue;
-                using var idx = CrossVault.FoxDbf.Index.IdxFile.Open(full);
-                if (idx.Header.IsCompact) (paths ??= new()).Add(full);
+                (paths ??= new()).Add(full);
             }
         }
         return paths is null ? Array.Empty<string>() : paths;
@@ -166,8 +156,12 @@ public sealed partial class VfpInterpreter
     /// <see cref="ReadNamesFor"/>, taken while the areas were still open): a tag built, rebuilt or kept by the
     /// rewrite derives its KEY / FOR from the names the session reads the table under — a DBC member's long
     /// names, which VFP9 writes into the tag KEY text.</summary>
-    private static DbfWriter OpenExclusiveWriter(string path, Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? names)
-        => DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive }, names);
+    private DbfWriter OpenExclusiveWriter(string path, Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? names)
+    {
+        var writer = DbfWriter.Open(path, new DbfOptions { LockMode = LockMode.Exclusive }, names);
+        writer.IndexContext = _ctx;
+        return writer;
+    }
 
     /// <summary>The columns <paramref name="path"/> is read under: those of a work area open on the file, else
     /// those of the open database's member stored there; empty (physical names) for a free table.</summary>

@@ -262,7 +262,7 @@ internal static class VfpExpressionText
     private static string DateLiteral(Token t, bool withTime)
     {
         string inner = t.Text.Trim();
-        if (!withTime && t.Value.AsDate == default) return "{}";
+        if (!withTime && t.Value.IsEmptyDate) return "{}";
         if (!inner.StartsWith('^')) throw new NotCanonical();          // {01/02/2000}: depends on SET DATE
         return withTime
             ? "{^" + t.Value.AsDateTime.ToString("yyyy'/'MM'/'dd HH':'mm':'ss", CultureInfo.InvariantCulture) + "}"

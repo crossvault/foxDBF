@@ -162,14 +162,14 @@ public sealed partial class VfpInterpreter
         string full = Path.GetFullPath(path);
         SnapshotForTxn(path);
         InvalidateCachedWriter(full);
-        var indexes = OpenCompactIdxPaths(path);
+        var indexes = OpenAdditionalIndexPaths(path);
         var reopen = Session.CloseAreasForPath(full);
         try
         {
             // Exclusive open: every read handle for this path was released above, and the Core Pack/Zap
             // guard requires LockMode.Exclusive. A foreign SHARED holder makes this open throw cleanly.
             using var writer = OpenExclusiveWriter(path, names);
-            writer.SetOpenCompactIndexes(indexes, _ctx);
+            writer.SetOpenAdditionalIndexes(indexes, _ctx);
             op(writer);
         }
         finally { Session.ReopenAreas(reopen); }

@@ -130,7 +130,7 @@ public sealed partial class DbfWriter
 
         Flush();
         var rows = MaterializeRows();
-        CdxIndexBuilder.Build(cdxPath, _schema, rows, tags, evalContext, includeDeleted);
+        CdxIndexBuilder.Build(cdxPath, _schema, rows, tags, evalContext ?? IndexContext, includeDeleted);
         if (structural)
             EnsureStructuralCdxAdvertised();
         InvalidateTagComputerCache();
@@ -338,7 +338,7 @@ public sealed partial class DbfWriter
     {
         Flush();
         var rows = MaterializeRows();
-        CdxIndexBuilder.Build(StructuralCdxPath(), _schema, rows, tags, evalContext, includeDeleted, appendUniqueState,
+        CdxIndexBuilder.Build(StructuralCdxPath(), _schema, rows, tags, evalContext ?? IndexContext, includeDeleted, appendUniqueState,
             preservedKeyStatistics: preservedKeyStatistics);
 
         // The sidecar VFP just wrote is a STRUCTURAL compound .cdx (options 0xE0). Advertise it in the

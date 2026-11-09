@@ -163,6 +163,24 @@ public sealed class EvaluationContext
     /// </summary>
     public System.Text.Encoding? Encoding { get; set; }
 
+    // Only index plans containing non-native calls use this bridge. Ordinary key delegates stay native.
+    internal Func<VfpExpression, IRowContext, EvaluationContext, VfpValue>? IndexEvaluator { get; set; }
+    internal Func<string, string>? NormalizeIndexExpression { get; set; }
+    internal Action<string>? ValidateIndexFunction { get; set; }
+    internal VfpRandom Random { get; set; } = new();
+
     /// <summary>A fresh context with VFP defaults (EXACT OFF, MACHINE collation).</summary>
     public static EvaluationContext Default => new();
+}
+
+// VFP9's seeded generator, measured with multiple seeds and successive calls.
+internal sealed class VfpRandom
+{
+    private uint _state = unchecked((uint)Environment.TickCount);
+    public double Next(double? seed)
+    {
+        if (seed is { } value) _state = value > 0 ? unchecked((uint)(long)value) : unchecked((uint)Environment.TickCount);
+        _state = unchecked(_state * 87137421u + 21132487u);
+        return _state / 4294967296d;
+    }
 }

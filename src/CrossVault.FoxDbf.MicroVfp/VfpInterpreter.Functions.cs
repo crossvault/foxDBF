@@ -21,6 +21,15 @@ public sealed partial class VfpInterpreter
     /// + the runtime STATE functions; returns <see langword="false"/> for the engine's scalar built-ins.</summary>
     internal bool HostInvoke(string name, VfpValue[] a, EvaluationContext ctx, out VfpValue r)
     {
+        if (_indexRow is { } indexRow && a.Length == 0)
+        {
+            switch (name)
+            {
+                case "RECNO": r = VfpValue.Integer(indexRow.RecNo); return true;
+                case "RECCOUNT": r = VfpValue.Integer(indexRow.RecCount); return true;
+                case "DELETED": r = VfpValue.Logical(indexRow.Deleted); return true;
+            }
+        }
         // An array-element reference `arr(i)` / `arr(i,j)` arrives here as a "call" whose name IS the
         // array variable. A visible array binding takes precedence (VFP resolves the subscript, not a UDF).
         if (Memory.FindArray(name) is { } arr)
@@ -103,6 +112,7 @@ public sealed partial class VfpInterpreter
             case "OCCURS": r = VfpValue.Integer(FnOccurs(a)); return true;
             case "ATC": r = VfpValue.Integer(FnAtc(a)); return true;
             case "STRTRAN": r = VfpValue.Character(FnStrtran(a)); return true;
+            case "ASCAN": r = VfpValue.Integer(FnAScan(a)); return true;
             case "ALEN": r = VfpValue.Integer(FnAlen(a)); return true;
             case "AERROR": r = FnAerror(a); return true;
             case "ERROR": r = VfpValue.Integer(_errNo); return true;
@@ -563,6 +573,36 @@ public sealed partial class VfpInterpreter
         if (arr is null) return 0;
         int dim = a.Length > 1 && IsNumeric(a[1]) ? (int)a[1].AsNumber : 0;
         return arr.ALen(dim);
+    }
+
+    private int FnAScan(VfpValue[] args)
+    {
+        if (args.Length < 2) throw new MicroVfpRuntimeException("Too few arguments.", 1229);
+        var array = Memory.FindArray(args[0].AsString);
+        if (array is null) throw new MicroVfpRuntimeException($"Variable '{args[0].AsString.ToUpperInvariant()}' is not found.", 12);
+        int start = args.Length > 2 ? Math.Max(1, args[2].AsInteger) : 1;
+        int count = args.Length > 3 ? args[3].AsInteger : -1;
+        int column = args.Length > 4 ? Math.Max(0, args[4].AsInteger) : 0;
+        int flags = args.Length > 5 ? args[5].AsInteger : 0;
+        if (column > Math.Max(1, array.Cols)) throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
+        int length = column > 0 ? array.Rows : array.Length;
+        int end = count < 0 ? length : Math.Min(length, start + count - 1);
+        var context = new EvaluationContext { Collation = _ctx.Collation, Exact = (flags & 4) == 0 ? _ctx.Exact : (flags & 2) != 0 };
+        for (int position = start; position <= end; position++)
+        {
+            int element = column > 0 ? (position - 1) * Math.Max(1, array.Cols) + column : position;
+            var value = array.GetLinear(element);
+            var sought = args[1];
+            if (SortClass(value) != SortClass(sought)) continue;
+            if ((flags & 1) != 0 && value.Type == VfpType.Character)
+            {
+                value = VfpValue.Character(value.AsString.ToUpperInvariant());
+                sought = VfpValue.Character(sought.AsString.ToUpperInvariant());
+            }
+            if (VfpRuntime.Binary(BinOp.Eq, value, sought, context).AsLogical)
+                return (flags & 8) != 0 && array.Is2D ? (element - 1) / array.Cols + 1 : element;
+        }
+        return 0;
     }
 
     // AERROR(arr) — the full 7-column contract (MICROVFP_SEMANTICS.md Nachtrag). (Re)dimensions the named

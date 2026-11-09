@@ -88,11 +88,15 @@ public sealed partial class VfpInterpreter
         public string Path = "";
         public string? DbfTemp;
         public string? CdxTemp;
+        public Dictionary<string, string?>? AdditionalIndexTemps;
         public string? FptTemp;
         public void Cleanup()
         {
             TryDeleteTemp(DbfTemp); TryDeleteTemp(CdxTemp); TryDeleteTemp(FptTemp);
             DbfTemp = CdxTemp = FptTemp = null;
+            if (AdditionalIndexTemps is not null)
+                foreach (var temp in AdditionalIndexTemps.Values) TryDeleteTemp(temp);
+            AdditionalIndexTemps = null;
         }
         private static void TryDeleteTemp(string? temp)
         {
@@ -157,6 +161,9 @@ public sealed partial class VfpInterpreter
         Runtime = new RuntimeState();
         _row = new Row(this);
         _ctx = session.Context;
+        _ctx.IndexEvaluator = EvaluateIndex;
+        _ctx.NormalizeIndexExpression = MicroVfpExprRewrite.Normalize;
+        _ctx.ValidateIndexFunction = ValidateIndexFunction;
         // VFP runtime defaults the SP corpus + oracle harness run under: SET DELETED ON, MACHINE collation and
         // SET EXACT OFF (VFP's default; with full-width C field reads, see header, field = field and
         // field = literal compare as in VFP).
@@ -1200,6 +1207,8 @@ public sealed partial class VfpInterpreter
     /// <c>m.var</c> → memvar; bare → CURRENT area field, else memvar, else #DEFINE.</summary>
     internal object? ResolveName(string name)
     {
+        if (_indexRow is ISchema indexSchema && indexSchema.TryGetColumn(name, out _, out _, out _))
+            return _indexRow.GetField(name);
         if (name.Equals("_triggerlevel", StringComparison.OrdinalIgnoreCase))
             return (decimal)TriggerLevel;     // P2 RI seam — the trigger gate (see TriggerLevel).
 

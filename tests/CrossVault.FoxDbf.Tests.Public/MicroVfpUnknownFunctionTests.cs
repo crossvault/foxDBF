@@ -302,14 +302,15 @@ public sealed class MicroVfpUnknownFunctionTests : IDisposable
     [Fact]
     public void EngineFunctionNames_MatchTheDispatchSwitches()
     {
-        string src = File.ReadAllText(FindSource("CrossVault.FoxDbf.Expressions", "VfpRuntime.cs"));
+        string src = File.ReadAllText(FindSource("CrossVault.FoxDbf.Expressions", "VfpRuntime.cs"))
+            + File.ReadAllText(FindSource("CrossVault.FoxDbf.Expressions", "VfpRuntime.Scalars.cs"));
         var labels = new HashSet<string>(StringComparer.Ordinal);
-        foreach (string method in new[] { "public static VfpValue CallFunction(", "private static VfpValue CallStringExtras(" })
+        foreach (string method in new[] { "public static VfpValue CallFunction(", "private static VfpValue CallStringExtras(", "private static VfpValue CallScalarExtras(" })
         {
             int start = src.IndexOf(method, StringComparison.Ordinal);
             Assert.True(start >= 0, method);
             int end = src.IndexOf("\n    }", start, StringComparison.Ordinal);
-            foreach (Match m in Regex.Matches(src[start..end], "case \"([A-Z_]+)\""))
+            foreach (Match m in Regex.Matches(src[start..end], "case \"([A-Z0-9_]+)\""))
                 labels.Add(m.Groups[1].Value);
         }
         labels.Add("ICASE");   // a lazy special form in the AST, never dispatched by name

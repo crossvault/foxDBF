@@ -16,6 +16,8 @@ public sealed partial class DbfWriter
     // (key expr / collation / FOR / unique) is stable for the writer's life; only its on-disk ROOT moves
     // (read fresh from the header on every edit), so caching the computer is safe.
     private Dictionary<string, CdxIndexBuilder.TagKeyComputer?>? _tagComputers;
+    internal EvaluationContext? IndexContext { get; set; }
+    private Action[]? _hostIndexValidators;
 
     // ── cached incremental-CDX maintenance editor (ROADMAP item 2 — write battle W1 + W3 fix) ─────────
     // A single-row APPEND or keyed-UPDATE loop previously re-OPENED the structural .cdx, re-parsed its header,
@@ -67,6 +69,8 @@ public sealed partial class DbfWriter
             return false;
         }
         EnsureCdxMaint(mode);
+        if (_hostIndexValidators is { } validators)
+            foreach (var validate in validators) validate();
         return true;
     }
 
@@ -124,6 +128,8 @@ public sealed partial class DbfWriter
             _cdxMaintStream = rw;
             _cdxMaintEditor = editor;
             _cdxMaintPlans = plans;
+            var validators = plans.Where(p => p.Computer.ValidateHost is not null).Select(p => p.Computer.ValidateHost!).ToArray();
+            _hostIndexValidators = validators.Length == 0 ? null : validators;
             _cdxMaintMode = mode;
             rw = null;
             editor = null;
@@ -184,6 +190,7 @@ public sealed partial class DbfWriter
         _cdxMaintEditor = null;
         _cdxMaintStream = null;
         _cdxMaintPlans = null;
+        _hostIndexValidators = null;
         _cdxMaintMode = CdxMaintMode.None;
     }
 
@@ -398,12 +405,12 @@ public sealed partial class DbfWriter
 
                 // No ambient EvaluationContext on the raw write path → VFP-neutral defaults (EXACT/ANSI OFF), the
                 // same defaults the bulk builder uses when CreateTag/Reindex run without a context.
-                var c = CdxIndexBuilder.CreateKeyComputer(_schema, def, evalContext: null);
+                var c = CdxIndexBuilder.CreateKeyComputer(_schema, def, IndexContext);
                 if (c.KeyLen == hdr.KeyLength && c.KeyType != IndexKeyType.Unknown)
                     computer = c;   // derived key length matches the stored tag → safe to edit incrementally
             }
         }
-        catch
+        catch when (IndexContext?.IndexEvaluator is null)
         {
             computer = null;    // report the stored definition from ResolveComputers before any mutation
         }
@@ -415,12 +422,17 @@ public sealed partial class DbfWriter
     /// <summary>True when EVERY field referenced by <paramref name="expr"/> exists in this writer's physical
     /// schema (an empty / null expression trivially resolves). An unparseable expression does not resolve.
     /// This is the resolve-aware core of the un-derivable check (finding 2).</summary>
-    private bool FieldsResolve(string? expr)
+    private bool FieldsResolve(string? expr, EvaluationContext? context = null)
     {
         if (string.IsNullOrWhiteSpace(expr))
             return true;
         IReadOnlyCollection<string> fields;
-        try { fields = VfpExpression.Parse(expr).ReferencedFields(); }
+        try
+        {
+            // Array-reference arguments such as ASCAN(a, id) are names, not missing DBF fields.
+            string normalized = (context ?? IndexContext)?.NormalizeIndexExpression?.Invoke(expr) ?? expr;
+            fields = VfpExpression.Parse(normalized).ReferencedFields();
+        }
         catch { return false; }   // cannot even parse → not derivable
         foreach (var f in fields)
             if (!_schema.Columns.Any(c => string.Equals(c.Name, f, StringComparison.OrdinalIgnoreCase)))
@@ -432,7 +444,7 @@ public sealed partial class DbfWriter
     {
         if (string.IsNullOrWhiteSpace(expression))
             return true;
-        return FieldsResolve(expression) && !VfpExpression.Parse(expression).ContainsFunction((name, _) =>
-            !VfpRuntime.EngineFunctionNames.Contains(VfpFunctionAbbreviations.Canonical(name)));
+        return FieldsResolve(expression) && (IndexContext?.IndexEvaluator is not null || !VfpExpression.Parse(expression).ContainsFunction((name, _) =>
+            !VfpRuntime.EngineFunctionNames.Contains(VfpFunctionAbbreviations.Canonical(name))));
     }
 }

@@ -214,10 +214,11 @@ public sealed class ExpressionCollationAndEdgeTests
     }
 
     [Fact]
-    public void Dtoc_EmptyDate_IsTenSpaces()
+    public void Dtoc_EmptyDate_KeepsDateSeparators()
     {
         var row = new TestRow().Set("D", default(DateOnly));
-        Assert.Equal(new string(' ', 10), Eval("DTOC(D)", row).AsString);
+        // VFP9: M15Vfp9OracleTests.YearOneExpressions_KeysMatchVfp9.
+        Assert.Equal("  /  /    ", Eval("DTOC(D)", row).AsString);
     }
 
     [Fact]

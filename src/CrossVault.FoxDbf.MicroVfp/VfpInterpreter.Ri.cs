@@ -205,6 +205,11 @@ public sealed partial class VfpInterpreter
             snap.DbfTemp = CopyToTempSnapshot(path);
             snap.CdxTemp = CopyToTempSnapshot(SidecarFile.ChangeExtension(path, ".cdx"));
             snap.FptTemp = CopyToTempSnapshot(SidecarFile.ChangeExtension(path, ".fpt"));
+            foreach (string index in OpenAdditionalIndexPaths(path))
+            {
+                snap.AdditionalIndexTemps ??= new(StringComparer.OrdinalIgnoreCase);
+                snap.AdditionalIndexTemps[index] = CopyToTempSnapshot(index);
+            }
         }
         catch
         {
@@ -249,6 +254,8 @@ public sealed partial class VfpInterpreter
         string fpt = SidecarFile.ChangeExtension(snap.Path, ".fpt");
         RestoreSnapshotSidecar(cdx, snap.CdxTemp);
         RestoreSnapshotSidecar(fpt, snap.FptTemp);
+        if (snap.AdditionalIndexTemps is not null)
+            foreach (var (index, temp) in snap.AdditionalIndexTemps) RestoreSnapshotSidecar(index, temp);
 
         int savedCur = Session.CurrentArea;
         foreach (var r in reopen)
@@ -510,7 +517,7 @@ public sealed partial class VfpInterpreter
     /// </summary>
     private void RefreshAfterInPlaceWrite(string path, VfpSession.WorkArea wa, IReadOnlyList<string> replacedFields)
     {
-        if (OpenCompactIdxPaths(path).Count > 0)
+        if (OpenAdditionalIndexPaths(path).Count > 0)
         {
             ReopenFileAreas(path);
             ResetMetaCachesForPath(path);

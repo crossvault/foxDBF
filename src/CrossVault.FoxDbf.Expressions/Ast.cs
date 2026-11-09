@@ -399,11 +399,26 @@ internal sealed partial class FunctionNode : AstNode
             case "STRTRAN": return InferStrtran(schema);
             case "DTOC": return new VfpTypeInfo(VfpType.Character, 10);
             case "DTOS": return new VfpTypeInfo(VfpType.Character, 8);
-            case "TTOC": return new VfpTypeInfo(VfpType.Character, 22);
+            case "TTOC": return new VfpTypeInfo(VfpType.Character, LiteralLen(1, 0) == 1 ? 14 : LiteralLen(1, 0) == 2 ? 8 : 22);
             case "CDOW": return new VfpTypeInfo(VfpType.Character, 9);
             case "CMONTH": return new VfpTypeInfo(VfpType.Character, 9);
+            case "TIME": return new VfpTypeInfo(VfpType.Character, LiteralLen(0, 0) == 1 ? 11 : 8);
             case "CHR": return new VfpTypeInfo(VfpType.Character, 1);
 
+            case "BINTOC":
+            {
+                string flags = TryConstString(1, out string format) ? format.ToUpperInvariant() : LiteralLen(1, 4).ToString();
+                return new VfpTypeInfo(VfpType.Character, flags.Contains('8') || flags.Contains('B') ? 8
+                    : flags.Contains('F') ? 4 : flags.Contains('2') ? 2 : flags.Contains('1') ? 1 : 4);
+            }
+            case "ANSITOOEM": case "OEMTOANSI": return ArgInfer(schema, 0);
+            case "CREATEBINARY": return new VfpTypeInfo(VfpType.Binary, ArgInfer(schema, 0).Length);
+            case "DMY": case "MDY": case "ADDBS": case "DEFAULTEXT": case "FORCEEXT": case "FORCEPATH":
+            case "JUSTDRIVE": case "JUSTEXT": case "JUSTFNAME": case "JUSTPATH": case "JUSTSTEM":
+                return new VfpTypeInfo(VfpType.Character);
+            case "ATN2": case "LOG10":
+            case "ACOS": case "ASIN": case "ATAN": case "BITAND": case "BITCLEAR": case "BITLSHIFT": case "BITNOT": case "BITOR": case "BITRSHIFT": case "BITSET": case "BITXOR": case "CEILING": case "COS": case "CTOBIN": case "DTOR": case "EXP": case "FLOOR": case "FV": case "HOUR": case "LOG": case "MINUTE": case "MTON": case "NTOM": case "PAYMENT": case "PI": case "PV": case "QUARTER": case "RGB": case "RTOD": case "SEC": case "SIGN": case "SIN": case "SQRT": case "TAN": case "WEEK":
+            case "RAND": case "FLOAT": case "FIXED":
             case "VAL": case "LEN": case "AT": case "RAT": case "ASC":
             case "INT": case "ROUND": case "ABS": case "MOD":
             case "DAY": case "MONTH": case "YEAR": case "DOW":
@@ -411,15 +426,18 @@ internal sealed partial class FunctionNode : AstNode
                 return new VfpTypeInfo(VfpType.Numeric);
             case "MAX": case "MIN": return ArgInfer(schema, 0);
 
+            case "TTOD":
             case "CTOD": return new VfpTypeInfo(VfpType.Date, 8);
             case "DATE": return new VfpTypeInfo(VfpType.Date, 8);
             case "GOMONTH": return ArgInfer(schema, 0);
             case "CTOT": case "DTOT": case "DATETIME": return new VfpTypeInfo(VfpType.DateTime, 8);
 
+            case "UNPACK": case "BITTEST":
             case "EMPTY": case "ISNULL": case "DELETED":
             case "BETWEEN": case "INLIST":
                 return new VfpTypeInfo(VfpType.Logical, 1);
 
+            case "NVL": case "EVL": return ArgInfer(schema, 0).Type is VfpType.Null or VfpType.Unknown ? ArgInfer(schema, 1) : ArgInfer(schema, 0);
             case "IIF": return ArgInfer(schema, 1);
             case "ICASE": return ArgInfer(schema, 1);   // result type ≈ the first pair's value expression
             default: return new VfpTypeInfo(VfpType.Unknown);

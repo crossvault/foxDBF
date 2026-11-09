@@ -820,6 +820,7 @@ public sealed class VfpSession : IDisposable
             {
                 LockMode = exclusive ? Write.LockMode.Exclusive : Write.LockMode.Shared,
             }, NamesOf(readColumns));
+            writer.IndexContext = Context;
         }
         catch
         {

@@ -234,15 +234,14 @@ public sealed class MicroVfpHostedExpressionTests : IDisposable
     [InlineData("INDEX ON Udf2(id) TAG u2", "UDF2")]
     [InlineData("INDEX ON TRANSFORM(id) TAG tr", "TRANSFORM")]
     [InlineData("INDEX ON id TAG fu FOR Udf1(id)", "UDF1")]
-    [InlineData("INDEX ON IIF(.F., Udf2(id), id) TAG iu", "UDF2")]   // a UDF is refused even where not evaluated
-    public void IndexOn_FunctionOnlyMicroVfpEvaluates_IsRefused(string source, string name)
+    [InlineData("INDEX ON IIF(.F., Udf2(id), id) TAG iu", "UDF2")]
+    public void IndexOn_FunctionOnlyMicroVfpEvaluates_Builds(string source, string name)
     {
-        // Deviation (documented): VFP9 builds these; microVFP's index engine cannot call back into the interpreter.
+        Assert.Contains(name, source, StringComparison.OrdinalIgnoreCase);
+        // VFP9 builds these; the writer now evaluates the hosted key/FOR against each row.
         _i.Execute("USE ct EXCLUSIVE");
-        var ex = Raises(source);
-        Assert.Null(ex.VfpErrorNumber);
-        Assert.Contains(name + "()", ex.Message);
-        Assert.Equal(0m, Num("TAGCOUNT()"));
+        _i.Execute(source);
+        Assert.Equal(1m, Num("TAGCOUNT()"));
     }
 
     [Fact]

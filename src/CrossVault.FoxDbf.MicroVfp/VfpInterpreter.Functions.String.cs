@@ -34,6 +34,7 @@ public sealed partial class VfpInterpreter
         string code = v.Type switch
         {
             VfpType.Character => "C",
+            VfpType.Binary => "Q",
             VfpType.Numeric or VfpType.Integer => "N",
             VfpType.Currency => "Y",
             VfpType.Date => "D",
@@ -89,6 +90,7 @@ public sealed partial class VfpInterpreter
     private static string TransformNoFormat(VfpValue v) => v.Type switch
     {
         VfpType.Character => v.AsString,
+        VfpType.Binary => Convert.ToHexString(Encoding.Latin1.GetBytes(v.AsString)),
         // VFP9 (runtime-verified): the format-less TRANSFORM of a logical is the ".T."/".F." literal, NOT "T"/"F".
         VfpType.Logical => v.AsLogical ? ".T." : ".F.",
         VfpType.Null => ".NULL.",

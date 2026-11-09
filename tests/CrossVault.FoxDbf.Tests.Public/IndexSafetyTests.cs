@@ -10,31 +10,27 @@ namespace CrossVault.FoxDbf.Tests;
 public sealed class IndexSafetyTests
 {
     [Fact]
-    public void UnsupportedBuiltin_UseSucceeds_SeekAndWriteRefuseWithoutChangingFiles()
+    public void CeilingIndex_UseSeekAndWriteSucceed()
     {
         using var temp = new IndexMaintTestSupport.TempDir();
-        string dbf = CreateFixture(temp.Path, "builtin");
-        var before = new[] { dbf, Path.ChangeExtension(dbf, ".fpt"), Path.ChangeExtension(dbf, ".cdx") }
-            .ToDictionary(p => p, File.ReadAllBytes);
+        string dbf = Path.Combine(temp.Path, "t.dbf");
+        using (var writer = DbfWriter.Create(dbf, [new DbfColumnDef("k", 'N', 8, 2)]))
+        {
+            writer.AppendRecord(0.5);
+            writer.CreateTag(new CdxTagDefinition("bad", "CEILING(k)"));
+        }
         using (var session = new VfpSession())
         {
             session.OpenDirectory(temp.Path);
             using var interpreter = new VfpInterpreter(session);
-            interpreter.Execute("USE t");
-            Assert.True(interpreter.EvalExpression("USED('t')").AsLogical);
+            interpreter.Execute("USE t\nSET ORDER TO bad\nSEEK 1");
+            Assert.True(interpreter.EvalExpression("FOUND()").AsLogical);
         }
-        using (var table = DbfTable.Open(dbf))
-        using (var index = CdxFile.Open(Path.ChangeExtension(dbf, ".cdx"), table))
-        {
-            var error = Assert.Throws<NotSupportedException>(() => index.Tag("BAD")!.Seek(1));
-            Assert.Contains("CEILING", error.Message, StringComparison.OrdinalIgnoreCase);
-        }
-        using (var writer = DbfWriter.Open(dbf))
-        {
-            var error = Assert.Throws<DbfWriteException>(() => writer.AppendRecord("BRAVO", "memo"));
-            Assert.Contains("CEILING", error.Message, StringComparison.OrdinalIgnoreCase);
-        }
-        foreach (var (file, bytes) in before) Assert.Equal(bytes, File.ReadAllBytes(file));
+        using (var writer = DbfWriter.Open(dbf)) writer.AppendRecord(1.5);
+        using var table = DbfTable.Open(dbf);
+        using var index = CdxFile.Open(Path.ChangeExtension(dbf, ".cdx"), table);
+        Assert.Equal(2, index.Tag("BAD")!.EnumerateEntries().Count());
+        Assert.Equal(1u, index.Tag("BAD")!.Seek(1));
     }
 
     [Theory]

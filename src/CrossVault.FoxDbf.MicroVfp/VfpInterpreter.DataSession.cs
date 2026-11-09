@@ -106,7 +106,10 @@ public sealed partial class VfpInterpreter
         SaveActiveInterpState(cur);        // stash the outgoing session's scalars (maps are shared references).
         Session.SwitchDataSession(id);     // swap the work-area bundle + the session's EvaluationContext.
         LoadActiveInterpState(id);         // re-point the live runtime fields at the target session's state.
-        _ctx = Session.Context;            // mirror the now-active session's SET DELETED/EXACT/… context.
+        _ctx = Session.Context;
+        _ctx.IndexEvaluator = EvaluateIndex;
+        _ctx.NormalizeIndexExpression = MicroVfpExprRewrite.Normalize;
+        _ctx.ValidateIndexFunction = ValidateIndexFunction;            // mirror the now-active session's SET DELETED/EXACT/… context.
     }
 
     // Save the active session's SCALAR runtime state back into its record (the maps/list are the SAME

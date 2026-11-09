@@ -58,6 +58,7 @@ internal static class MicroVfpExprRewrite
         s = QuoteArrayFnArg(s, "AELEMENT");   // AELEMENT(ArrayName, nRow [, nCol])
         s = QuoteArrayFnArg(s, "ASUBSCRIPT"); // ASUBSCRIPT(ArrayName, nElement, nSubscript)
         s = QuoteArrayFnArg(s, "AFIELDS");    // AFIELDS(ArrayName [, cAlias | nArea])
+        s = QuoteArrayFnArg(s, "ASCAN");
         s = QuoteArrayFnArg(s, "ASORT");      // ASORT(ArrayName [, nStart [, nCount [, nOrder [, nFlags]]]])
         s = QuoteArrayFnArg(s, "ADATABASES"); // ADATABASES(ArrayName)
         s = QuoteArrayFnArg(s, "AUSED");      // AUSED(ArrayName [, nDataSessionId])

@@ -32,7 +32,7 @@ internal enum UnOp { Neg, Not }
 /// call into these methods, guaranteeing identical results. Nothing here throws
 /// on bad/null data — it coerces or yields <c>.NULL.</c> per VFP rules.
 /// </summary>
-internal static class VfpRuntime
+internal static partial class VfpRuntime
 {
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
@@ -132,26 +132,26 @@ internal static class VfpRuntime
             return VfpValue.Character(l.AsString + r.AsString);
         if (l.Type == VfpType.Date && IsNumeric(r))
         {
-            if (l.AsDate == default) return VfpValue.Date(default);
-            try { return VfpValue.Date(l.AsDate.AddDays((int)r.AsDouble)); }
+            if (l.IsEmptyDate) return VfpValue.Date(default);
+            try { return VfpValue.Date(l.AsDate.AddDays((int)r.AsDouble), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.Date(default); }
         }
         if (IsNumeric(l) && r.Type == VfpType.Date)
         {
-            if (r.AsDate == default) return VfpValue.Date(default);
-            try { return VfpValue.Date(r.AsDate.AddDays((int)l.AsDouble)); }
+            if (r.IsEmptyDate) return VfpValue.Date(default);
+            try { return VfpValue.Date(r.AsDate.AddDays((int)l.AsDouble), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.Date(default); }
         }
         if (l.Type == VfpType.DateTime && IsNumeric(r))
         {
-            if (l.AsDateTime == default) return VfpValue.DateTime(default);
-            try { return VfpValue.DateTime(l.AsDateTime.AddSeconds(r.AsDouble)); }
+            if (l.IsEmptyDate) return VfpValue.DateTime(default);
+            try { return VfpValue.DateTime(l.AsDateTime.AddSeconds(r.AsDouble), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.DateTime(default); }
         }
         if (IsNumeric(l) && r.Type == VfpType.DateTime)
         {
-            if (r.AsDateTime == default) return VfpValue.DateTime(default);
-            try { return VfpValue.DateTime(r.AsDateTime.AddSeconds(l.AsDouble)); }
+            if (r.IsEmptyDate) return VfpValue.DateTime(default);
+            try { return VfpValue.DateTime(r.AsDateTime.AddSeconds(l.AsDouble), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.DateTime(default); }
         }
         return VfpValue.Number(l.AsDouble + r.AsDouble);
@@ -167,14 +167,14 @@ internal static class VfpRuntime
             return VfpValue.Number((l.AsDateTime - r.AsDateTime).TotalSeconds);
         if (l.Type == VfpType.Date && IsNumeric(r))
         {
-            if (l.AsDate == default) return VfpValue.Date(default);
-            try { return VfpValue.Date(l.AsDate.AddDays(-(int)r.AsDouble)); }
+            if (l.IsEmptyDate) return VfpValue.Date(default);
+            try { return VfpValue.Date(l.AsDate.AddDays(-(int)r.AsDouble), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.Date(default); }
         }
         if (l.Type == VfpType.DateTime && IsNumeric(r))
         {
-            if (l.AsDateTime == default) return VfpValue.DateTime(default);
-            try { return VfpValue.DateTime(l.AsDateTime.AddSeconds(-r.AsDouble)); }
+            if (l.IsEmptyDate) return VfpValue.DateTime(default);
+            try { return VfpValue.DateTime(l.AsDateTime.AddSeconds(-r.AsDouble), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.DateTime(default); }
         }
         return VfpValue.Number(l.AsDouble - r.AsDouble);
@@ -212,7 +212,7 @@ internal static class VfpRuntime
             return l.AsLogical == r.AsLogical;
         if ((l.Type is VfpType.Date or VfpType.DateTime) &&
             (r.Type is VfpType.Date or VfpType.DateTime))
-            return l.AsDateTime == r.AsDateTime;
+            return l.IsEmptyDate == r.IsEmptyDate && l.AsDateTime == r.AsDateTime;
         return false;
     }
 
@@ -332,7 +332,7 @@ internal static class VfpRuntime
         if (IsNumeric(l) && IsNumeric(r)) return l.AsDouble.CompareTo(r.AsDouble);
         if ((l.Type is VfpType.Date or VfpType.DateTime) &&
             (r.Type is VfpType.Date or VfpType.DateTime))
-            return l.AsDateTime.CompareTo(r.AsDateTime);
+            return l.IsEmptyDate != r.IsEmptyDate ? (l.IsEmptyDate ? -1 : 1) : l.AsDateTime.CompareTo(r.AsDateTime);
         if (l.Type == VfpType.Logical && r.Type == VfpType.Logical)
             return l.AsLogical.CompareTo(r.AsLogical);
         // Fallback: numeric coercion.
@@ -364,6 +364,10 @@ internal static class VfpRuntime
         // Functions that must SEE a .NULL. argument rather than propagate it.
         switch (name)
         {
+            // VFP9 retains UNPACK as a compatibility stub, returning .F. even for NULL.
+            case "UNPACK": return VfpValue.Logical(false);
+            case "NVL": return Arg(args, 0).IsNull ? Arg(args, 1) : Arg(args, 0);
+            case "EVL": return Empty(Arg(args, 0), ctx).AsLogical && !Arg(args, 0).IsNull ? Arg(args, 1) : Arg(args, 0);
             case "ISNULL": return VfpValue.Logical(Arg(args, 0).IsNull);
             case "EMPTY": return Empty(Arg(args, 0), ctx);
             case "IIF":
@@ -426,21 +430,29 @@ internal static class VfpRuntime
             case "CTOT": return Ctot(Arg(args, 0).AsString);
             // VFP9: a Date becomes midnight, including the empty Date; NULL propagates above.
             case "DTOT": return Arg(args, 0).Type == VfpType.Date
-                ? VfpValue.DateTime(Arg(args, 0).AsDateTime) : VfpValue.Null;
+                ? VfpValue.DateTime(Arg(args, 0).AsDateTime, Arg(args, 0).IsEmptyDate) : VfpValue.Null;
             case "DTOC":
             {
                 var d = Arg(args, 0).AsDate;
-                return VfpValue.Character(d == default ? new string(' ', 10)
+                return VfpValue.Character(Arg(args, 0).IsEmptyDate ? "  /  /    "
                                                        : d.ToString("MM/dd/yyyy", Inv));
             }
             case "DTOS":
             {
                 var d = Arg(args, 0).AsDate;
                 // VFP: an empty/blank date yields 8 spaces, NOT "00010101".
-                return VfpValue.Character(d == default ? new string(' ', 8)
+                return VfpValue.Character(Arg(args, 0).IsEmptyDate ? new string(' ', 8)
                                                        : d.ToString("yyyyMMdd", Inv));
             }
-            case "TTOC": return VfpValue.Character(Arg(args, 0).AsDateTime.ToString("MM/dd/yyyy hh:mm:ss tt", Inv));
+            case "TTOC":
+            {
+                var value = Arg(args, 0);
+                int mode = IntArg(args, 1);
+                string format = mode == 1 ? "yyyyMMddHHmmss" : mode == 2 ? "HH:mm:ss" : "MM/dd/yyyy hh:mm:ss tt";
+                return VfpValue.Character(value.IsEmptyDate
+                    ? mode == 1 ? new string('0', 14) : mode == 2 ? "  :  :  " : "  /  /       :  :   AM"
+                    : value.AsDateTime.ToString(format, Inv));
+            }
 
             // ---- date ----
             case "DATE": return VfpValue.Date(DateOnly.FromDateTime(DateTime.Today));
@@ -512,7 +524,7 @@ internal static class VfpRuntime
             // COUNT, which is EXACT for a fixed-pitch font (VFP: TXTWIDTH(s,'Courier New',10) == LEN(s)) and a
             // FLAGGED approximation for the proportional desktop font (that value is GUI-/machine-bound).
             case "TXTWIDTH": return VfpValue.Integer(Arg(args, 0).AsString.Length);
-            default: return UnknownFunction(name, args, ctx, row);
+            default: return CallScalarExtras(name, args, ctx, row);
         }
     }
 
@@ -525,7 +537,8 @@ internal static class VfpRuntime
     internal static readonly System.Collections.Frozen.FrozenSet<string> EngineFunctionNames =
         System.Collections.Frozen.FrozenSet.ToFrozenSet(new[]
         {
-            "ISNULL", "EMPTY", "IIF", "ICASE",
+            "ISNULL", "EMPTY", "IIF", "ICASE", "UNPACK", "ATN2", "LOG10", "RAND", "FLOAT", "FIXED", "TIME",
+            "ACOS", "ADDBS", "ANSITOOEM", "ASIN", "ATAN", "BINTOC", "BITAND", "BITCLEAR", "BITLSHIFT", "BITNOT", "BITOR", "BITRSHIFT", "BITSET", "BITTEST", "BITXOR", "CEILING", "COS", "CREATEBINARY", "CTOBIN", "DEFAULTEXT", "DMY", "DTOR", "EVL", "EXP", "FLOOR", "FORCEEXT", "FORCEPATH", "FV", "HOUR", "JUSTDRIVE", "JUSTEXT", "JUSTFNAME", "JUSTPATH", "JUSTSTEM", "LOG", "MDY", "MINUTE", "MTON", "NTOM", "NVL", "OEMTOANSI", "PAYMENT", "PI", "PV", "QUARTER", "RGB", "RTOD", "SEC", "SIGN", "SIN", "SQRT", "TAN", "TTOD", "WEEK",
             "UPPER", "LOWER", "ALLTRIM", "TRIM", "RTRIM", "LTRIM", "LEFT", "RIGHT", "SUBSTR", "STR", "STRZERO",
             "PADL", "PADR", "PADC", "AT", "RAT", "STUFF", "CHRTRAN", "STRTRAN", "REPLICATE", "SPACE", "LEN",
             "CHR", "ASC",
@@ -822,17 +835,17 @@ internal static class VfpRuntime
         if (d.Type == VfpType.DateTime)
         {
             // VFP9 returns an empty Date (not DateTime) for GOMONTH(CTOT(''), n).
-            if (d.AsDateTime == default) return VfpValue.Date(default);
-            try { return VfpValue.DateTime(d.AsDateTime.AddMonths(m)); }
+            if (d.IsEmptyDate) return VfpValue.Date(default);
+            try { return VfpValue.DateTime(d.AsDateTime.AddMonths(m), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.DateTime(default); }
         }
         if (d.Type == VfpType.Date)
         {
-            if (d.AsDate == default) return VfpValue.Date(default);
-            try { return VfpValue.Date(d.AsDate.AddMonths(m)); }
+            if (d.IsEmptyDate) return VfpValue.Date(default);
+            try { return VfpValue.Date(d.AsDate.AddMonths(m), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.Date(default); }
         }
-        return VfpValue.Date(d.AsDate.AddMonths(m));
+        return VfpValue.Date(d.AsDate.AddMonths(m), empty: false);
     }
 
     internal static double Round(double n, int dec)
@@ -868,8 +881,8 @@ internal static class VfpRuntime
             case VfpType.Currency:
             case VfpType.Integer: return VfpValue.Logical(v.AsDouble == 0d);
             case VfpType.Logical: return VfpValue.Logical(!v.AsLogical);
-            case VfpType.Date: return VfpValue.Logical(v.AsDate == default);
-            case VfpType.DateTime: return VfpValue.Logical(v.AsDateTime == default);
+            case VfpType.Date: return VfpValue.Logical(v.IsEmptyDate);
+            case VfpType.DateTime: return VfpValue.Logical(v.IsEmptyDate);
             default: return VfpValue.Logical(true);
         }
     }

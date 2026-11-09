@@ -25,14 +25,22 @@ public sealed partial class DbfWriter
         _openCompactIndexes.Remove(Path.GetFullPath(path));
     }
 
-    internal void SetOpenCompactIndexes(IEnumerable<string> paths, EvaluationContext context)
+    internal void SetOpenAdditionalIndexes(IEnumerable<string> paths, EvaluationContext context)
     {
         _openCompactIndexes.Clear();
+        _openRebuiltIndexes.Clear();
         foreach (string path in paths)
         {
-            using var idx = IdxFile.Open(path, _schema.Encoding);
-            if (idx.Header.IsCompact)
-                _openCompactIndexes[Path.GetFullPath(path)] = context;
+            if (Path.GetExtension(path).Equals(".idx", StringComparison.OrdinalIgnoreCase))
+            {
+                using var idx = IdxFile.Open(path, _schema.Encoding);
+                if (idx.Header.IsCompact)
+                {
+                    _openCompactIndexes[Path.GetFullPath(path)] = context;
+                    continue;
+                }
+            }
+            _openRebuiltIndexes[Path.GetFullPath(path)] = context;
         }
     }
 
@@ -44,8 +52,8 @@ public sealed partial class DbfWriter
         file.TextEncoding = _schema.Encoding;
         var header = file.ReadCdxHeader(0);
         bool Supported(string? text) => string.IsNullOrWhiteSpace(text) ||
-            (FieldsResolve(text) && !VfpExpression.Parse(text).ContainsFunction((name, _) =>
-                !VfpRuntime.EngineFunctionNames.Contains(VfpFunctionAbbreviations.Canonical(name))));
+            (FieldsResolve(text, context) && (context?.IndexEvaluator is not null || !VfpExpression.Parse(text).ContainsFunction((name, _) =>
+                !VfpRuntime.EngineFunctionNames.Contains(VfpFunctionAbbreviations.Canonical(name)))));
         if ((header.Options & 0xE0) != 0x20 || !Supported(header.KeyExpression) || !Supported(header.ForExpression)
             || VfpCollations.Resolve(header.SortOrder, _schema.Encoding.CodePage, out _) != CollationSupport.Exact)
         {
@@ -59,17 +67,20 @@ public sealed partial class DbfWriter
         var computer = CdxIndexBuilder.CreateKeyComputer(_schema, def, context);
         if (computer.KeyLen != header.KeyLength || computer.KeyType == IndexKeyType.Unknown)
             throw new DbfWriteException($"Cannot derive the stored key of compact index '{path}' (collation '{header.SortOrder}', code page {_schema.Encoding.CodePage}).");
+        computer.ValidateHost?.Invoke();
         return (def, computer);
     }
 
     private void ValidateCompactIndexes()
     {
+        ValidateRebuiltIndexes();
         foreach (var (path, context) in _openCompactIndexes)
             ReadCompactIndexPlan(path, context);
     }
 
     private void MaintainCompactIndexes(int recNo, DbfRecord? before, DbfRecord after)
     {
+        RebuildAdditionalIndexes();
         foreach (var (path, context) in _openCompactIndexes)
         {
             var (_, computer) = ReadCompactIndexPlan(path, context);
@@ -90,6 +101,7 @@ public sealed partial class DbfWriter
 
     private void RebuildCompactIndexes()
     {
+        RebuildAdditionalIndexes();
         if (_openCompactIndexes.Count == 0) return;
         var rows = MaterializeRows();
         foreach (var (path, context) in _openCompactIndexes)

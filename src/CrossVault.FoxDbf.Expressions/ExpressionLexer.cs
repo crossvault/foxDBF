@@ -357,13 +357,13 @@ internal sealed class ExpressionLexer
             throw new ExpressionException($"Invalid date literal '{{{inner}}}'.", pos);
 
         if (timePart is null || timePart.Length == 0)
-            return new(TokenType.DateLit, pos, inner, VfpValue.Date(DateOnly.FromDateTime(d)));
+            return new(TokenType.DateLit, pos, inner, VfpValue.Date(DateOnly.FromDateTime(d), empty: false));
 
         string[] timeFormats = { "HH:mm:ss", "H:mm:ss", "HH:mm", "h:mm:ss tt", "hh:mm:ss tt" };
         if (!DateTime.TryParseExact(timePart, timeFormats, Inv, DateTimeStyles.None, out var t))
             throw new ExpressionException($"Invalid datetime literal '{{{inner}}}'.", pos);
 
         var dt = new DateTime(d.Year, d.Month, d.Day, t.Hour, t.Minute, t.Second, DateTimeKind.Unspecified);
-        return new(TokenType.DateTimeLit, pos, inner, VfpValue.DateTime(dt));
+        return new(TokenType.DateTimeLit, pos, inner, VfpValue.DateTime(dt, empty: false));
     }
 }

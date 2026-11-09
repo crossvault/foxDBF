@@ -30,6 +30,9 @@ public enum IndexKeyType
 
     /// <summary>DateTime (DBF type <c>T</c>): 8-byte transformed double = Julian day + fractional day.</summary>
     DateTime,
+
+    /// <summary>Logical key: one ASCII F or T byte, as stored by VFP9.</summary>
+    Logical,
 }
 
 /// <summary>
@@ -106,6 +109,7 @@ public readonly struct IndexKey
             value = type switch
             {
                 IndexKeyType.Character => DecodeCharacter(raw),
+                IndexKeyType.Logical => keyBytes.Length == 0 ? null : keyBytes[0] == (byte)'T',
                 IndexKeyType.Integer => DecodeInteger(keyBytes),
                 IndexKeyType.Numeric => DecodeDouble(keyBytes),
                 IndexKeyType.Date => DecodeDate(keyBytes),
@@ -254,6 +258,7 @@ public readonly struct IndexKey
                 IndexKeyType.Character => EncodeCharacter(value),
                 IndexKeyType.Integer => EncodeInteger(value),
                 IndexKeyType.Numeric => EncodeDouble(Convert.ToDouble(value)),
+                IndexKeyType.Logical => value is bool flag ? new[] { flag ? (byte)'T' : (byte)'F' } : null,
                 IndexKeyType.Date => EncodeDate(value),
                 IndexKeyType.DateTime => EncodeDateTime(value),
                 _ => null,
@@ -420,6 +425,7 @@ public readonly struct IndexKey
 
     private static byte[]? EncodeDate(object value, bool emptyDefault = true)
     {
+        if (value is VfpValue v) return EncodeDate(v.AsDate, v.IsEmptyDate);
         DateOnly date = value switch
         {
             DateOnly d => d,
@@ -436,6 +442,7 @@ public readonly struct IndexKey
 
     private static byte[]? EncodeDateTime(object value, bool emptyDefault = true)
     {
+        if (value is VfpValue v) return EncodeDateTime(v.AsDateTime, v.IsEmptyDate);
         if (value is not DateTime dt)
             return null;
         // CTOT('') uses the same transformed-zero key as {}.
@@ -488,6 +495,7 @@ public readonly struct IndexKey
                 VfpType.Character => IndexKeyType.Character,
                 VfpType.Integer => IndexKeyType.Integer,
                 VfpType.Numeric or VfpType.Currency => IndexKeyType.Numeric,
+                VfpType.Logical => IndexKeyType.Logical,
                 VfpType.Date => IndexKeyType.Date,
                 VfpType.DateTime => IndexKeyType.DateTime,
                 _ => IndexKeyType.Unknown,
@@ -515,6 +523,7 @@ public readonly struct IndexKey
         'C' or 'V' => IndexKeyType.Character,
         'I' => IndexKeyType.Integer,
         'N' or 'F' or 'Y' or 'B' => IndexKeyType.Numeric,
+        'L' => IndexKeyType.Logical,
         'D' => IndexKeyType.Date,
         'T' => IndexKeyType.DateTime,
         _ => IndexKeyType.Unknown,

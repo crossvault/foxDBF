@@ -451,6 +451,7 @@ internal static class CdxIndexBuilder
         public required Func<IRowContext, VfpValue>? ForFn;
         public required bool Unique;
         public required bool Descending;
+        public Action? ValidateHost;
 
         /// <summary>
         /// Evaluate the tag's FOR filter and KEY over <paramref name="record"/>. Returns <see langword="true"/>
@@ -503,20 +504,39 @@ internal static class CdxIndexBuilder
             // stored in (VFP9: INDEX ON CHR(130) on a CP850 table stores 0x82), and identical for the bulk
             // build and the incremental maintenance (which has no live evaluation context).
             Encoding = schema.Encoding,
+            IndexEvaluator = evalContext?.IndexEvaluator,
+            Random = evalContext?.Random ?? new VfpRandom(),
         };
 
-        var (keyType, baseLen, isChar) = ResolveKey(schema, def.KeyExpression);
+        var (keyType, baseLen, isChar) = ResolveKey(schema, def.KeyExpression, ctx);
         int keyLen = CollatedKeyLength(baseLen, isChar, collation);
         // VFP9 pads a MACHINE character key with blanks and a weighted (GENERAL / SPANISH) one with 0x00.
         byte pad = isChar ? IndexKey.CharacterKeyPad(def.Collation) : (byte)0x00;
 
-        var keyFn = VfpExpression.Parse(def.KeyExpression).Compile(ctx);
+        var keyFn = CompileIndex(def.KeyExpression, ctx);
         Func<IRowContext, VfpValue>? forFn = !string.IsNullOrWhiteSpace(def.ForExpression)
-            ? VfpExpression.Parse(def.ForExpression!).Compile(ctx)
+            ? CompileIndex(def.ForExpression!, ctx)
             : null;
 
+        Action? validateHost = null;
+        if (evalContext?.ValidateIndexFunction is { } validate)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var text in new[] { def.KeyExpression, def.ForExpression })
+            {
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                VfpExpression.Parse(text).ContainsFunction((name, _) =>
+                {
+                    name = VfpFunctionAbbreviations.Canonical(name);
+                    if (!VfpRuntime.EngineFunctionNames.Contains(name)) names.Add(name);
+                    return false;
+                });
+            }
+            if (names.Count > 0) validateHost = () => { foreach (string name in names) validate(name); };
+        }
         return new TagKeyComputer
         {
+            ValidateHost = validateHost,
             KeyType = keyType,
             KeyLen = keyLen,
             IsChar = isChar,
@@ -1051,10 +1071,11 @@ internal static class CdxIndexBuilder
 
         object? clr = type switch
         {
+            IndexKeyType.Logical => value.IsNull ? null : (object)value.AsLogical,
             IndexKeyType.Integer => value.IsNull ? null : (object)value.AsInteger,
             IndexKeyType.Numeric => value.IsNull ? null : (object)value.AsDouble,
-            IndexKeyType.Date => value.IsNull ? null : (object)value.AsDate,
-            IndexKeyType.DateTime => value.IsNull ? null : (object)value.AsDateTime,
+            IndexKeyType.Date => value.IsNull ? null : value.ToClr(),
+            IndexKeyType.DateTime => value.IsNull ? null : value.ToClr(),
             _ => null,
         };
 
@@ -1068,8 +1089,29 @@ internal static class CdxIndexBuilder
     }
 
     /// <summary>Resolve the on-disk key type, byte length and char-ness for a tag KEY expression.</summary>
-    internal static (IndexKeyType Type, int KeyLen, bool IsChar) ResolveKey(DbfTable schema, string keyExpr)
+    internal static Func<IRowContext, VfpValue> CompileIndex(string text, EvaluationContext context)
     {
+        var expression = VfpExpression.Parse(text);
+        if (context.IndexEvaluator is { } evaluate && VfpRuntime.UnsupportedIndexFunction(text) is not null)
+            return row => evaluate(expression, row, context);
+        return expression.Compile(context);
+    }
+
+    internal static (IndexKeyType Type, int KeyLen, bool IsChar) ResolveKey(DbfTable schema, string keyExpr, EvaluationContext? context = null)
+    {
+        if (context?.IndexEvaluator is { } evaluate && VfpRuntime.UnsupportedIndexFunction(keyExpr) is not null)
+        {
+            var record = (schema.RecordCount > 0 ? schema.GetRecord(0) : null) ?? new DbfRecord(schema, new byte[schema.RecordLength]);
+            var value = evaluate(VfpExpression.Parse(keyExpr), new RowContext(record, 1, schema.RecordCount), context);
+            return value.Type switch
+            {
+                VfpType.Character => (IndexKeyType.Character, Math.Max(1, value.AsString.Length), true),
+                VfpType.Logical => (IndexKeyType.Logical, 1, false),
+                VfpType.Date => (IndexKeyType.Date, 8, false),
+                VfpType.DateTime => (IndexKeyType.DateTime, 8, false),
+                _ => (IndexKeyType.Numeric, 8, false),
+            };
+        }
         string field = (keyExpr ?? string.Empty).Trim();
         foreach (var col in schema.Columns)
         {
@@ -1081,11 +1123,18 @@ internal static class CdxIndexBuilder
         try
         {
             var info = VfpExpression.Parse(keyExpr ?? string.Empty).InferType(new TableSchema(schema));
+            if (info.Type == VfpType.Character && info.Length == 0)
+            {
+                var record = (schema.RecordCount > 0 ? schema.GetRecord(0) : null) ?? new DbfRecord(schema, new byte[schema.RecordLength]);
+                var value = CompileIndex(keyExpr!, context ?? new EvaluationContext { Encoding = schema.Encoding })(new RowContext(record, 1, schema.RecordCount));
+                return (IndexKeyType.Character, Math.Max(1, value.AsString.Length), true);
+            }
             return info.Type switch
             {
                 VfpType.Character => (IndexKeyType.Character, Math.Max(1, info.Length), true),
                 VfpType.Integer => (IndexKeyType.Integer, 4, false),
                 VfpType.Numeric or VfpType.Currency => (IndexKeyType.Numeric, 8, false),
+                VfpType.Logical => (IndexKeyType.Logical, 1, false),
                 VfpType.Date => (IndexKeyType.Date, 8, false),
                 VfpType.DateTime => (IndexKeyType.DateTime, 8, false),
                 _ => (IndexKeyType.Character, Math.Max(1, info.Length == 0 ? 10 : info.Length), true),
@@ -1102,6 +1151,7 @@ internal static class CdxIndexBuilder
         'C' or 'V' => (IndexKeyType.Character, Math.Max(1, length), true),
         'I' => (IndexKeyType.Integer, 4, false),
         'N' or 'F' or 'Y' or 'B' => (IndexKeyType.Numeric, 8, false),
+        'L' => (IndexKeyType.Logical, 1, false),
         'D' => (IndexKeyType.Date, 8, false),
         'T' => (IndexKeyType.DateTime, 8, false),
         _ => (IndexKeyType.Character, Math.Max(1, length), true),
@@ -1324,13 +1374,15 @@ internal static class CdxIndexBuilder
     }
 
     /// <summary>Adapts a <see cref="DbfRecord"/> to the expression engine row contract.</summary>
-    internal sealed class RowContext : IRowContext
+    internal sealed class RowContext : IRowContext, ISchema
     {
         private readonly DbfRecord _record;
         public RowContext(DbfRecord record, int recNo, int recCount) { _record = record; RecNo = recNo; RecCount = recCount; }
         public int RecNo { get; }
         public int RecCount { get; }
         public bool Deleted => _record.IsDeleted;
+        public bool TryGetColumn(string name, out char type, out int length, out int decimals)
+            => new TableSchema(_record.Table).TryGetColumn(name, out type, out length, out decimals);
 
         public object? GetField(string name)
         {
@@ -1341,6 +1393,8 @@ internal static class CdxIndexBuilder
             // must embed objecttype as "Field     " (C(10)), not the trimmed "Field". Re-decode the
             // raw bytes at full width for 'C' fields; a NULL-flagged field still reads as NULL.
             var value = _record[name];
+            if (value is DateOnly date) return VfpValue.Date(date, empty: false);
+            if (value is DateTime timestamp) return VfpValue.DateTime(timestamp, empty: false);
             if (value is null)
             {
                 foreach (var col in _record.Table.Columns)

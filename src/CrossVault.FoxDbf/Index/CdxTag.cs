@@ -54,7 +54,7 @@ public sealed class CdxTag
     /// KEY expression + optional DBF schema. A character key pads with 0x20 under MACHINE and with 0x00 under a
     /// weighted sequence (see <see cref="KeyPad"/>); every other key pads with 0x00.
     /// </summary>
-    public bool IsCharacterKey { get; }
+    public bool IsCharacterKey { get; private set; }
 
     /// <summary>
     /// The byte the stored keys of this tag are padded with up to <see cref="KeyLength"/>: 0x20 for a MACHINE
@@ -62,7 +62,7 @@ public sealed class CdxTag
     /// Taken from the sort sequence NAME in the tag header, so a tag under a sequence we cannot weight (GERMAN) still
     /// reads with VFP's pad.
     /// </summary>
-    internal byte KeyPad { get; }
+    internal byte KeyPad { get; private set; }
 
     /// <summary>
     /// The logical key type (plan §C5), resolved from the <see cref="KeyExpression"/>
@@ -70,7 +70,7 @@ public sealed class CdxTag
     /// <see cref="DecodeKey"/> / <see cref="Seek(object)"/>. <see cref="IndexKeyType.Unknown"/>
     /// when no schema was supplied or the expression is not a bare field name.
     /// </summary>
-    public IndexKeyType KeyType { get; }
+    public IndexKeyType KeyType { get; private set; }
 
     /// <summary>
     /// The code page a MACHINE character key of this tag is stored in: the table encoding (Latin-1 for a
@@ -356,9 +356,19 @@ public sealed class CdxTag
         return keyBytes is null ? NotFound : Seek(keyBytes.AsSpan());
     }
 
+    private bool _hostResolved;
+    internal bool NeedsHostResolution => !_hostResolved && _unsupportedKeyFunction is not null;
+    internal void ResolveHostedKey(IndexKeyType type)
+    {
+        KeyType = type;
+        IsCharacterKey = type == IndexKeyType.Character;
+        KeyPad = IsCharacterKey ? IndexKey.CharacterKeyPad(Collation) : (byte)0;
+        _hostResolved = true;
+    }
+
     private void RequireSupportedKeyFunctions()
     {
-        if (_unsupportedKeyFunction is { } function
+        if (!_hostResolved && _unsupportedKeyFunction is { } function
             && VfpFunctionNames.IsBuiltin(function))
             throw new NotSupportedException($"Index tag '{Name}': function {function}() is not supported by the index engine for SEEK.");
     }

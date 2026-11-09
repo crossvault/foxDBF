@@ -8,6 +8,19 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP builds and maintains index KEY/FOR expressions that call loaded UDFs, arrays or interpreter
+  functions, including existing VFP9-created tags. Missing functions are rejected before writes; plain
+  library access remains readable and refuses unsupported maintenance. Native scalar keys retain their
+  compiled path. Open nonstructural CDX and legacy IDX files are now maintained alongside compact IDX files.
+- Missing scalar built-ins, including `CEILING`, `FLOOR`, trigonometric/financial/bit functions, date/time
+  conversions, binary conversions and lexical path functions, now execute in expressions, filters, SQL
+  and index maintenance; `ASCAN` supports array searches through the interpreter. The legacy `UNPACK`
+  compatibility function returns VFP9's `.F.`, including for NULL. `NVL`/`EVL` now handle NULL/empty values before generic NULL propagation.
+- Index expressions preserve a real `0001-01-01` separately from an empty date, including `DTOS(d)`,
+  `DTOC(d)+x`, `TTOC(t)`, date arithmetic and literals. Logical index expressions store VFP9's F/T keys.
+- BREAKING: `DTOC` of an empty date returns VFP9's date separators (`"  /  /    "`) instead of ten spaces;
+  `TTOC` now honours its format argument and VFP9's empty DateTime representation.
+
 - GENERAL is now exact on code pages 852, 857, 861, 863, 865, 1254, 10000, 10029, 620 and 895.
   Index keys are byte-identical to VFP9, allowing index creation and maintenance, SEEK in both directions
   and Rushmore narrowing on these tables. Previously these combinations were approximate and index writes
@@ -453,13 +466,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   (`HAVING BETWEEN(SUM(amount), 60, 80)`) are computed per group. A HAVING in a query without GROUP BY or
   aggregates (`SELECT id AS k FROM person HAVING k > 4`) was ignored; it now filters the rows, as in VFP9,
   and an aggregate in such a HAVING (`SELECT id FROM person HAVING COUNT(*) > 1`) raises VFP error 1807.
-
-### Known issues
-
-- microVFP does not implement every VFP9 built-in function (for example `CEILING()`). A table whose index KEY or FOR
-  uses such a function opens, but SEEK on that index and writes that would maintain it refuse with the function's
-  name, before anything is changed.
-- A date of 0001-01-01 inside an index expression (not a plain D/T field) is keyed like an empty date.
 
 ## [0.10.0] - 2026-10-22
 

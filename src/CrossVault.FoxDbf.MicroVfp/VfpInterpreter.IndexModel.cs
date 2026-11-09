@@ -69,8 +69,8 @@ public sealed partial class VfpInterpreter
     //
     // INDEX ON eKey TAG cTag [FOR lExpr] [ASCENDING|DESCENDING] [UNIQUE|CANDIDATE] [ADDITIVE] builds (or
     // replaces) a tag in the STRUCTURAL .cdx via the byte-exact CDX builder (DbfWriter.CreateTag), then
-    // makes it the controlling order. TO <idx> (standalone) and TAG … OF <cdx> (non-structural) are
-    // explicit, catchable refusals — there is no .idx writer / multi-CDX-per-area model yet. CANDIDATE
+    // makes it the controlling order. TO <idx> (standalone) and TAG … OF <cdx> (non-structural)
+    // use the same expression host and the appropriate standalone builder. CANDIDATE
     // builds the tag then verifies key-uniqueness, rolling the files back + raising on a duplicate.
     //
     // Deleted records: the build honours the LIVE SET DELETED — SET DELETED ON (the microVFP default)
@@ -92,10 +92,9 @@ public sealed partial class VfpInterpreter
         string keyExpr = ix.Key.Text.Trim();
         string? forExpr = ix.For?.Text is { } f && f.Trim().Length > 0 ? f.Trim() : null;
         // VFP evaluates the KEY (and FOR) once before it builds: an unknown function raises error 1 here, also on an
-        // empty table, and an error inside a UDF surfaces. The builder then evaluates without the interpreter, so
-        // a function only microVFP answers is refused instead of keying every record .NULL..
-        RequireEngineFunctions(ix.Key, ProbeEvaluate(ix.Key), "key");
-        if (forExpr is not null) RequireEngineFunctions(ix.For!, ProbeEvaluate(ix.For!), "FOR");
+        // empty table, and an error inside a UDF surfaces. Non-native calls keep this host during maintenance.
+        ProbeEvaluate(ix.Key);
+        if (forExpr is not null) ProbeEvaluate(ix.For!);
 
         bool candidate = ix.Candidate;
         // UNIQUE clause OR the SET UNIQUE session default (candidate is a distinct constraint, not UNIQUE).
@@ -431,6 +430,7 @@ public sealed partial class VfpInterpreter
         if (wa.Cdx is not null)
         {
             var t = wa.Cdx.Tag(identity) ?? wa.Cdx.Tag(identity.ToUpperInvariant());
+            if (t is not null) ResolveHostedTag(t, wa.Table);
             if (t is not null) return new OrderSource(null) { CdxTag = t, Descending = t.Descending, Name = t.Name };
         }
 
@@ -445,11 +445,16 @@ public sealed partial class VfpInterpreter
                     var idx = IdxFile.Open(p, wa.Table);
                     // A compact .idx is one CDX-format tree: it reads (collation, SEEK, key decoding) as a tag.
                     if (idx.CompactTag is { } compactTag)
+                    {
+                        ResolveHostedTag(compactTag, wa.Table);
                         return new OrderSource(idx) { CdxTag = compactTag, Name = IdxOrderName(p) };
+                    }
                     return new OrderSource(idx)
                     {
                         Idx = idx, Name = IdxOrderName(p),
-                        IdxKeyType = IndexKey.ResolveType(idx.Header.KeyExpression.Trim(), wa.Table),
+                        IdxKeyType = VfpRuntime.UnsupportedIndexFunction(idx.Header.KeyExpression) is not null
+                            ? CdxIndexBuilder.ResolveKey(wa.Table, idx.Header.KeyExpression, _ctx).Type
+                            : IndexKey.ResolveType(idx.Header.KeyExpression.Trim(), wa.Table),
                         IdxCharacterEncoding = IdxIndexBuilder.ResolveCharacterEncoding(
                             wa.Table, idx.Header.KeyExpression.Trim()),
                     };
@@ -459,6 +464,7 @@ public sealed partial class VfpInterpreter
             {
                 var cdx = CdxFile.Open(p, wa.Table);
                 var t = cdx.Tag(identity) ?? cdx.Tag(identity.ToUpperInvariant());
+                if (t is not null) ResolveHostedTag(t, wa.Table);
                 if (t is not null)
                     return new OrderSource(cdx) { CdxTag = t, Descending = t.Descending, Name = t.Name };
                 cdx.Dispose();
@@ -577,25 +583,6 @@ public sealed partial class VfpInterpreter
         }
         finally { _probing = saved; }
         return hostNames;
-    }
-
-    /// <summary>The index builder and the write-path key maintenance evaluate KEY/FOR with the expression engine
-    /// alone: a call only the interpreter answers would read <c>.NULL.</c> for every record, so <c>INDEX ON</c>
-    /// refuses a name the probe saw the interpreter answer, and a procedure or array named anywhere in the
-    /// expression. An unknown name in a branch the probe did not evaluate passes, as in VFP9.</summary>
-    private void RequireEngineFunctions(PrgExpr expr, HashSet<string> hostNames, string clause)
-    {
-        string? name = null;
-        expr.Parsed?.ContainsFunction((n, _) =>
-        {
-            if (!hostNames.Contains(n) && !_procs.ContainsKey(n) && Memory.FindArray(n) is null) return false;
-            name = n;
-            return true;
-        });
-        if (name is not null)
-            throw new MicroVfpRuntimeException(
-                $"INDEX ON: {name}() cannot be used in the {clause} expression; index expressions are evaluated by the "
-                + "index engine, which knows only the built-in functions.");
     }
 
     /// <summary>The probe's row: the interpreter's own row, recording which names its host answered.</summary>

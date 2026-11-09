@@ -654,7 +654,7 @@ public sealed partial class DbfWriter : IDisposable
         long recPos = VfpLock.RecordLockPosition(index + 1, _usesStructuralScheme, _headerLength, _recordLength);
         WithLock(recPos, 1, () =>
         {
-            bool maintain = ValidateIndexes() || _openCompactIndexes.Count > 0;
+            bool maintain = ValidateIndexes() || HasAdditionalIndexes;
             var columns = _schema.Columns;
 
             // KeepValue sentinel: a field whose EXISTING on-disk bytes must survive the full-row
@@ -773,7 +773,7 @@ public sealed partial class DbfWriter : IDisposable
         {
             ValidateIndexes();
             long offset = _headerLength + (long)index * _recordLength;
-            byte[]? before = _openCompactIndexes.Count > 0 ? ReadRaw(_handle, offset, _recordLength) : null;
+            byte[]? before = HasAdditionalIndexes ? ReadRaw(_handle, offset, _recordLength) : null;
             _stream.Seek(offset, SeekOrigin.Begin);
             _stream.WriteByte(flag);
             _stream.Flush();
