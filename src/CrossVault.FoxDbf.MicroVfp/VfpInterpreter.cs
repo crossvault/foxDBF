@@ -782,6 +782,7 @@ public sealed partial class VfpInterpreter
             _ => int.MaxValue,
         };
 
+        bool first = scope != LocScope.All;
         while (remaining > 0)
         {
             Session.SelectArea(area);                            // body may have switched areas.
@@ -789,12 +790,13 @@ public sealed partial class VfpInterpreter
             if (m.Eof) break;
             var wa = Session.AreaAt(area);
             if (wa is null) break;
-            if (!Visible(wa, m.RecNo))
+            if (!first && !Visible(wa, m.RecNo))
             {
                 if (scope == LocScope.Record) break;
                 Skip(area, 1);
                 continue;
             }
+            first = false;
             if (sc.While is not null && !Truth(Eval(sc.While))) break;
             remaining--;                                        // NEXT counts visited records, not FOR matches.
             bool match = sc.For is null || Truth(Eval(sc.For));
@@ -807,6 +809,7 @@ public sealed partial class VfpInterpreter
             Session.SelectArea(area);
             Skip(area, 1);
         }
+        if (Meta(area).Eof) Meta(area).Found = false;
     }
 
     private void ExecDoCall(DoCall d)

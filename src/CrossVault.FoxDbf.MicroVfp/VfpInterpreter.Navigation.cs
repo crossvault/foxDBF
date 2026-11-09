@@ -81,7 +81,9 @@ public sealed partial class VfpInterpreter
             unbounded = true;
         }
 
-        RunLocateScan(area, wa, m, candidates, loc.For, loc.While, unbounded, m.LocateWindowFull);
+        if (kind != LocScope.All && candidates.Count > 0) candidates[0] = Math.Abs(candidates[0]);
+        RunLocateScan(area, wa, m, candidates, loc.For, loc.While, unbounded, m.LocateWindowFull,
+            includeCurrent: kind != LocScope.All);
         RepositionChildren(area);
     }
 
@@ -146,7 +148,13 @@ public sealed partial class VfpInterpreter
 
     /// <summary>The index of the CURRENT record within <paramref name="order"/>, or -1 when the pointer is
     /// at EOF/BOF (or on a record absent from the active index).</summary>
-    private static int CurrentIndex(List<int> order, AreaMeta m) => order.IndexOf(m.RecNo);
+    private static int CurrentIndex(List<int> order, AreaMeta m)
+    {
+        if (ReferenceEquals(order, m.Ordered) && m.OrderSlots is not null)
+            return m.OrderSlots.GetValueOrDefault(m.RecNo, -1);
+        int slot = order.IndexOf(m.RecNo);
+        return slot >= 0 ? slot : order.IndexOf(-m.RecNo);
+    }
 
     private static List<int> SubListFrom(List<int> order, int from)
         => from >= order.Count ? new List<int>() : order.GetRange(from, order.Count - from);
@@ -158,7 +166,7 @@ public sealed partial class VfpInterpreter
     {
         var w = new List<int>();
         for (int idx = Math.Max(0, startIdx); idx < order.Count && w.Count < count; idx++)
-            if (Visible(wa, order[idx])) w.Add(order[idx]);
+            if (idx == startIdx || Visible(wa, order[idx])) w.Add(Math.Abs(order[idx]));
         return (w, count > 0 && w.Count == count);
     }
 
@@ -168,12 +176,14 @@ public sealed partial class VfpInterpreter
     /// window leaves the pointer where it is — on the FIRST LOCATE that is its last examined record, on a
     /// CONTINUE whose remaining slice is already empty it stays put (only FOUND() clears) (VFP9-verified).</summary>
     private void RunLocateScan(int area, VfpSession.WorkArea wa, AreaMeta m, List<int> candidates,
-        PrgExpr? forExpr, PrgExpr? whileExpr, bool unbounded, bool windowFull)
+        PrgExpr? forExpr, PrgExpr? whileExpr, bool unbounded, bool windowFull, bool includeCurrent = false)
     {
         var ord = ActiveOrder(area);
         foreach (int rec in candidates)
         {
-            if (!Visible(wa, rec)) continue;
+            bool current = includeCurrent && rec == m.RecNo;
+            includeCurrent = false;
+            if (!current && !Visible(wa, rec)) continue;
             PositionPointer(m, ord, rec);
             if (whileExpr is not null && !Truth(Eval(whileExpr))) { m.Found = false; return; }  // WHILE .F. ⇒ stop here.
             if (forExpr is null || Truth(Eval(forExpr))) { m.Found = true; return; }             // match ⇒ done.
@@ -250,7 +260,7 @@ public sealed partial class VfpInterpreter
             bool stopped = remaining <= 0;              // NEXT 0 counts nothing and does not move.
             for (int i = startIdx; !stopped && i < order.Count; i++)
             {
-                int rec = order[i];
+                int rec = kind != LocScope.All && i == startIdx ? Math.Abs(order[i]) : order[i];
                 // REST/NEXT process the CURRENT record as-is (VFP9: GO <deleted rec>, COUNT NEXT 1 under SET
                 // DELETED ON counts it); only the records reached by skipping honour visibility.
                 if ((kind == LocScope.All || i != startIdx) && !Visible(wa, rec)) continue;
@@ -261,7 +271,7 @@ public sealed partial class VfpInterpreter
             }
             if (!stopped)
             {
-                m.RecNo = EffCount(area, wa) + 1; m.Eof = true; m.Bof = false;
+                m.RecNo = EffCount(area, wa) + 1; m.Eof = true; m.Bof = false; m.Found = false;
                 m.Cached = null; m.OldVals = null;
                 if (ord is not null) m.OrderPos = ord.Count;
             }
@@ -276,7 +286,7 @@ public sealed partial class VfpInterpreter
     private static void PositionPointer(AreaMeta m, List<int>? ord, int rec)
     {
         m.RecNo = rec; m.Eof = false; m.Bof = false; m.Cached = null; m.OldVals = null;
-        m.OrderPos = ord?.IndexOf(rec) ?? -1;
+        m.OrderPos = ord is null ? -1 : CurrentIndex(ord, m);
     }
 
     private void ExecSeek(SeekStmt sk)

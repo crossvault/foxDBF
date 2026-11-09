@@ -683,7 +683,7 @@ public static class PrgParser
                 "RENAME" => BuildRename(text),
                 "CREATE" => BuildCreate(text),
                 "FLUSH" => BuildFlush(text),
-                "SUM" => BuildSum(text),
+                "SUM" or "AVERAGE" => BuildSum(text),
                 "COUNT" => BuildCount(text),
                 "THROW" => new ThrowStmt(PrgScan.AfterFirstWord(text).Trim() is { Length: > 0 } tv ? PrgExpr.Parse(tv) : null),
                 "CLEAR" => BuildClear(text),
@@ -1461,6 +1461,7 @@ public static class PrgParser
         {
             string rest = PrgScan.AfterFirstWord(text);
             var (head, segs) = Carve(rest, "FOR", "WHILE", "TO");
+            string? scope = PeelTrailingScope(ref head);
             var exprs = PrgScan.SplitTopCommas(head).Where(p => p.Length > 0).Select(PrgExpr.Parse).ToList();
             PrgExpr? forE = null, whileE = null;
             var targets = new List<string>();
@@ -1471,7 +1472,7 @@ public static class PrgParser
                 else if (k == "TO") targets.AddRange(
                     PrgScan.SplitTopCommas(b).Select(p => p.Trim()).Where(p => p.Length > 0));
             }
-            return new SumStmt(exprs, null, forE, whileE, targets);
+            return new SumStmt(exprs, scope, forE, whileE, targets, PrgScan.FirstWord(text) == "AVERAGE");
         }
 
         // COUNT [Scope] [FOR lExpr] [WHILE lExpr] TO VarName [NOOPTIMIZE] — the clauses may come in any order

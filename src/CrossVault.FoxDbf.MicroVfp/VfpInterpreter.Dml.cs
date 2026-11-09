@@ -758,7 +758,7 @@ public sealed partial class VfpInterpreter
                 using var master = OpenMasterOrder(area);
                 physical = string.IsNullOrWhiteSpace(master?.CdxTag?.ForExpression ?? master?.Idx?.Header.ForExpression);
             }
-            var order = ReplaceOrder(wa, physical, out var keyVisible);
+            var order = ReplaceOrder(wa, physical, out var keyVisible, includeCurrent: kind != LocScope.All);
             int start = kind == LocScope.All ? 0 : CurrentIndex(order, Meta(area));
             if (start < 0) start = order.Count;
             int remaining = kind == LocScope.Next ? count : int.MaxValue;
@@ -775,6 +775,7 @@ public sealed partial class VfpInterpreter
                 if (--remaining == 0) return;
             }
             GoRecord(area, EffCount(area, Session.AreaAt(area)!) + 1);
+            Meta(area).Found = false;
         }
         finally { Session.SelectArea(savedArea); }
 
@@ -787,7 +788,7 @@ public sealed partial class VfpInterpreter
         }
     }
 
-    private List<int> ReplaceOrder(VfpSession.WorkArea wa, bool physical, out HashSet<int>? keyVisible)
+    private List<int> ReplaceOrder(VfpSession.WorkArea wa, bool physical, out HashSet<int>? keyVisible, bool includeCurrent = false)
     {
         var m = Meta(wa.Area);
         keyVisible = null;
@@ -824,6 +825,15 @@ public sealed partial class VfpInterpreter
         }
         if (m.KeySet) keyVisible = KeyVisibleFromEntries(m, src, entries);
         if (physical) return Enumerable.Range(1, EffCount(wa.Area, wa)).ToList();
+        // REST/NEXT starts on the physical current row even after its filtered index entry vanished.
+        if (includeCurrent && !m.Eof && m.RecNo >= 1 && m.RecNo <= EffCount(wa.Area, wa)
+            && !entries.Any(e => e.Recno == m.RecNo))
+        {
+            var value = EvalTextLoud(src.CdxTag?.KeyExpression ?? src.Idx!.Header.KeyExpression);
+            byte[] bytes = src.IsCharacterKey ? PaddedCharacterKey(src, value)
+                : IndexKey.Encode(value.ToClr(), src.KeyType) ?? Array.Empty<byte>();
+            entries.Add((bytes, m.RecNo));
+        }
         bool descending = src.Descending != m.OrderReversed;
         entries.Sort((left, right) =>
         {
@@ -1059,25 +1069,48 @@ public sealed partial class VfpInterpreter
         var wa = Session.AreaAt(area);
         if (wa is null) return;
         var m = Meta(area);
-        int rc = wa.Table.RecordCount;
+        var (kind, count) = ResolveLocScope(sum.Scope);
+        if (sum.Scope is null && sum.While is not null) kind = LocScope.Rest;
+        MaybeAutoCommitRow(area);
+        wa = Session.AreaAt(area)!;
+        var order = TraversalOrder(area, wa);
         int n = sum.Expressions.Count;
         var acc = new double[n];
-
-        for (int rec = 1; rec <= rc; rec++)
+        var counts = new int[n];
+        int start = kind == LocScope.All ? 0 : CurrentIndex(order, m);
+        if (kind == LocScope.Record)
         {
-            if (!Visible(wa, rec)) continue;
-            m.RecNo = rec; m.Eof = false; m.Bof = false; m.Cached = null;
-            if (sum.While is not null && !Truth(Eval(sum.While))) break;
-            if (sum.For is not null && !Truth(Eval(sum.For))) continue;
-            for (int k = 0; k < n; k++)
-            {
-                var v = Eval(sum.Expressions[k]);
-                if (!v.IsNull) acc[k] += v.AsDouble;
-            }
+            order = new List<int> { count };
+            start = 0;
         }
-        m.RecNo = rc + 1; m.Eof = true; m.Bof = false; m.Cached = null;   // SUM leaves the pointer at EOF.
+        if (start < 0) start = order.Count;
+        int remaining = kind == LocScope.Next ? count : kind == LocScope.Record ? 1 : int.MaxValue;
+        bool stopped = remaining <= 0;
+        for (int i = start; !stopped && i < order.Count; i++)
+        {
+            int rec = kind != LocScope.All && i == start ? Math.Abs(order[i]) : order[i];
+            if ((kind == LocScope.All || i != start) && !Visible(wa, rec)) continue;
+            PositionPointer(m, m.Ordered, rec);
+            if (sum.While is not null && !Truth(Eval(sum.While))) { stopped = true; break; }
+            if (sum.For is null || Truth(Eval(sum.For)))
+            {
+                for (int k = 0; k < n; k++)
+                {
+                    var v = Eval(sum.Expressions[k]);
+                    if (!v.IsNull) { acc[k] += v.AsDouble; counts[k]++; }
+                }
+            }
+            if (--remaining == 0) stopped = true;
+        }
+        if (!stopped)
+        {
+            m.RecNo = EffCount(area, wa) + 1; m.Eof = true; m.Bof = false; m.Found = false;
+            m.Cached = null; m.OldVals = null;
+            if (m.Ordered is not null) m.OrderPos = m.Ordered.Count;
+        }
+        RepositionChildren(area);
         for (int k = 0; k < sum.To.Count && k < n; k++)
-            AssignTo(sum.To[k], VfpValue.Number(acc[k]));
+            AssignTo(sum.To[k], VfpValue.Number(sum.Average && counts[k] > 0 ? acc[k] / counts[k] : acc[k]));
     }
 
     // ─────────────────────────── P2 table/record movers + whole-table I/O ───────────────────────────
