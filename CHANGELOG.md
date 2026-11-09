@@ -115,11 +115,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 - ADO.NET rule errors evaluate DBC ERROR expressions instead of exposing their quoted source;
   microVFP MESSAGE()/AERROR() report the same VFP9 field/record validation text.
-  Missing rule functions/variables preserve their VFP error number in a provider DbException.
+  Rule evaluation errors, including missing functions/variables, preserve their VFP error number
+  in a provider DbException.
 - REPLACE rejects incompatible field values and preserves earlier assignments when a later value has
   the wrong type, including buffered writes.
 - Logical/numeric relational comparisons raise VFP error 107 instead of coercing logical operands.
 - ADO.NET `EnforceRules=on` validates generated AUTOINC and rounded numeric values as VFP9 stores them,
+  keeping append validation consistent with the stored counter when another writer appends,
   and reuses the target work area across INSERT/UPDATE statements, including a table opened under
   a different alias, instead of opening another copy each time.
 - microVFP `GETFLDSTATE(-1)` returns the deletion and field-state string needed by DBC record rules.
@@ -129,12 +131,16 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   REPLACE and buffered appends at VFP9's validation points. Invalid buffered REPLACE values
   remain editable, invalid INSERT field values are rejected, and TABLEUPDATE cannot publish
   an append that violates a rule. Buffered INSERT FROM ARRAY/MEMVAR retains its supplied values.
+  Nested INSERTs use their own target's rules. A nested validation failure during DEFAULT evaluation
+  stops the remaining defaults; the outer candidate is retained only if its own rules accept it.
+  Updating a buffered append no longer leaves a phantom edit after TABLEUPDATE.
 - microVFP SKIP from an indexed table-buffered append resumes at its key position;
   reading fields at buffered EOF returns typed blanks.
 - BREAKING: microVFP `BEGIN TRANSACTION` now raises VFP error 1548 before opening a transaction
   when any open database member has a non-structural IDX or CDX, even without its database current.
   TABLEUPDATE's internal transaction remains allowed. Free tables and indexes opened after BEGIN
-  remain accepted; PRG writes with compact IDX now take index snapshots for byte-exact rollback.
+  remain accepted; PRG writes take snapshots of compact/legacy IDX and additional CDX files for
+  byte-exact rollback, including indexes first opened inside a nested transaction.
   ADO.NET copy-on-write and candidate/RI standalone-index write restrictions remain in place.
 - BREAKING: With `EnforceReferentialIntegrity = true`, buffered field rules run when `REPLACE`
   changes the field and can reject it immediately; record rules run once at commit (`TABLEUPDATE`
