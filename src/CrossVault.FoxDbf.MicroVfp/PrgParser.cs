@@ -1312,11 +1312,15 @@ public static class PrgParser
                 // VFP takes even FOR/IN as SQL targets here. In DELETE FOR from=1 it
                 // tries to open '=1.dbf', rather than evaluating a field named FROM.
                 string source = PrgScan.AfterFirstWord(afterAlias);
-                if (source.StartsWith('='))
+                if (source.StartsWith('=') || source.StartsWith('>'))
                 {
                     int end = 0;
                     while (end < source.Length && !char.IsWhiteSpace(source[end])) end++;
                     string file = source[..end];
+                    // A spaced '=' is an invalid filename (36); attached operators are
+                    // consumed as filename text, so '=1' / '>1' fail with file-not-found (1).
+                    if (file == "=" && source[end..].Trim().Length > 0)
+                        return new DeleteStmt(null, null, null, null, 36);
                     return new SqlDmlStmt("DELETE FROM [" + file.Replace("]", "]]") + "]" + source[file.Length..],
                         PrgScan.FirstWord(rest0));
                 }
