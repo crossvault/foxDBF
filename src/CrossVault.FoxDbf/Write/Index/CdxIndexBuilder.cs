@@ -240,8 +240,8 @@ internal static class CdxIndexBuilder
 
     /// <summary>
     /// The five key statistics VFP9 keeps at @16..35 of a tag header (32-bit LE each), over the entries in key
-    /// order: the entry count; the number of entries whose key differs from the one before (the first is compared
-    /// with an all-<paramref name="pad"/> key, so a blank first key is not counted); the sum of the record-number
+    /// order: the entry count; the number of entries whose unpadded prefix differs from the one before
+    /// (an all-<paramref name="pad"/> key is never counted); the sum of the record-number
     /// distances |r(i) − r(i−1)|; the sum of sign(|d(i)| − |d(i−1)|) over those distances (signed); and the number
     /// of steps down, r(i) &lt; r(i−1). Derived from VFP9 compact <c>.idx</c> files: 300- to 12000-row tables with
     /// duplicates, blank keys, FOR and UNIQUE, and every arrangement of short key sequences.
@@ -255,9 +255,12 @@ internal static class CdxIndexBuilder
         for (int i = 0; i < entries.Count; i++)
         {
             var key = entries[i].Key;
+            int length = key.Length - TrailingPad(key, key.Length, pad);
+            // VFP counts fresh bytes, not whole padded-key inequality. A shorter key
+            // after a control-suffixed key (A after A+TAB under MACHINE) adds no key.
             bool same = previous is null
-                ? key.AsSpan().IndexOfAnyExcept(pad) < 0
-                : key.AsSpan().SequenceEqual(previous);
+                ? length == 0
+                : key.AsSpan(0, length).SequenceEqual(previous.AsSpan(0, length));
             if (!same) distinct++;
             previous = key;
 
@@ -831,29 +834,38 @@ internal static class CdxIndexBuilder
             // holds e.Key; the next fast prefix then copies that displaced key's bytes.
             // This is INDEX ON behavior, not a collation-weight or maintenance rule.
             fastEntryBytes = Math.Max(fastEntryBytes, need.BytesPerEntry);
-            bool slow = indexOn && blankHead != 0 && cur.Count > 0
+            // UNIQWT's blank weight is not 0x11: VFP does not apply this equivalence there.
+            bool slow = indexOn && blankHead == 0x11 && cur.Count > 0
                 && used + (cur.Count + 1) * fastEntryBytes + 12 >= LeafBudget;
             if (slow)
                 fastEntryBytes = need.BytesPerEntry;
-            if (slow && (displacedPrefix || (trail < keyLen && e.Key[keyLen - trail - 1] == blankHead)))
+            int heads = 0;
+            if (slow)
+                while (heads < keyLen && e.Key[heads] >= 0x10) heads++;
+            if (slow && (displacedPrefix || (heads > 0 && e.Key[heads - 1] == blankHead)))
             {
                 var decoded = DecodeBulkItems(cur, keyLen, pad);
-                int position = BulkInsertPosition(decoded, e, keyLen, pad, blankHead);
+                int position = BulkInsertPosition(decoded, e);
                 if (displacedPrefix || position < decoded.Count)
                 {
+                    // An insertion edits only the affected prefix. Re-encoding untouched
+                    // entries would normalize VFP's displaced dup/trail counts (DUTCH NBSP).
+                    var preserved = new Dictionary<uint, (uint Previous, LeafItem Item)>();
+                    for (int i = 0; i < cur.Count; i++)
+                        preserved[cur[i].Recno] = (i == 0 ? 0 : cur[i - 1].Recno, cur[i]);
                     decoded.Insert(position, e);
                     int count = decoded.Count;
-                    while (BulkUsed(decoded, count, keyLen, pad) > LeafBudget)
+                    while (BulkUsed(decoded, count, keyLen, pad, preserved) > LeafBudget)
                         count--;
                     if (count < decoded.Count)
                     {
-                        var left = RepackBulkItems(decoded.GetRange(0, count), keyLen, pad);
+                        var left = RepackBulkItems(decoded.GetRange(0, count), keyLen, pad, preserved);
                         left.AttrExtra = widen ? AttrData : leaves.Count == 0 ? attr : (ushort)0;
                         leaves.Add(left);
                         opened = left.Geom;
                         decoded = decoded.GetRange(count, decoded.Count - count);
                     }
-                    var replacement = RepackBulkItems(decoded, keyLen, pad);
+                    var replacement = RepackBulkItems(decoded, keyLen, pad, preserved);
                     cur = replacement.Items;
                     used = LeafBudget - replacement.FreeSpace - cur.Count * replacement.Geom.BytesPerEntry;
                     maxRecno = decoded.Max(item => item.Recno);
@@ -928,68 +940,61 @@ internal static class CdxIndexBuilder
         return entries;
     }
 
-    private static int BulkInsertPosition(List<Entry> entries, Entry incoming, int keyLen, byte pad, byte blankHead)
+    private static int BulkInsertPosition(List<Entry> entries, Entry incoming)
     {
-        int length = keyLen - TrailingPad(incoming.Key, keyLen, pad);
-        int trimmed = length;
-        while (trimmed > 0 && incoming.Key[trimmed - 1] == blankHead)
-            trimmed--;
-        // A terminal blank changes placement only if its shorter, padded key is in this leaf.
-        if (trimmed == length || !entries.Any(e => e.Key.AsSpan(0, trimmed).SequenceEqual(incoming.Key.AsSpan(0, trimmed))
-                && TrailingPad(e.Key, keyLen, pad) == keyLen - trimmed))
-            return entries.Count;
         for (int i = 0; i < entries.Count; i++)
         {
-            var other = entries[i];
-            int compare = other.Key.AsSpan(0, trimmed).SequenceCompareTo(incoming.Key.AsSpan(0, trimmed));
-            if (compare > 0)
-                return i;
-            if (compare != 0)
-                continue;
-            int end = keyLen - TrailingPad(other.Key, keyLen, pad);
-            while (end > trimmed && other.Key[end - 1] == blankHead)
-                end--;
-            if (end > trimmed || other.Recno >= incoming.Recno)
-                return i;
+            int compare = WeightedKeyComparison.CompareIncoming(incoming.Key, entries[i].Key);
+            if (compare < 0 || (compare == 0 && incoming.Recno <= entries[i].Recno)) return i;
         }
         return entries.Count;
     }
 
-    private static int BulkUsed(List<Entry> entries, int count, int keyLen, byte pad)
+    private static int BulkUsed(List<Entry> entries, int count, int keyLen, byte pad,
+        Dictionary<uint, (uint Previous, LeafItem Item)> preserved)
     {
         int used = 0;
         uint max = 0;
         byte[]? previous = null;
         int previousTrail = keyLen;
+        uint previousRecno = 0;
         for (int i = 0; i < count; i++)
         {
             var e = entries[i];
-            var (dup, trail) = DupTrail(e.Key, previous, previousTrail, keyLen, pad);
+            var (dup, trail) = preserved.TryGetValue(e.Recno, out var old) && old.Previous == previousRecno
+                ? (old.Item.Dup, old.Item.Trail)
+                : DupTrail(e.Key, previous, previousTrail, keyLen, pad);
             used += keyLen - dup - trail;
             previous = e.Key;
             previousTrail = trail;
+            previousRecno = e.Recno;
             max = Math.Max(max, e.Recno);
         }
         return used + count * LeafGeometry.For(keyLen, max).BytesPerEntry
             + (previousTrail == keyLen ? 1 : 0);
     }
 
-    private static LeafNode RepackBulkItems(List<Entry> entries, int keyLen, byte pad)
+    private static LeafNode RepackBulkItems(List<Entry> entries, int keyLen, byte pad,
+        Dictionary<uint, (uint Previous, LeafItem Item)> preserved)
     {
         var items = new List<LeafItem>(entries.Count);
         byte[]? previous = null;
         int previousTrail = keyLen;
+        uint previousRecno = 0;
         int used = 0;
         uint max = 0;
         foreach (var e in entries)
         {
-            var (dup, trail) = DupTrail(e.Key, previous, previousTrail, keyLen, pad);
+            var (dup, trail) = preserved.TryGetValue(e.Recno, out var old) && old.Previous == previousRecno
+                ? (old.Item.Dup, old.Item.Trail)
+                : DupTrail(e.Key, previous, previousTrail, keyLen, pad);
             byte[] fresh = e.Key.AsSpan(dup, keyLen - dup - trail).ToArray();
             items.Add(new LeafItem(e.Recno, dup, trail, fresh));
             used += fresh.Length;
             max = Math.Max(max, e.Recno);
             previous = e.Key;
             previousTrail = trail;
+            previousRecno = e.Recno;
         }
         return MakeLeafNode(items, used, max, keyLen, previous!);
     }

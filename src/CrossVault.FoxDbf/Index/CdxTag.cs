@@ -296,6 +296,8 @@ public sealed class CdxTag
     /// </summary>
     internal uint? Seek(CharacterSeekNeedle needle)
     {
+        if (needle.Exact && needle.BlankHead == 0x11)
+            return SeekWeightedExact(needle);
         // VFP descends with the literal blank heads, then scans the leaf with blank/pad
         // equivalence. Control heads between a short key and its blank-suffixed equivalent
         // make that distinction observable (including on native bulk-compressed keys).
@@ -307,6 +309,37 @@ public sealed class CdxTag
                 break;
             if (cmp == 0 && needle.TrailingBlanksMatch(entry.Key))
                 return entry.RecordNumber;
+        }
+        return NotFound;
+    }
+
+    private uint? SeekWeightedExact(CharacterSeekNeedle needle)
+    {
+        long leaf = DescendToLeaf(needle.Bytes, exactWeightedSeek: true);
+        var visited = new HashSet<long>();
+        while (leaf >= 0 && visited.Add(leaf))
+        {
+            byte[]? page = _index.ReadPage(leaf);
+            if (page is null) break;
+            var info = LeafInfo.Parse(page);
+            var entries = CompactLeaf.Decode(page, KeyLength, KeyPad);
+            int matched = 0;
+            for (int i = 0; i < entries.Count; i++)
+            {
+                int duplicate = CompactLeaf.DuplicatePrefix(page, info, i);
+                // VFP reuses the comparison of a compressed prefix, including after a
+                // blank head matched a secondary byte. Decoding every key and starting
+                // its comparison from zero loses that state on displaced bulk prefixes.
+                if (duplicate > matched) continue;
+                int start = Math.Min(duplicate, Math.Min(needle.Bytes.Length, KeyLength));
+                int compare = WeightedKeyComparison.CompareIncoming(needle.Bytes.AsSpan(start), entries[i].Key.AsSpan(start), out int equal);
+                matched = start + equal;
+                if (compare == 0) return entries[i].RecordNumber;
+                if (compare < 0) return NotFound;
+            }
+            var header = _index.ReadNodeHeader(leaf);
+            if (header?.RightSibling is not uint next) break;
+            leaf = next;
         }
         return NotFound;
     }
@@ -499,7 +532,7 @@ public sealed class CdxTag
     /// the caller's predicate filter the surplus), so this never lands PAST a true match. Returns
     /// <c>-1</c> on a malformed / unreadable tree. Never throws.
     /// </summary>
-    private long DescendToLeaf(byte[]? lowerBoundKey)
+    private long DescendToLeaf(byte[]? lowerBoundKey, bool exactWeightedSeek = false)
     {
         long cur = RootPageOffset;
         var seen = new HashSet<long>();
@@ -524,12 +557,26 @@ public sealed class CdxTag
                 continue;
             }
 
-            // First child whose MAX key (separator) is >= the bound contains the first match.
             int j = 0;
-            while (j < branch.Count && CompareUnsigned(branch[j].Key, lowerBoundKey) < 0)
-                j++;
-            if (j >= branch.Count)
-                j = branch.Count - 1; // every key < bound: take the right-most child
+            if (exactWeightedSeek)
+            {
+                // VFP's closed-interval binary search matters when blank-head insertion
+                // leaves non-monotonic separators (full DUTCH/850 incremental corpus).
+                int high = branch.Count - 1;
+                while (j < high)
+                {
+                    int middle = (j + high) / 2;
+                    if (CompareUnsigned(branch[middle].Key, lowerBoundKey) >= 0) high = middle;
+                    else j = middle + 1;
+                }
+            }
+            else
+            {
+                // Range enumeration keeps the earliest possible subtree.
+                while (j < branch.Count && CompareUnsigned(branch[j].Key, lowerBoundKey) < 0)
+                    j++;
+                if (j >= branch.Count) j = branch.Count - 1;
+            }
             cur = branch[j].ChildPointer;
         }
     }
