@@ -4,6 +4,8 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [Unreleased]
+
 ## [0.11.0] - 2026-11-09
 
 ### Added
