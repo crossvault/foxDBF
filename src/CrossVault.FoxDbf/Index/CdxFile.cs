@@ -20,6 +20,7 @@ public sealed class CdxFile : IDisposable
     private readonly IndexFile _index;
     private readonly bool _leaveOpen;
     private readonly DbfTable? _table;
+    private bool _directoryStale;
 
     private readonly List<string> _tagNames = new();
     private readonly Dictionary<string, CdxTag> _tags =
@@ -103,11 +104,21 @@ public sealed class CdxFile : IDisposable
     public string? SourcePath => _index.SourcePath;
 
     /// <summary>The names of every tag in the directory, in directory order.</summary>
-    public IReadOnlyList<string> TagNames => _tagNames;
+    public IReadOnlyList<string> TagNames
+    {
+        get
+        {
+            if (_directoryStale) RefreshDirectory();
+            return _tagNames;
+        }
+    }
 
     /// <summary>Resolves a tag by name (case-insensitive); null when unknown.</summary>
     public CdxTag? Tag(string name)
-        => name is not null && _tags.TryGetValue(name.Trim(), out var tag) ? tag : null;
+    {
+        if (_directoryStale) RefreshDirectory();
+        return name is not null && _tags.TryGetValue(name.Trim(), out var tag) ? tag : null;
+    }
 
     /// <summary>Indexer form of <see cref="Tag(string)"/>.</summary>
     public CdxTag? this[string name] => Tag(name);
@@ -115,9 +126,17 @@ public sealed class CdxFile : IDisposable
     internal void RefreshView()
     {
         _index.RefreshView();
+        // A DELETE delta already updates the interpreter's traversal slots. Defer reading
+        // moved roots until a SEEK or another index reader actually requests a tag.
+        _directoryStale = true;
+    }
+
+    private void RefreshDirectory()
+    {
         _tagNames.Clear();
         _tags.Clear();
         BuildDirectory();
+        _directoryStale = false;
     }
 
     /// <summary>
