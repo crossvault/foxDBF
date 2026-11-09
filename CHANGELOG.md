@@ -36,9 +36,17 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `APPEND FROM ... SDF / DELIMITED` with custom quotes/separators, `WITH BLANK`/`TAB`,
   `FIELDS`, `FOR` and `AS` code pages. Imports preserve VFP9 field conversion, blank/NULL
   distinctions, date parsing, partial progress, `_TALLY`, autoincrement and index constraints.
+  Text imports use VFP9 code-page bytes and source-byte SDF widths (including DBCS).
+  `SET DATE TO` and `SET CENTURY TO ... ROLLOVER` control imported dates without changing
+  century display. Integer overflow, including `1e30`, stores VFP9's sentinel; ARRAY reports
+  error 39 after importing the rows, while SDF/DELIMITED continue without that error.
+  Supplied and omitted field rules preserve VFP9's different failure `_TALLY` values.
 - `INSERT INTO ... [(fields)] SELECT ...` in SQL, microVFP and ADO.NET, including DBC
-  defaults and field rules, source materialization for self-inserts, and batch writing.
-  VFP9 integer import overflow bytes are preserved and exposed as overflow in expressions.
+  defaults and all field rules (including omitted fields), and source materialization for self-inserts.
+  Rules see stored field widths, the pending record number/count and hosted UDFs. Imports retain
+  accepted prefix rows on constraint failures and validate keys against the transaction's write copy.
+  VFP9 integer import overflow bytes are preserved, including with insert triggers or additional
+  indexes, and exposed as overflow in expressions. VALUES retains its strict overflow errors.
 
 - microVFP scoped `DELETE` and `RECALL`: `ALL`, `NEXT`, `RECORD`, `REST`, `FOR`, `WHILE`,
   `IN` and `NOOPTIMIZE`, with VFP9 record order, visibility, final pointers and `_TALLY`.

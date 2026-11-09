@@ -146,6 +146,8 @@ public sealed class VfpSession : IDisposable
 
     internal string ImportDateFormat { get; set; } = "AMERICAN";
     internal bool ImportCentury { get; set; }
+    internal int ImportCenturyBase { get; set; } = 19;
+    internal int ImportRollover { get; set; } = 50;
     internal bool ImportAutoIncError { get; set; } = true;
 
     /// <summary>

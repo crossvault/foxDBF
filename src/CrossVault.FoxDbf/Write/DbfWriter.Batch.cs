@@ -88,14 +88,37 @@ public sealed partial class DbfWriter
         for (int i = 0; i < _schema.Columns.Count; i++)
         {
             var column = _schema.Columns[i];
+            if (values[i] is Sql.VfpImport.StoredText) { safe[i] = ""; continue; }
             if (column.Type != 'I' || column.IsAutoIncrement || values[i] is null) continue;
-            decimal value = values[i] is double d && !double.IsFinite(d) ? decimal.MaxValue
-                : System.Convert.ToDecimal(values[i], System.Globalization.CultureInfo.InvariantCulture);
+            decimal value;
+            try { value = System.Convert.ToDecimal(values[i], System.Globalization.CultureInfo.InvariantCulture); }
+            catch (OverflowException) { value = decimal.MaxValue; }
             if (decimal.Truncate(value) >= -2147483647m && decimal.Truncate(value) <= 2147483647m) continue;
             overflow.Add(column);
             safe[i] = 0;
         }
         byte[] record = RecordEncoder.Encode(_schema, safe, false, blanks);
+        // File imports already carry table-page bytes. Do not round-trip through the session page.
+        for (int i = 0; i < _schema.Columns.Count; i++)
+        {
+            if (values[i] is not Sql.VfpImport.StoredText text) continue;
+            var column = _schema.Columns[i];
+            var field = record.AsSpan(column.Offset + 1, column.Length);
+            field.Fill(0x20);
+            int length = Math.Min(field.Length, text.Bytes.Length);
+            text.Bytes.AsSpan(0, length).CopyTo(field);
+            if (column.Type == 'V' && _schema.NullFlagsColumn is { } flags)
+            {
+                int bit = _schema.GetVarlenNullBits(column).varlenBit;
+                int offset = flags.Offset + 1 + (bit >> 3);
+                record[offset] &= (byte)~(1 << (bit & 7));
+                if (length < field.Length)
+                {
+                    field[^1] = (byte)length;
+                    record[offset] |= (byte)(1 << (bit & 7));
+                }
+            }
+        }
         // External imports use VFP's integer-overflow sentinel. VALUES/REPLACE retain
         // FieldEncoder's strict error-39 behavior; only this import batch uses it.
         foreach (var column in overflow)
