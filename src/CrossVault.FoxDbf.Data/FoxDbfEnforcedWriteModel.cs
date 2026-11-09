@@ -39,10 +39,10 @@ internal sealed class FoxDbfEnforcedWriteModel
     internal int Execute(string sql)
     {
         try { return ExecuteCore(sql); }
-        catch (MicroVfpRuntimeException ex) when (ex.VfpErrorNumber == 1539)
+        catch (Exception ex) when (ex is not FoxDbfException && ex is IVfpErrorCode { VfpErrorNumber: 1539 or 1582 or 1583 })
         {
-            // Unbuffered RI failures now originate in microVFP; keep the provider's DbException contract.
-            throw new FoxDbfException(ex.Message, 1539, ex);
+            // Rules and RI failures originate in microVFP; keep the provider's DbException contract.
+            throw new FoxDbfException(ex.Message, ((IVfpErrorCode)ex).VfpErrorNumber!.Value, ex);
         }
     }
 

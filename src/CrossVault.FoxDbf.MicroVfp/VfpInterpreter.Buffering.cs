@@ -301,6 +301,7 @@ public sealed partial class VfpInterpreter
         for (int i = 0; i < wa.Table.Columns.Count; i++)
         {
             var column = wa.Table.Columns[i];
+            // Rules need VFP field values: the public indexer trims leading spaces and maps numeric blanks to null.
             if (!column.IsSystem)
                 map[column.Name] = edit.Fields.TryGetValue(i, out var value) ? value : append ? BlankFor(column) : record?.GetVfpValue(column.Name);
         }

@@ -16,6 +16,26 @@ public sealed class MicroVfpSqlDmlRulesReviewTests
     [InlineData(true)]
     public void Rules_RunOnce(bool ado) => Assert.Equal("1|1", RunCounts(ado));
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void Rules_ProviderPreservesExceptionContract(bool record, bool update)
+    {
+        using var dir = new MicroVfpTestSupport.TempDir("rules_errors");
+        DbfDatabaseBuilder.Create(dir.File("probe.dbc"), Array.Empty<DbcTableSpec>());
+        using var connection = new FoxDbfConnection($"Data Source={dir.File("probe.dbc")};EnforceRules=on");
+        connection.Open();
+        connection.Interpreter.Execute("CREATE TABLE t (n I" + (record ? "," : "") + " CHECK n>0)\nINSERT INTO t VALUES (1)");
+        using var command = connection.CreateCommand();
+        command.CommandText = update ? "UPDATE t SET n=-1" : "INSERT INTO t VALUES (-1)";
+        var error = Assert.Throws<FoxDbfException>(() => command.ExecuteNonQuery());
+        Assert.Equal(record ? 1583 : 1582, error.VfpErrorNumber);
+        command.CommandText = "SELECT SUM(n) FROM t";
+        Assert.Equal(1, Convert.ToInt32(command.ExecuteScalar()));
+    }
+
     internal static string RunCounts(bool ado)
     {
         if (!ado) return Run(CountSetup, CountScenario, Procedures);
