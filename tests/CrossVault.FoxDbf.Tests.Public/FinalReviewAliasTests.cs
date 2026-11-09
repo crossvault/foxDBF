@@ -46,9 +46,10 @@ public sealed class FinalReviewAliasTests
     }
 
     [Fact]
-    public void UpdateSql_OpenIdx_InPrgTransaction_RefusesBeforeWriting()
+    public void UpdateSql_OpenIdx_AfterPrgBegin_RetainsWriteProtection()
     {
-        // The SQL writer takes no PRG snapshot of the .idx, so ROLLBACK could not restore it: refuse instead.
+        // VFP9 allows this USE after BEGIN (MicroVfpNonStructuralTxnVfp9OracleTests). The SQL writer
+        // takes no PRG snapshot of the .idx, so retain its later refusal to protect ROLLBACK.
         using var temp = new MicroVfpTestSupport.TempDir("alias_idx_txn");
         using var session = new VfpSession();
         session.OpenDirectory(temp.Path);

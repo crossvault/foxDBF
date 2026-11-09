@@ -162,7 +162,22 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── transactions (snapshot / restore) ───────────────────────────
 
-    private void BeginTransaction() => _txn.Add(new TxnFrame());
+    private void BeginTransaction()
+    {
+        // VFP9 checks database members at BEGIN, regardless of the selected work area or
+        // the index format. Free tables and indexes opened after BEGIN are not rejected here.
+        if (Session.Database is { } database)
+        {
+            foreach (var area in Session.OpenAreas)
+            {
+                if (area.Table.SourcePath is not { } path || !HasAdditionalIndexesOnTable(path)) continue;
+                string livePath = Session.TxLivePath is { } toLive ? toLive(path) : path;
+                if (database.TableNames.Any(member => SamePath(database.GetTablePath(member), livePath)))
+                    throw new MicroVfpRuntimeException("Cannot start a transaction with non-structural indexes open.", 1548);
+            }
+        }
+        _txn.Add(new TxnFrame());
+    }
 
     private void EndTransaction()
     {
