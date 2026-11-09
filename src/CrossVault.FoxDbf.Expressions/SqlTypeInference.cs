@@ -3,6 +3,16 @@ using System.Globalization;
 
 namespace CrossVault.FoxDbf.Expressions;
 
+// SQL chooses an IIF branch's storage width/scale from the first source record,
+// before WHERE or ORDER BY. Keep that sampling out of index type inference.
+internal sealed class SqlInferenceSchema(ISchema schema, IRowContext row, EvaluationContext context) : ISchema
+{
+    internal IRowContext Row => row;
+    internal EvaluationContext Context => context;
+    public bool TryGetColumn(string name, out char type, out int length, out int decimals)
+        => schema.TryGetColumn(name, out type, out length, out decimals);
+}
+
 internal sealed partial class FieldNode
 {
     internal override VfpTypeInfo InferSql(ISchema schema)
@@ -16,6 +26,7 @@ internal sealed partial class FieldNode
 
 internal sealed partial class LiteralNode
 {
+    internal VfpValue ConstantValue => _value;
     internal override bool IsSqlConstant => true;
 
     internal override VfpTypeInfo InferSql(ISchema schema)
@@ -128,7 +139,18 @@ internal sealed partial class FunctionNode
                 var other = _args.Length > 1 ? BinaryNode.NumericStorage(_args[1].InferSql(schema)) : number;
                 int scale = Math.Max(number.Decimals, other.Decimals);
                 return new(VfpType.Numeric, Math.Min(20, Math.Max(number.Length - number.Decimals, other.Length - other.Decimals) + scale + 1), scale);
-            case "IIF": case "ICASE":
+            case "IIF":
+                if (_args.Length == 3)
+                {
+                    VfpValue? condition = _args[0] is LiteralNode literal ? literal.ConstantValue : null;
+                    if (condition is null && schema is SqlInferenceSchema sample
+                        && !_args[0].ContainsFunction(static (n, a) => a == 1 && n is "SUM" or "AVG" or "COUNT" or "MIN" or "MAX"))
+                        condition = _args[0].Eval(sample.Row, sample.Context);
+                    if (condition is { } value)
+                        return _args[VfpRuntime.AsCondition(value) ? 1 : 2].InferSql(schema);
+                }
+                return _args.Length > 1 ? _args[1].InferSql(schema) : Infer(schema);
+            case "ICASE":
                 return _args.Length > 1 ? _args[1].InferSql(schema) : Infer(schema);
             case "UPPER": case "LOWER": case "TRIM": case "RTRIM": case "LTRIM": case "ALLTRIM":
                 return new(VfpType.Character, arg.Length);

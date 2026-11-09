@@ -281,23 +281,9 @@ internal static partial class SqlTestSupport
             pairs = seen;
         }
 
-        // TOP n (ties on the full ORDER BY key are kept).
+        // VFP9's TOP n does not extend boundary ties (FinalReviewSqlVfp9OracleTests).
         if (select.Top is int top)
-        {
-            top = Math.Max(0, top);
-            if (top == 0) pairs = new List<(object?[], CompositeRow)>();
-            else if (top < pairs.Count)
-            {
-                if (select.OrderBy.Count == 0) pairs = pairs.Take(top).ToList();
-                else
-                {
-                    var keySels = select.OrderBy.Select(ob => JoinOrderKeySel(ob, select.Items, layout, aggregate, ctx)).ToList();
-                    int end = top;
-                    while (end < pairs.Count && keySels.All(ks => CompareVfpJoin(ks(pairs[end]), ks(pairs[top - 1]), ctx) == 0)) end++;
-                    pairs = pairs.Take(end).ToList();
-                }
-            }
-        }
+            pairs = pairs.Take(Math.Max(0, top)).ToList();
 
         return pairs.Select(p => p.row).ToList();
     }

@@ -66,6 +66,7 @@ internal static class IdxIndexBuilder
         Encoding characterEncoding = ResolveCharacterEncoding(schema, keyExpr);
 
         var keyFn = VfpExpression.Parse(keyExpr).Compile(ctx);
+        var dateField = IndexKey.ResolveDateField(schema, keyExpr);
         Func<IRowContext, VfpValue>? forFn = !string.IsNullOrWhiteSpace(forExpr)
             ? VfpExpression.Parse(forExpr!).Compile(ctx)
             : null;
@@ -83,8 +84,10 @@ internal static class IdxIndexBuilder
                 if (!(f.Type == VfpType.Logical && f.AsLogical))
                     continue;
             }
-            var value = keyFn(rc);
-            entries.Add(new Entry(EncodeKey(value, keyType, keyLen, characterEncoding), (uint)row.RecNo));
+            byte[] key = dateField is not null
+                ? IndexKey.EncodeDateField(row.Record, dateField)
+                : EncodeKey(keyFn(rc), keyType, keyLen, characterEncoding);
+            entries.Add(new Entry(key, (uint)row.RecNo));
         }
 
         entries.Sort(EntryComparer.Instance);

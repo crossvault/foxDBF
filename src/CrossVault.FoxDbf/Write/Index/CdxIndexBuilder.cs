@@ -447,6 +447,7 @@ internal static class CdxIndexBuilder
         /// <summary>The code page a MACHINE character key is stored in (<see cref="IndexKey.ResolveCharacterEncoding"/>).</summary>
         public required Encoding CharacterEncoding;
         public required Func<IRowContext, VfpValue> KeyFn;
+        public DbfColumn? DateField;
         public required Func<IRowContext, VfpValue>? ForFn;
         public required bool Unique;
         public required bool Descending;
@@ -470,8 +471,9 @@ internal static class CdxIndexBuilder
                     return false;
                 }
             }
-            var value = KeyFn(rc);
-            key = EncodeKey(value, KeyType, KeyLen, Collation, CharacterEncoding, Pad);
+            key = DateField is not null
+                ? IndexKey.EncodeDateField(record, DateField)
+                : EncodeKey(KeyFn(rc), KeyType, KeyLen, Collation, CharacterEncoding, Pad);
             return true;
         }
     }
@@ -522,6 +524,7 @@ internal static class CdxIndexBuilder
             Collation = collation,
             CharacterEncoding = IndexKey.ResolveCharacterEncoding(schema, def.KeyExpression),
             KeyFn = keyFn,
+            DateField = IndexKey.ResolveDateField(schema, def.KeyExpression),
             ForFn = forFn,
             Unique = def.Unique,
             Descending = def.Descending,
@@ -1362,7 +1365,7 @@ internal static class CdxIndexBuilder
                         {
                             var raw = _record.GetRawField(col);
                             var enc = col.IsBinary ? Encoding.Latin1 : _record.Table.Encoding;
-                            return enc.GetString(raw);
+                            return FieldDecoder.DecodeCharacterPadded(col, raw, enc, _record.Table.SuppressUtf8Detection);
                         }
                         break;
                     }

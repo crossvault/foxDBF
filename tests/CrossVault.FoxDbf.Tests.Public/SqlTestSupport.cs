@@ -230,23 +230,9 @@ internal static partial class SqlTestSupport
             pairs = seen;
         }
 
-        // TOP n — keep all rows whose full ORDER BY key ties the nth row's key (VFP semantics).
+        // VFP9's TOP n does not extend boundary ties (FinalReviewSqlVfp9OracleTests).
         if (select.Top is int top)
-        {
-            top = Math.Max(0, top);
-            if (top == 0) pairs = new List<(object?[], RecRow)>();
-            else if (top < pairs.Count)
-            {
-                if (select.OrderBy.Count == 0) pairs = pairs.Take(top).ToList();
-                else
-                {
-                    var keySels = select.OrderBy.Select(ob => OrderKeySel(ob, select.Items, table, aggregate, ctx)).ToList();
-                    int end = top;
-                    while (end < pairs.Count && keySels.All(ks => CompareVfp(ks(pairs[end]), ks(pairs[top - 1]), ctx) == 0)) end++;
-                    pairs = pairs.Take(end).ToList();
-                }
-            }
-        }
+            pairs = pairs.Take(Math.Max(0, top)).ToList();
 
         return pairs.Select(p => p.row).ToList();
     }

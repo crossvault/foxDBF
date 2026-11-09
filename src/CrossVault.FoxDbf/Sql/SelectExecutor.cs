@@ -323,9 +323,9 @@ internal sealed class SelectExecutor
         return typed ?? columns;
     }
 
-    private static IReadOnlyList<SqlColumn> SizeUntypedCharacterColumns(
+    private static IReadOnlyList<SqlColumn> SizeRuntimeColumns(
         IReadOnlyList<SqlColumn> columns, IReadOnlyList<SelectItem> items,
-        Func<SelectItem, int> starWidth, Func<IRowContext?> firstSourceRow, EvaluationContext ctx)
+        Func<SelectItem, int> starWidth, Func<IRowContext?> firstSourceRow, EvaluationContext ctx, ISchema schema)
     {
         SqlColumn[]? sized = null;
         IRowContext? sample = null;
@@ -335,6 +335,18 @@ internal sealed class SelectExecutor
             if (item.IsStar) { position += starWidth(item); continue; }
             int i = position++;
             var col = columns[i];
+            if (!ContainsAggregate(item) && item.Expression is { } expression
+                && expression.ContainsFunction(static (n, a) => n == "IIF" && a == 3))
+            {
+                sample ??= firstSourceRow();
+                if (sample is not null)
+                {
+                    var info = expression.InferSqlType(schema, sample, ctx);
+                    var (type, clr) = MapSqlInfer(info);
+                    sized ??= columns.ToArray();
+                    col = sized[i] = new SqlColumn(col.Name, type, info.Length, info.Decimals, clr);
+                }
+            }
             if (col.VfpType != 'C' || col.Length > 0 || ContainsAggregate(item)) continue;
             sample ??= firstSourceRow();
             if (sample is null) break;
@@ -468,13 +480,13 @@ internal sealed class SelectExecutor
 
         // Size unknown character expressions before filtering or sorting the source rows.
         var columns = BuildColumns(table, alias, schema, sel.Items);
-        columns = SizeUntypedCharacterColumns(columns, sel.Items, _ => table.Columns.Count, () =>
+        columns = SizeRuntimeColumns(columns, sel.Items, _ => table.Columns.Count, () =>
         {
             var first = table.EnumerateAll(includeDeleted: true).Select(r => (DbfRecord?)r).FirstOrDefault();
             return first is null ? null : Bind(new RowContext(first.Value, 1, table.RecordCount, alias,
                 _outer, new HashSet<string>(table.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase),
                 VfpBlankFields));
-        }, ctx);
+        }, ctx, schema);
 
         var rows = CollectSingleRows(table, cdx, ctx, sel, alias);
 
@@ -961,13 +973,13 @@ internal sealed class SelectExecutor
 
             var schema = new CompositeSchema(src);
             var columns = BuildJoinColumns(src, schema, sel.Items);
-            columns = SizeUntypedCharacterColumns(columns, sel.Items, it => StarWidthJoin(it, src), () =>
+            columns = SizeRuntimeColumns(columns, sel.Items, it => StarWidthJoin(it, src), () =>
             {
                 var first = src.Select(s => s.Table.EnumerateAll(includeDeleted: true)
                     .Select(r => (DbfRecord?)r).FirstOrDefault()).ToArray();
                 return first.Any(r => r is null) ? null
                     : Bind(new CompositeRowContext(src, first, _outer, VfpBlankFields));
-            }, ctx);
+            }, ctx, schema);
 
             // Per-step descriptor for sources[1..]: comma-FROM entries are an inner cross join
             // (ON is implicitly .T.); each explicit JOIN carries its own type + ON predicate.
@@ -1587,7 +1599,7 @@ internal sealed class SelectExecutor
     /// filters the projected rows (a WHERE that also sees the select aliases); DISTINCT dedups and sorts
     /// by the full row; ORDER BY re-sorts stably (rows tied on the ORDER BY key keep their group-key /
     /// DISTINCT order, as VFP9 returns them); TOP n last.</summary>
-    private static List<(object?[] row, IRowContext rep)> PostProcess(
+    private List<(object?[] row, IRowContext rep)> PostProcess(
         List<(object?[] row, IRowContext rep)> pairs, SelectStatement sel, OrderScope scope, bool aggregate,
         EvaluationContext ctx, IReadOnlyList<SqlColumn> columns)
     {
@@ -1606,20 +1618,19 @@ internal sealed class SelectExecutor
             });
         }
 
+        // DISTINCT and ORDER BY compare stored cursor values, including character truncation
+        // and numeric rounding. Preserve source contexts for ORDER BY unselected source fields.
+        if (_host is not null) columns = TypeUntypedColumnsByValue(columns, pairs);
+        pairs = pairs.ConvertAll(p => (CoerceRow(p.row, columns), p.rep));
         if (sel.Distinct)
-        {
-            // DISTINCT compares the stored cursor values: IIF(...,'a','ab') in C(1)
-            // is one value, even though the untruncated expressions differ.
-            pairs = pairs.ConvertAll(p => (CoerceRow(p.row, columns), p.rep));
             pairs = Distinct(pairs, ctx);
-        }
 
         if (sel.OrderBy.Count > 0)
             pairs = ApplyOrderBy(pairs, sel.OrderBy, scope, aggregate, ctx);
 
-        // TOP n — VFP keeps ALL rows whose full ORDER BY key ties the nth row's key.
+        // VFP9 (ENGINEBEHAVIOR 90) returns at most n rows, even at an ORDER BY tie.
         if (sel.Top is int top)
-            pairs = ApplyTop(pairs, top, sel.OrderBy, scope, aggregate, ctx);
+            pairs = pairs.Take(Math.Max(0, top)).ToList();
 
         return pairs;
     }
@@ -1786,26 +1797,6 @@ internal sealed class SelectExecutor
         foreach (var p in pairs.OrderBy(x => x.row, byRow))
             if (kept.Count == 0 || CompareRow(kept[^1].row, p.row, ctx) != 0) kept.Add(p);
         return kept;
-    }
-
-    /// <summary>TOP n that honours ORDER BY ties: keeps the first <paramref name="top"/> rows PLUS any
-    /// trailing rows whose full ORDER BY key equals the nth row's key (VFP semantics). Without an
-    /// ORDER BY it is a plain take.</summary>
-    private static List<(object?[] row, IRowContext rep)> ApplyTop(
-        List<(object?[] row, IRowContext rep)> pairs, int top, IReadOnlyList<OrderItem> orderBy,
-        OrderScope scope, bool aggregate, EvaluationContext ctx)
-    {
-        top = Math.Max(0, top);
-        if (top == 0) return new List<(object?[], IRowContext)>();
-        if (top >= pairs.Count) return pairs;
-        if (orderBy.Count == 0) return pairs.Take(top).ToList();
-
-        var keySels = orderBy.Select(ob => OrderKeySelector(ob, scope, aggregate, ctx)).ToList();
-        bool KeyTies(int i, int j) => keySels.All(ks => CompareVfp(ks(pairs[i]), ks(pairs[j]), ctx) == 0);
-
-        int end = top; // boundary row is at index top-1; extend while subsequent rows tie its key.
-        while (end < pairs.Count && KeyTies(end, top - 1)) end++;
-        return pairs.Take(end).ToList();
     }
 
     /// <summary>Builds the ORDER BY key selector for one entry: a 1-based ordinal reads the output
