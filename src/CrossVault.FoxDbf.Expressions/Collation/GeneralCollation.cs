@@ -207,6 +207,9 @@ public sealed class GeneralCollation : IVfpCollation
             var b = tR[..tcR];
             if (a.StartsWith(b)) return 0;
             if (mode == StringCompareMode.Shorter && b.StartsWith(a)) return 0;
+            // HUNGARY H suppresses a tail that h retains as zero. VFP9 still compares CH = ch.
+            // This is sequence-specific: SPANISH's suppressed ligature tails compare differently.
+            if (_name == "HUNGARY" && b.StartsWith(a) && b[a.Length..].IndexOfAnyExcept((byte)0) < 0) return 0;
             d = a.SequenceCompareTo(b);
             return d < 0 ? -1 : 1;
         }

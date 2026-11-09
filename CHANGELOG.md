@@ -8,6 +8,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- CZECH and SLOVAK collations on code pages 1250, 852 and 895; POLISH on 1250, 852 and 620;
+  HUNGARY on 1250 and 852. VFP9-exact keys support bulk and incremental index creation, existing-tag
+  maintenance, SEEK with EXACT OFF/ON, Rushmore ranges and microVFP `SET COLLATE TO` / `INDEX ON`.
+  Contractions follow measured VFP9 behavior, including HUNGARY's `ozs`/`dzs` equivalence and prefix
+  ranges whose contracted key sorts below the literal.
 - **BREAKING:** `DATETIME(year, month, day [, hour [, minute [, second]]])` in expressions, SQL and microVFP,
   including fractional-component truncation, NULL component defaults and empty results for impossible
   calendar dates, as in VFP9. Invalid arguments now raise VFP errors 11, 1229 or 1230

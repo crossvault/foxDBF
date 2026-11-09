@@ -63,6 +63,26 @@ public static class VfpCollations
     internal static CollationSupport Resolve(string? name, int codePage, out IVfpCollation collation)
     {
         string n = name?.Trim() ?? string.Empty;
+        if (n.Equals("CZECH", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = CzechWeights.ForCodePage(codePage);
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+        if (n.Equals("SLOVAK", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = SlovakWeights.ForCodePage(codePage);
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+        if (n.Equals("POLISH", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = PolishWeights.ForCodePage(codePage);
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
+        if (n.Equals("HUNGARY", StringComparison.OrdinalIgnoreCase))
+        {
+            collation = HungaryWeights.ForCodePage(codePage);
+            return ReferenceEquals(collation, Machine) ? CollationSupport.Unsupported : CollationSupport.Exact;
+        }
         if (n.Length == 0 || n.Equals("MACHINE", StringComparison.OrdinalIgnoreCase))
         {
             collation = Machine;
