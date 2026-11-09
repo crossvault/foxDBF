@@ -1264,4 +1264,3 @@ public static class SqlParser
         }
     }
 }
-

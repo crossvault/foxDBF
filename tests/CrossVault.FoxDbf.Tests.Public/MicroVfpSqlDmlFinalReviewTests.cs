@@ -229,7 +229,16 @@ public sealed class MicroVfpSqlDmlFinalReviewTests(ITestOutputHelper output)
         "PUBLIC calls\ncalls=0\nCREATE TABLE t (n I, CHECK (calls=calls+1)<2)",
         "USE t\n" + MicroVfpSqlDmlTests.Catch("INSERT INTO t VALUES (1)") + "\nresult=result+TRANSFORM(calls)"));
 
+    [Theory]
+    [InlineData(false, "ERR:1582|1|1|0|0")]
+    [InlineData(true, "ERR:1582|0|0|0|0")]
+    public void NestedDefaultRuleFailureKeepsAcceptedOuterCandidate(bool outerRule, string expected) => Assert.Equal(expected, Run(
+        "CREATE TABLE child (n I CHECK n>0)\nCREATE TABLE parent (id I, n I DEFAULT nested()" +
+            (outerRule ? " CHECK n<0" : "") + ", tail I DEFAULT 9)",
+        "USE parent\n" + MicroVfpSqlDmlTests.Catch("INSERT INTO parent (id) VALUES (1)") +
+            "\nSELECT parent\nGO TOP\nresult=result+TRANSFORM(RECCOUNT())+'|'+TRANSFORM(id)+'|'+TRANSFORM(n)+'|'+TRANSFORM(tail)",
+        "FUNCTION nested\nINSERT INTO child VALUES (-1)\nRETURN -1\nENDFUNC"));
+
     internal static string Run(string setup, string scenario, string procedures = "", bool enforce = true) =>
         MicroVfpSqlDmlConsolidatedTests.Run(setup, scenario, procedures, enforce);
 }
-

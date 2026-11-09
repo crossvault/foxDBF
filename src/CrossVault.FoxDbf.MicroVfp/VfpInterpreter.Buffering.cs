@@ -66,7 +66,7 @@ public sealed partial class VfpInterpreter
                 edit.Old[field] = ReadFieldOnDisk(wa, field);   // capture the buffer-start (on-disk) value once.
             var v = Eval(clause.Value);
             var col = wa.Table.Columns[idx];
-            CheckUpdateValueType(col, v);
+            if (!normalize) CheckReplaceValueType(col, v);
             target[idx] = normalize ? NormalizeUpdateValue(col, v, col.Type == 'Q' ? wa.Table.BinaryTextEncoding : wa.Table.Encoding)
                 : DmlExecutor.StoredFieldValue(wa.Table, col,
                     v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr()));
@@ -79,6 +79,15 @@ public sealed partial class VfpInterpreter
                 ValidateBufferedRow(wa, recno, edit, changedField: idx, validateRecord: false);
             }
         }
+    }
+
+    private static void CheckReplaceValueType(DbfColumn column, VfpValue value)
+    {
+        // REPLACE accepts date/empty-date conversions that UPDATE ON rejects, but it never
+        // converts a numeric/logical value into character storage implicitly.
+        if (column.Type is 'C' or 'V' or 'M' && !value.IsNull
+            && value.Type != VfpType.Character && !value.IsBinary)
+            throw new MicroVfpRuntimeException("Data type mismatch.", 9);
     }
 
     private static void CheckUpdateValueType(DbfColumn column, VfpValue value)
@@ -836,4 +845,3 @@ public sealed partial class VfpInterpreter
     }
 
 }
-
