@@ -45,4 +45,20 @@ public sealed class MicroVfpSqlDmlHReviewTests
     public void H1_Commands(string command, bool indexed, string expected) => Assert.Equal(expected,
         MicroVfpSqlDmlFinalReviewTests.Run("CREATE TABLE t (flag L NULL)\nINSERT INTO t VALUES (.T.)",
             ComparisonScenario(command, indexed)));
+    internal const string NestedProcedure = "FUNCTION nested\nINSERT INTO child VALUES (-1)\nRETURN -1\nENDFUNC";
+    internal static string H2Setup(bool array) => "CREATE TABLE child (n I CHECK n>0)\nCREATE TABLE parent (id I, n I DEFAULT nested(), tail I DEFAULT 9)\nCREATE TABLE src (id I)\nINSERT INTO src VALUES (1)\nINSERT INTO src VALUES (2)";
+    internal static string H2Scenario(bool array, int buffering) => $"SET MULTILOCKS ON\nUSE parent\n=CURSORSETPROP('Buffering',{buffering})\n" +
+        (array ? "DIMENSION laRows[2,1]\nlaRows[1,1]=1\nlaRows[2,1]=2\n" : "") +
+        MicroVfpSqlDmlTests.Catch(array ? "INSERT INTO parent FROM ARRAY laRows" : "INSERT INTO parent (id) SELECT id FROM src") +
+        "\nSELECT parent\nresult=result+TRANSFORM(RECCOUNT())\nGO TOP\nresult=result+'|'+TRANSFORM(id)+'|'+TRANSFORM(n)+'|'+TRANSFORM(tail)" +
+        (buffering > 1 ? "\n=TABLEREVERT(.T.)" : "");
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(false, 3)]
+    [InlineData(false, 5)]
+    [InlineData(true, 1)]
+    [InlineData(true, 3)]
+    [InlineData(true, 5)]
+    public void H2_NestedDefaultStopsSource(bool array, int buffering) => Assert.Equal(array ? "2|1|0|0" : buffering == 1 ? "ERR:1582|1|1|0|0" : "ERR:1582|0|0|0|0",
+        MicroVfpSqlDmlFinalReviewTests.Run(H2Setup(array), H2Scenario(array, buffering), NestedProcedure));
 }

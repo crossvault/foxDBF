@@ -113,6 +113,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- `INSERT ... SELECT` stops after the current candidate when a nested DEFAULT fails validation.
+  VFP9 retains that candidate unbuffered and discards it with row/table buffering; later source
+  rows are never inserted. `INSERT FROM ARRAY` continues to leave omitted fields blank.
+
 - ADO.NET rule errors evaluate DBC ERROR expressions instead of exposing their quoted source;
   microVFP MESSAGE()/AERROR() report the same VFP9 field/record validation text.
   Rule evaluation errors, including missing functions/variables, preserve their VFP error number

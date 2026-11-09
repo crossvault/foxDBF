@@ -65,8 +65,7 @@ public sealed partial class VfpInterpreter
                     count = Math.Max(count, writer.RecordCount);
                 PositionPointer(Meta(wa.Area), null, count);
             }
-            if (_insertDefaultRuleError is { } defaultError)
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(defaultError).Throw();
+            ThrowInsertDefaultRuleError();
         }
         finally
         {
@@ -76,6 +75,12 @@ public sealed partial class VfpInterpreter
             Session.InsertRuleFilter = previousFilter;
             _insertDefaultRuleError = previousDefaultRuleError;
         }
+    }
+
+    private void ThrowInsertDefaultRuleError()
+    {
+        if (_insertDefaultRuleError is { } error)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
     }
 
     private void ValidateInsertRules(string table, DbfTable schema, Dictionary<string, object?> supplied, bool[] blank, int recno, DbcTableRules rules)
