@@ -65,6 +65,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP `FILETOSTR()` reads a file the session holds open, such as a used table, as VFP9 does;
+  it used to fail with error 1.
 - microVFP builds and maintains index KEY/FOR expressions that call loaded UDFs, arrays or interpreter
   functions, including existing VFP9-created tags. Missing functions are rejected before writes by default; plain
   library access remains readable and refuses unsupported maintenance. Native scalar keys retain their

@@ -286,7 +286,16 @@ public sealed partial class VfpInterpreter
     {
         if (a.Length < 1)
             throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11); // VFP err 11.
-        try { return VfpValue.Character(LlEncoding.GetString(File.ReadAllBytes(a[0].AsString))); }
+        // VFP9 reads a file this session holds open (a USEd table, an FCREATE handle): share read AND write, as
+        // VFP does; another process's exclusive lock still refuses the read (enforced by the OS share mode).
+        try
+        {
+            using var stream = new FileStream(a[0].AsString, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            using var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+            return VfpValue.Character(LlEncoding.GetString(buffer.GetBuffer(), 0, (int)buffer.Length));
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             throw new MicroVfpRuntimeException("File does not exist.", 1);   // VFP err 1 (verified against VFP9).

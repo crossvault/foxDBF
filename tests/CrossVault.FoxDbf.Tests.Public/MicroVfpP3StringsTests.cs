@@ -197,6 +197,30 @@ public sealed class MicroVfpP3StringsTests
     // ─────────────────────────── STRTOFILE / FILETOSTR ───────────────────────────
 
     [Fact]
+    public void FileToStr_ReadsAFileThisProcessHoldsOpenForWriting()
+    {
+        // A USEd table's writer keeps the DBF open read/write (shared); VFP9's FILETOSTR still reads it.
+        string dir = Path.Combine(Path.GetTempPath(), "foxdbf_p3str_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string file = Path.Combine(dir, "open.bin");
+            using (var writer = new FileStream(file, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite))
+            {
+                writer.Write(Encoding.ASCII.GetBytes("live"));
+                writer.Flush();
+                using var h = new H();
+                h.Run("lcF = '" + file.Replace("\\", "\\\\") + "'");
+                Assert.Equal("live", h.Str("FILETOSTR(lcF)"));
+            }
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
     public void StrToFile_And_FileToStr_OverwriteAdditiveAndBomFlags()
     {
         string dir = Path.Combine(Path.GetTempPath(), "foxdbf_p3str_" + Guid.NewGuid().ToString("N"));
