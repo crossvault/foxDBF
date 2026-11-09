@@ -108,7 +108,7 @@ public sealed partial class VfpInterpreter
                 }
                 Skip(source.Area, 1);
             }
-            FinishRow();
+            FinishRow(leavingRow: false);
         }
         finally
         {
@@ -139,12 +139,12 @@ public sealed partial class VfpInterpreter
             return dot < 0 ? text : text[(dot + 1)..];
         }
 
-        void FinishRow()
+        void FinishRow(bool leavingRow = true)
         {
             var current = Meta(target);
             if (current.Buf?.Rows.TryGetValue(current.RecNo, out var edit) == true)
             {
-                if (buffering <= 3) ValidateBufferedRow(Session.AreaAt(target)!, current.RecNo, edit);
+                if (buffering <= 3 || leavingRow) ValidateBufferedRow(Session.AreaAt(target)!, current.RecNo, edit);
                 if (buffering == 1)
                 {
                     // Publish through the normal REPLACE writer so candidate uniqueness and RI

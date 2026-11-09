@@ -1197,11 +1197,13 @@ public static class PrgParser
         private static PrgStatement BuildXbaseUpdate(string text)
         {
             string rest = PrgScan.AfterFirstWord(PrgScan.AfterFirstWord(text));
-            int from = PrgScan.IndexOfKeyword(rest, "FROM");
-            int replace = PrgScan.IndexOfKeyword(rest, "REPLACE");
-            if (from <= 0 || replace <= from + 4)
+            // FROM/REPLACE are legal identifiers: consume each name in its grammatical slot.
+            var prefix = System.Text.RegularExpressions.Regex.Match(rest,
+                @"^\s*(?<key>[\p{L}_][\p{L}\p{N}_]*(?:\s*(?:\.|->)\s*[\p{L}_][\p{L}\p{N}_]*)?)\s+FROM\s+(?<source>[\p{L}_][\p{L}\p{N}_]*)\s+(?<replace>REPLACE)\s+",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            if (!prefix.Success)
                 return Unparsed("UPDATE", PrgScan.AfterFirstWord(text));
-            string replacement = rest[replace..].Trim();
+            string replacement = rest[prefix.Groups["replace"].Index..].Trim();
             var parsed = BuildReplace(replacement) as ReplaceStmt;
             bool isRandom = false;
             // RANDOM is also a legal field/memvar name. Peel only a trailing top-level
@@ -1219,8 +1221,8 @@ public static class PrgParser
                 || rp.Clauses.Any(c => !c.Value.IsParsed)
                 || rp.Scope is not null || rp.For is not null || rp.While is not null || rp.In is not null)
                 return Unparsed("UPDATE", PrgScan.AfterFirstWord(text));
-            return new XbaseUpdateStmt(PrgExpr.Parse(rest[..from].Trim()),
-                ToNameRef(rest[(from + 4)..replace].Trim()), rp, isRandom);
+            return new XbaseUpdateStmt(PrgExpr.Parse(prefix.Groups["key"].Value),
+                ToNameRef(prefix.Groups["source"].Value), rp, isRandom);
         }
 
         private static PrgStatement BuildReplace(string text)
