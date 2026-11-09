@@ -684,7 +684,7 @@ public sealed partial class VfpInterpreter
         {
             var value = Eval(expression);
             if (resolvedScope is not null && !value.IsNull && value.Type != VfpType.Logical)
-                throw new MicroVfpRuntimeException("Expression is not logical.", 1127);
+                throw new MicroVfpRuntimeException("You must use a logical expression with a FOR or WHILE clause.", 1127);
             return Truth(value);
         }
     }
@@ -750,7 +750,14 @@ public sealed partial class VfpInterpreter
     {
         // Validate the entire syntax before moving or marking any row. The general scope resolver is
         // permissive for legacy commands; DELETE/RECALL must never turn an invalid scope into ALL.
-        if (syntaxError != 0) throw new MicroVfpRuntimeException("Syntax error.", syntaxError);
+        if (syntaxError != 0)
+            throw new MicroVfpRuntimeException(syntaxError switch
+            {
+                36 => "Command contains unrecognized phrase/keyword.",
+                152 => "Missing expression.",
+                1231 => "Missing operand.",
+                _ => "Syntax error.",
+            }, syntaxError);
         ValidateDeleteRecallScope(scope, forExpr, whileExpr);
         int area = inArea is not null ? ResolveAreaRef(inArea) : Session.CurrentArea;
         if (Session.AreaAt(area) is null)
@@ -759,11 +766,19 @@ public sealed partial class VfpInterpreter
         WriterLease? lease = null;
         string? writePath = null;
         bool savedRequireNames = _requireDmlNames;
+        int savedArea = Session.CurrentArea;
         _requireDmlNames = true;
         bool started = false;
+        bool finishBufferedRows = false;
         try
         {
+            // VFP evaluates NEXT/RECORD expressions in the IN target, even when resolution fails.
+            Session.SelectArea(area);
             var resolvedScope = ResolveDeleteRecallScope(scope, area);
+            // NEXT 1 is VFP's single-row form: like bare/RECORD it retains the pending edit.
+            finishBufferedRows = (scope is not null || forExpr is not null || whileExpr is not null)
+                && resolvedScope.Kind != LocScope.Record
+                && !(resolvedScope.Kind == LocScope.Next && resolvedScope.Count == 1);
             started = true;
             Memory.Set("_TALLY", VfpValue.Integer(0));
             ExecRecordScope(area, scope, forExpr, whileExpr, Mark, includeDeleted: recall, resolvedScope: resolvedScope);
@@ -772,6 +787,7 @@ public sealed partial class VfpInterpreter
         finally
         {
             _requireDmlNames = savedRequireNames;
+            Session.SelectArea(savedArea);
             try { lease?.Writer.Flush(); }
             finally { lease?.Dispose(); }
             if (started) Memory.Set("_TALLY", VfpValue.Integer(tally));
@@ -792,10 +808,8 @@ public sealed partial class VfpInterpreter
             {
                 BufferDeleteFlag(area, wa, m, deleted: !recall);
                 Memory.Set("_TALLY", VfpValue.Integer(++tally));
-                // Multi-record commands finish each row even when NEXT leaves the pointer on it.
-                // Bare and RECORD scopes retain the pending row edit for TABLEUPDATE/TABLEREVERT.
-                if ((scope is not null || forExpr is not null || whileExpr is not null)
-                    && (scope is null || PrgScan.FirstWord(scope) != "RECORD"))
+                // Multi-record commands finish even the final row; NEXT 1 remains buffered.
+                if (finishBufferedRows)
                 {
                     try { MaybeAutoCommitRow(area); }
                     catch when (EnforceReferentialIntegrity && LastDmlTriggerAborted)
@@ -893,6 +907,8 @@ public sealed partial class VfpInterpreter
         string head = PrgScan.FirstWord(scope);
         string rest = PrgScan.AfterFirstWord(scope).Trim();
         if (head is "ALL" or "REST" && rest.Length == 0) return;
+        if (head is "NEXT" or "RECORD" && rest.Length == 0)
+            throw new MicroVfpRuntimeException("Syntax error.", 10);
         if (head is "NEXT" or "RECORD" && rest.Length > 0 && PrgExpr.Parse(rest).IsParsed) return;
         throw new MicroVfpRuntimeException("Command contains unrecognized phrase/keyword.", 36);
     }

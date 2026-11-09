@@ -124,7 +124,8 @@ public sealed partial class VfpInterpreter
     /// <summary>Write ONE buffered existing-row edit (field changes + delete/recall mark) to disk, firing the
     /// bound RI trigger when enforced (deferred to commit per hackfox s4g346). Returns false when a RESTRICT
     /// trigger aborts the row (the write is rolled back). Mirrors <see cref="ExecReplace"/>'s disk tail.</summary>
-    private bool CommitExistingRow(int area, VfpSession.WorkArea wa, string path, int recno, RowEdit edit)
+    private bool CommitExistingRow(int area, VfpSession.WorkArea wa, string path, int recno, RowEdit edit,
+        bool throwOnDeleteFailure = false)
     {
         int recIndex = recno - 1;
         if (recIndex < 0 || recIndex >= wa.Table.RecordCount) return true;
@@ -135,7 +136,15 @@ public sealed partial class VfpInterpreter
         if (EnforceReferentialIntegrity && edit.DeletedOverride == true)
         {
             GoRecordCore(area, recno);
-            if (!FireDmlTrigger(RiEvent.Delete, area)) return false;
+            if (!FireDmlTrigger(RiEvent.Delete, area))
+            {
+                var error = TriggerFailed(RiEvent.Delete, area, wa.Alias);
+                // TABLEUPDATE returns .F. but retains MESSAGE/AERROR; a pointer move raises 1539.
+                SetErrorState(error, 0);
+                _errNo = 0;
+                if (throwOnDeleteFailure) throw error;
+                return false;
+            }
         }
 
         // The buffered field NAMES this commit writes — for the record-level RI pre-image (whether a touched
@@ -482,7 +491,7 @@ public sealed partial class VfpInterpreter
             {
                 // Only DROP the buffered edit once it is actually on disk; a RESTRICT abort keeps it buffered
                 // AND surfaces the failure (VFP blocks the move rather than silently losing the edit).
-                if (CommitExistingRow(area, wa, path, rec, e)) m.Buf.Rows.Remove(rec);
+                if (CommitExistingRow(area, wa, path, rec, e, throwOnDeleteFailure: true)) m.Buf.Rows.Remove(rec);
                 else throw new MicroVfpRuntimeException("Update conflict: the pending row was blocked on commit.");
             }
             else if (rec > rcTable)                            // the current record is a buffered APPEND.

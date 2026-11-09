@@ -65,6 +65,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- microVFP `DELETE`/`RECALL` evaluate `NEXT`/`RECORD` expressions in the `IN` target and restore
+  the caller's work area on errors. `NEXT 1` retains row-buffered edits like the bare command;
+  rejected delete triggers raise 1539 on a pointer move, while `TABLEUPDATE()` returns `.F.`
+  and retains the VFP9 `MESSAGE()`/`AERROR()` details. Invalid scopes and predicates report
+  VFP9's error numbers and text, including 10 for a missing `NEXT`/`RECORD` expression.
 - microVFP `REPLACE` preserves fields named `all`, `rest`, `next` or `record` in values and
   predicates instead of misreading them as trailing record scopes.
 - **BREAKING:** with RI enforcement enabled, unbuffered `APPEND BLANK` fires the insert trigger

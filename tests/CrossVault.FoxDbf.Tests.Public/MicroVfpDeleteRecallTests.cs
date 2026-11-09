@@ -84,6 +84,51 @@ public sealed class MicroVfpDeleteRecallTests(ITestOutputHelper output)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void InScope_UsesTargetFieldsAndRestoresCallerOnError(bool recall)
+    {
+        using var f = new Fixture();
+        f.Run("CREATE TABLE other (n I)\nINSERT INTO other VALUES (99)\nSELECT items\nGO 1");
+        if (recall) f.Run("DELETE ALL\nGO 1");
+        string verb = recall ? "RECALL" : "DELETE";
+        f.Run($"SELECT other\n{verb} RECORD id IN items");
+        Assert.Equal("OTHER", f.Interpreter.EvalExpression("ALIAS()").AsString);
+        Assert.Equal(3, f.Num("RECNO('items')"));
+        Assert.Equal(recall ? "1101" : "0010", f.Flags());
+        f.Run("SELECT items\nGO 1\nSELECT other\n_TALLY=77");
+        var error = Assert.Throws<MicroVfpRuntimeException>(() => f.Run($"{verb} RECORD (id+99) IN items"));
+        Assert.Equal(5, error.VfpErrorNumber);
+        Assert.Equal("OTHER", f.Interpreter.EvalExpression("ALIAS()").AsString);
+        Assert.Equal(1, f.Num("RECNO('items')"));
+        Assert.Equal(77, f.Num("_TALLY"));
+    }
+
+    [Theory]
+    [InlineData("NEXT", 10, "Syntax error.")]
+    [InlineData("RECORD", 10, "Syntax error.")]
+    [InlineData("ALL FOR", 152, "Missing expression.")]
+    [InlineData("ALL WHILE", 152, "Missing expression.")]
+    [InlineData("ALL FOR id >", 1231, "Missing operand.")]
+    [InlineData("ALL FOR .T. FOR .F.", 36, "Command contains unrecognized phrase/keyword.")]
+    [InlineData("ALL FOR 1", 1127, "You must use a logical expression with a FOR or WHILE clause.")]
+    [InlineData("ALL WHILE 1", 1127, "You must use a logical expression with a FOR or WHILE clause.")]
+    public void InvalidScope_ReportsVfpNumberMessageAndAerror(string tail, int number, string message)
+    {
+        using var f = new Fixture();
+        foreach (string verb in new[] { "DELETE", "RECALL" })
+        {
+            f.Run($"DIMENSION errors[1]\nTRY\n{verb} {tail}\nCATCH TO failure\n=AERROR(errors)\nENDTRY");
+            Assert.Equal(number, f.Num("failure.ErrorNo"));
+            Assert.Equal(message, f.Interpreter.EvalExpression("failure.Message").AsString);
+            Assert.Equal(message, f.Interpreter.EvalExpression("MESSAGE()").AsString);
+            Assert.Equal(number, f.Num("errors[1,1]"));
+            Assert.Equal(message, f.Interpreter.EvalExpression("errors[1,2]").AsString);
+            Assert.Equal("0000", f.Flags());
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void PredicateError_LeavesEarlierChangesAndPartialTally(bool recall)
     {
         using var f = new Fixture();
@@ -128,6 +173,48 @@ public sealed class MicroVfpDeleteRecallTests(ITestOutputHelper output)
         Assert.Throws<MicroVfpRuntimeException>(() => f.Run("DELETE ALL FOR id >"));
         Assert.Equal(0, f.Num("TABLEREVERT(.T.)"));
         Assert.Equal("0000", f.Flags());
+    }
+
+    [Theory]
+    [InlineData(2, "")]
+    [InlineData(3, "")]
+    [InlineData(2, "NEXT 1")]
+    [InlineData(3, "NEXT 1")]
+    public void SingleRowDelete_DefersTriggerAndReports1539OnMove(int buffering, string scope)
+    {
+        using var f = new Fixture();
+        f.Interpreter.EnforceReferentialIntegrity = true;
+        f.Run($"SET MULTILOCKS ON\n=CURSORSETPROP('Buffering',{buffering})\nGO 1\nPUBLIC trace\ntrace=''\nFUNCTION __RI_DELETE_items\ntrace=trace+TRANSFORM(id)+TRANSFORM(DELETED())\nRETURN .F.\nENDFUNC");
+        f.Run("DELETE " + scope);
+        Assert.Equal("", f.Interpreter.EvalExpression("trace").AsString);
+        Assert.Equal(2, f.Num("GETFLDSTATE(0)"));
+        Assert.Equal("0000", f.Flags());
+        f.Run("DIMENSION errors[1]\nTRY\nSKIP\nCATCH TO failure\n=AERROR(errors)\nENDTRY");
+        Assert.Equal(1539, f.Num("failure.ErrorNo"));
+        Assert.Equal("Trigger failed in Items.", f.Interpreter.EvalExpression("MESSAGE()").AsString);
+        Assert.Equal("Trigger failed in Items.", f.Interpreter.EvalExpression("errors[1,2]").AsString);
+        Assert.Equal("3.T.", f.Interpreter.EvalExpression("trace").AsString);
+        Assert.Equal(1, f.Num("RECNO()"));
+        Assert.Equal(1, f.Num("TABLEREVERT(.T.)"));
+        Assert.Equal("0000", f.Flags());
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(5)]
+    public void TableUpdate_DeleteRejectionReturnsFalseAndRetainsError(int buffering)
+    {
+        using var f = new Fixture();
+        f.Interpreter.EnforceReferentialIntegrity = true;
+        f.Run($"SET MULTILOCKS ON\n=CURSORSETPROP('Buffering',{buffering})\nGO 1\nFUNCTION __RI_DELETE_items\nRETURN .F.\nENDFUNC\nDELETE");
+        f.Run("DIMENSION errors[1]\nsaved=TABLEUPDATE(.T.)\nerrorcount=AERROR(errors)");
+        Assert.False(f.Interpreter.EvalExpression("saved").AsLogical);
+        Assert.Equal(1, f.Num("errorcount"));
+        Assert.Equal(1539, f.Num("errors[1,1]"));
+        Assert.Equal("Trigger failed in Items.", f.Interpreter.EvalExpression("MESSAGE()").AsString);
+        Assert.Equal("Trigger failed in Items.", f.Interpreter.EvalExpression("errors[1,2]").AsString);
+        Assert.Equal("0000", f.Flags());
+        Assert.Equal(1, f.Num("TABLEREVERT(.T.)"));
     }
 
     [Fact]
