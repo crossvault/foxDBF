@@ -82,7 +82,7 @@ public sealed partial class VfpInterpreter
         {
             WithImportRow(wa, recno, values, () =>
             {
-                DmlExecutor.ValidateImportRules(Session, wa.Alias, schema.Columns, values, EvalTextLoud, rules: rules);
+                DmlExecutor.ValidateImportRules(Session, wa.Alias, schema.Columns, values, EvalTextLoud, evaluateFieldError: EvalFieldRuleError, rules: rules);
                 return true;
             });
         }
@@ -91,6 +91,23 @@ public sealed partial class VfpInterpreter
             // An INSERT rejected before publication leaves VFP on its blank EOF record.
             GoRecordCore(wa.Area, recno);
             throw;
+        }
+    }
+
+    private VfpValue EvalFieldRuleError(string expression, string field)
+    {
+        var row = DefaultRowFor(Session.CurrentArea);
+        var area = Session.AreaAt(Session.CurrentArea);
+        if (row is null || area is null) return EvalTextLoud(expression);
+        // VFP rolls the rejected field back before evaluating its ERROR expression. A record
+        // rule's ERROR expression, in contrast, still sees the complete rejected candidate.
+        bool supplied = row.Values.TryGetValue(field, out var candidate);
+        row.Values[field] = ReadFieldOnDisk(area, field);
+        try { return EvalTextLoud(expression); }
+        finally
+        {
+            if (supplied) row.Values[field] = candidate;
+            else row.Values.Remove(field);
         }
     }
 
@@ -653,7 +670,7 @@ public sealed partial class VfpInterpreter
                     candidate[field] = DmlExecutor.StoredFieldValue(writer.Schema, writer.Schema.Columns[idx], values[idx]);
                     WithImportRow(wa, m.RecNo, candidate, () =>
                     {
-                        DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud,
+                        DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud, evaluateFieldError: EvalFieldRuleError,
                             fieldsToValidate: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { field }, validateRecord: false, rules: rules);
                         return true;
                     });
@@ -662,7 +679,7 @@ public sealed partial class VfpInterpreter
             if (candidate is not null)
                 WithImportRow(wa, m.RecNo, candidate, () =>
                 {
-                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud,
+                    DmlExecutor.ValidateImportRules(Session, wa.Alias, wa.Table.Columns, candidate, EvalTextLoud, evaluateFieldError: EvalFieldRuleError,
                         fieldsToValidate: new HashSet<string>(), validateRecord: true, rules: rules);
                     return true;
                 });

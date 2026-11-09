@@ -112,6 +112,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- ADO.NET rule errors evaluate DBC ERROR expressions instead of exposing their quoted source;
+  microVFP MESSAGE()/AERROR() report the same VFP9 field/record validation text.
 - ADO.NET `EnforceRules=on` validates generated AUTOINC and rounded numeric values as VFP9 stores them,
   and reuses the target work area across INSERT/UPDATE statements instead of opening another copy each time.
 - microVFP `GETFLDSTATE(-1)` returns the deletion and field-state string needed by DBC record rules.

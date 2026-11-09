@@ -143,8 +143,8 @@ public sealed class MicroVfpSqlDmlFinalReviewTests(ITestOutputHelper output)
             result=TRANSFORM(failure.ErrorNo)+'|'+MESSAGE()+'|'+errors[1,2]
         ENDTRY
         """;
-    internal static string RuleMessage(bool record, bool text) => text ? "Rejected -1" :
-        record ? "Table validation rule is violated." : "Field validation rule is violated.";
+    internal static string RuleMessage(bool record, bool text, bool update) => text ? "Rejected " + (record ? "-1" : update ? "1" : "0") :
+        record ? "Record validation rule is violated." : "Field N validation rule is violated.";
 
     [Theory]
     [InlineData(false, false, false)]
@@ -157,7 +157,7 @@ public sealed class MicroVfpSqlDmlFinalReviewTests(ITestOutputHelper output)
     [InlineData(true, true, true)]
     public void RuleErrorMessages(bool record, bool text, bool update)
     {
-        string message = RuleMessage(record, text);
+        string message = RuleMessage(record, text, update);
         Assert.Equal($"{(record ? 1583 : 1582)}|{message}|{message}", Run(MessageSetup(record, text), MessageScenario(update)));
     }
 
@@ -174,7 +174,7 @@ public sealed class MicroVfpSqlDmlFinalReviewTests(ITestOutputHelper output)
         cmd.CommandText = update ? "UPDATE t SET n=-1" : "INSERT INTO t VALUES (-1)";
         var error = Assert.Throws<FoxDbfException>(() => cmd.ExecuteNonQuery());
         Assert.Equal(record ? 1583 : 1582, error.VfpErrorNumber);
-        Assert.Equal(RuleMessage(record, true), error.Message);
+        Assert.Equal(RuleMessage(record, true, update), error.Message);
     }
 
     internal static string MissingSetup(string expression) => $"CREATE TABLE t (n I CHECK IIF(n=1,.T.,{expression}))\nINSERT INTO t VALUES (1)";
