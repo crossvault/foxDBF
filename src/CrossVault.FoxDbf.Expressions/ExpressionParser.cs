@@ -282,7 +282,7 @@ internal sealed class ExpressionParser
             if (distinct) args[0] = new SqlDistinctNode(args[0]);
             // SQL MIN/MAX aggregates take one operand; scalar MIN/MAX use VFP's 2..26 limits.
             return aggregate ? new FunctionNode(name, args.ToArray())
-                : VfpFunctionArity.Bind(name, args.ToArray(), id.Pos);
+                : VfpFunctionArity.Bind(name, args.ToArray(), id.Pos, sql: _sql is not null);
         }
         return new FieldNode(id.Text);
     }

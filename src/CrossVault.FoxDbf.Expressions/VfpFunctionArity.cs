@@ -78,7 +78,7 @@ internal static class VfpFunctionArity
         return table.ToFrozenDictionary(StringComparer.Ordinal);
     }
 
-    internal static AstNode Bind(string name, AstNode[] args, int position)
+    internal static AstNode Bind(string name, AstNode[] args, int position, bool sql = false)
     {
         string canonical = VfpFunctionAbbreviations.Canonical(name.ToUpperInvariant());
         if (!Table.TryGetValue(canonical, out var arity)) return new FunctionNode(name, args);
@@ -87,6 +87,8 @@ internal static class VfpFunctionArity
             ? count == 0 && canonical is "IIF" or "ICASE" ? 152 : arity.TooFew
             : count > arity.Maximum ? arity.TooMany : 0;
         if (error != 0) throw Error(error, position);
+
+        if (sql && canonical == "ISBLANK") return new SqlIsBlankNode(args[0]);
 
         // These counts compile in VFP9. They fail only if evaluated, after argument evaluation;
         // the BIT functions even propagate NULL before reporting their runtime count error.

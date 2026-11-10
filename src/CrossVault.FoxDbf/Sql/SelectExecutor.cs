@@ -547,7 +547,9 @@ internal sealed class SelectExecutor
     /// </summary>
     private List<Row> CollectSingleRows(DbfTable table, CdxFile? cdx, EvaluationContext ctx, SelectStatement sel, string alias)
     {
-        if (sel.WherePredicate is null && _outer is null && _host is null)
+        // The xBase optimizer would rebind ISBLANK(field) to raw field-reference semantics.
+        if (sel.WherePredicate is null && _outer is null && _host is null
+            && sel.Where?.ContainsFunction(static (name, _) => name == "ISBLANK") != true)
         {
             // The optimizer's residual resolves BARE field names only, so a qualifier naming THIS
             // query's own source (alias.field / table.field) is dropped first — as the join pushdown
@@ -1318,11 +1320,12 @@ internal sealed class SelectExecutor
     /// the ROW CONTEXT (RECNO / RECCOUNT / DELETED — RowAdapter reports the real recno/flag,
     /// CompositeRowContext reports 0 / 0 / false), work-area or session STATE (EOF / BOF / FOUND / SEEK /
     /// ALIAS / SELECT / USED / EVALUATE / TYPE / SYS, which a microVFP host may answer), or a fresh value
-    /// per call (RAND / SECONDS / DATETIME / TIME / DATE).</summary>
+    /// per call (RAND / SECONDS / DATETIME / TIME / DATE). ISBLANK must retain SQL value semantics
+    /// instead of being rebound by the optimizer's xBase parser.</summary>
     private static bool IsUnpushableFunction(string name) => name is
         "RECNO" or "RECCOUNT" or "DELETED" or
         "EOF" or "BOF" or "FOUND" or "SEEK" or "ALIAS" or "SELECT" or "USED" or
-        "EVALUATE" or "TYPE" or "SYS" or
+        "EVALUATE" or "TYPE" or "SYS" or "ISBLANK" or
         "RAND" or "SECONDS" or "DATETIME" or "TIME" or "DATE";
 
     /// <summary>The WHERE conjuncts that read ONLY the driving source and are therefore safe to

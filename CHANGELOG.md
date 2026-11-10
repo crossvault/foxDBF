@@ -11,9 +11,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - BREAKING: Engine and microVFP built-in calls with an invalid argument count now raise VFP9 errors 1229/1230
   (or the function-specific VFP9 error), including abbreviated names in expressions, SQL, indexes
   and microVFP. Unexecuted statements remain legal; built-ins (including `ON`) take precedence over
-  same-named UDFs, while UDFs still accept omitted parameters. `ISBLANK` preserves VFP9's distinction
-  between field references (including unary `+`) and parenthesized values. Runtime-only errors retain
-  VFP9's lazy evaluation and NULL behavior.
+  same-named UDFs, while UDFs still accept omitted parameters. Built-in names cannot be declared as
+  arrays (error 1652). Scoped commands preserve argument-count errors even on empty tables;
+  invalid argument counts in stored CDX expressions reject `USE` with error 114.
+  xBase `ISBLANK` preserves VFP9's distinction between field references (including unary `+`) and
+  parenthesized values; SQL `ISBLANK` inspects the actual source-row value, including joins and DML.
+  Runtime-only errors retain VFP9's lazy evaluation and NULL behavior.
 
 ## [0.12.0] - 2026-11-10
 

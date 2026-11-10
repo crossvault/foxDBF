@@ -41,6 +41,9 @@ internal abstract record PrgStatement
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+// Invalid built-in calls fail when their statement is reached, even on an empty scan.
+internal sealed record ExpressionErrorStmt(string Message, int Number) : PrgStatement;
+
 /// <summary>A name-position expression <c>(expr)</c> — evaluated to a string, then used
 /// as a name (alias/table/field/tag). NOT re-parsed as code.</summary>
 internal sealed record NameExpr(PrgExpr Expression);

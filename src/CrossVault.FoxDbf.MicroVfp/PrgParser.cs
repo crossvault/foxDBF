@@ -714,7 +714,17 @@ public static class PrgParser
                 "#" => new DirectiveStmt(text.Trim()),
                 _ => BuildDefault(text, kw),
             };
-            return node with { Line = line };
+            IEnumerable<PrgExpr?> expressions = node switch
+            {
+                ReplaceStmt r => r.Clauses.Select(c => c.Value).Concat(new[] { r.For, r.While }),
+                XbaseUpdateStmt u => u.Replacement.Clauses.Select(c => c.Value),
+                SumStmt s => s.Expressions.Concat(new[] { s.For, s.While }),
+                CountStmt c => new[] { c.For, c.While },
+                LocateStmt l => new[] { l.For, l.While },
+                _ => Array.Empty<PrgExpr?>(),
+            };
+            var error = expressions.Select(e => e?.ParseError).FirstOrDefault(e => e?.VfpErrorNumber is not null);
+            return (error is null ? node : new ExpressionErrorStmt(error.Message, error.VfpErrorNumber!.Value)) with { Line = line };
         }
 
         private static PrgStatement BuildDefault(string text, string kw)
@@ -763,6 +773,9 @@ public static class PrgParser
         private static VarDecl BuildVarDecl(DeclScope scope, string text)
         {
             string rest = PrgScan.AfterFirstWord(text);
+            if (scope != DeclScope.Private && PrgScan.FirstWord(rest) == "ARRAY"
+                && PrgScan.FirstWord(PrgScan.AfterFirstWord(rest)).Length > 0)
+                rest = PrgScan.AfterFirstWord(rest);
             var (all, like, except, names, dims) = ParseDeclBody(rest);
             return new VarDecl(scope, names, all, like, except, dims);
         }
@@ -1226,7 +1239,7 @@ public static class PrgParser
                 isRandom = true;
             }
             if (parsed is not { } rp || rp.Clauses.Count == 0
-                || rp.Clauses.Any(c => !c.Value.IsParsed)
+                || rp.Clauses.Any(c => !c.Value.IsParsed && c.Value.ParseError?.VfpErrorNumber is null)
                 || rp.Scope is not null || rp.For is not null || rp.While is not null || rp.In is not null)
                 return Unparsed("UPDATE", PrgScan.AfterFirstWord(text));
             return new XbaseUpdateStmt(PrgExpr.Parse(prefix.Groups["key"].Value),
@@ -1459,7 +1472,7 @@ public static class PrgParser
                 {
                     if (body.Trim().Length == 0) { error = 152; break; }
                     var expr = PrgExpr.Parse(body);
-                    if (!expr.IsParsed) { error = 1231; break; }
+                    if (!expr.IsParsed) { error = expr.ParseError?.VfpErrorNumber ?? 1231; break; }
                     if (keyword == "FOR") forE = expr;
                     else whileE = expr;
                 }
