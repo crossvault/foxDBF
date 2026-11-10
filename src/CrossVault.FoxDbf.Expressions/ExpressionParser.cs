@@ -189,7 +189,7 @@ internal sealed class ExpressionParser
             if (_sql is not null && name.Equals("COUNT", StringComparison.OrdinalIgnoreCase) && Peek.Type == TokenType.Star
                 || aggregate && Peek.Type == TokenType.Star)
             {
-                if (!name.Equals("COUNT", StringComparison.OrdinalIgnoreCase))
+                if (distinct || !name.Equals("COUNT", StringComparison.OrdinalIgnoreCase))
                     throw new ExpressionException("Expression is invalid. A valid expression is required.", id.Pos) { VfpErrorNumber = 152 };
                 var star = Next();
                 _nullTests.Add((star.Pos, star.Pos + 1, "1"));

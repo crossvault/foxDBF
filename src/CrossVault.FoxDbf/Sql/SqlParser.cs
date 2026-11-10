@@ -569,9 +569,19 @@ public static class SqlParser
 
         private List<SelectItem> ParseSelectList()
         {
+            int start = _pos;
             var items = new List<SelectItem>();
             do { items.Add(ParseSelectItem()); }
             while (TryComma());
+            int distinctAggregates = 0;
+            for (int i = start + 2; i < _pos; i++)
+            {
+                if (Kw(_t[i], "DISTINCT") && _t[i - 1].Kind == TokKind.LParen
+                    && (Kw(_t[i - 2], "COUNT") || Kw(_t[i - 2], "CNT")
+                        || Kw(_t[i - 2], "SUM") || Kw(_t[i - 2], "AVG"))
+                    && ++distinctAggregates > 1)
+                    throw new FoxDbfSqlException("SQL: DISTINCT is invalid.", _t[i].Start) { VfpErrorNumber = 1819 };
+            }
             return items;
         }
 

@@ -8,6 +8,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- DISTINCT aggregate arguments accept token whitespace and parentheses, and generated names use
+  VFP9's DCNT/DSUM/DAVG prefixes. COUNT(DISTINCT *) reports 152; multiple DISTINCT aggregates report 1819.
+  WHERE-qualified COUNT(*) evaluates HAVING against the filtered rows.
+- Numeric print expressions with unresolved widths retain variable padding; SET ALTERNATE accepts ADDI.
+  Import field metadata keeps the first case-insensitive duplicate column, as the earlier lookup did.
 - STR and computed numeric SELECT columns preserve exact decimal carry boundaries, reduce
   scale when rounding adds an integer digit, and suppress the sign of rounded zero.
   Numeric storage shares this width calculation and skips scale searching when values clearly fit.
@@ -22,12 +27,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   star-filled N/F values; REPLACE, GATHER and INSERT FROM ARRAY report error 39 after retaining all assigned fields or array rows.
   Buffered writes preserve those stars through TABLEUPDATE; ADO.NET exposes overflow as a DbException with the VFP error number.
 - Currency writes preserve VFP9 double half-boundaries, and STR/TRANSFORM avoid double rounding.
-- BREAKING: public `VfpValue.Currency(decimal)` now throws `ExpressionException` with VFP error 1988 for values outside the currency range.
 - microVFP SET ALTERNATE TO supports ADDITIVE; closing the alternate file switches ALTERNATE off.
   ?/?? use field display widths and comma separators without
   an unconditional trailing blank. TextWriter output uses fixed character cells, matching VFP9 Courier New.
 - SQL supports COUNT/SUM/AVG(DISTINCT expression) and CNT in HAVING. MIN/MAX DISTINCT report VFP9 error 1819;
-  CNT in ORDER BY reports 1300. Bare COUNT(*) preserves VFP9's distinct HAVING behavior.
+  CNT in ORDER BY reports 1300. Bare COUNT(*) preserves VFP9's special HAVING behavior when WHERE is absent.
 - Import rule field reads cache column metadata and avoid per-field lookup closures.
 
 - BREAKING: SQL aggregates reject missing or extra arguments with VFP9 errors 152/1300;

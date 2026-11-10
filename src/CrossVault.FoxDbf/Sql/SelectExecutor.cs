@@ -1666,7 +1666,8 @@ internal sealed class SelectExecutor
             var row = sel.Items.Select(it => ProjectAggregateItem(it, members, rep, ctx)).ToArray();
             // VFP9's bare COUNT(*) shortcut leaves HAVING aggregate slots empty. Aliases still
             // see the projected count; COUNT(*)+0 and other aggregate projections use the group.
-            var havingMembers = sel.GroupBy.Count == 0 && sel.Items.Count == 1
+            var havingMembers = sel.Where is null && sel.WherePredicate is null
+                && sel.GroupBy.Count == 0 && sel.Items.Count == 1
                 && sel.Items[0].AggregateStarFunction == "COUNT" ? new List<IRowContext>() : members;
             if (sel.Having is not null
                 && !EvalHaving(sel.Having, havingMembers, AliasRow(rep, row, aliases, scope.IsSourceField, columns), ctx))
@@ -2081,7 +2082,7 @@ internal sealed class SelectExecutor
 
             if (IsAggregate(it, out var func, out var arg))
             {
-                string aggName = it.Alias ?? AggregateName(func, arg, position);
+                string aggName = it.Alias ?? AggregateName(func, arg, position, HasDistinctArgument(it.Expression!.Text));
                 var info = func == "COUNT" ? new VfpTypeInfo(VfpType.Numeric, 10) : SafeInfer(arg!, schema);
                 if (func is "SUM" or "AVG" && info.Type == VfpType.Numeric && info.SqlStorageType != 'B')
                     info = new VfpTypeInfo(info.Type, Math.Max(16, info.Length), func == "AVG" ? Math.Max(2, info.Decimals) : info.Decimals, info.SqlStorageType);
@@ -2144,7 +2145,7 @@ internal sealed class SelectExecutor
 
             if (IsAggregate(it, out var func, out var arg))
             {
-                string aggName = it.Alias ?? AggregateName(func, arg, position);
+                string aggName = it.Alias ?? AggregateName(func, arg, position, HasDistinctArgument(it.Expression!.Text));
                 var info = func == "COUNT" ? new VfpTypeInfo(VfpType.Numeric, 10) : SafeInfer(arg!, schema);
                 if (func is "SUM" or "AVG" && info.Type == VfpType.Numeric && info.SqlStorageType != 'B')
                     info = new VfpTypeInfo(info.Type, Math.Max(16, info.Length), func == "AVG" ? Math.Max(2, info.Decimals) : info.Decimals, info.SqlStorageType);
@@ -2182,10 +2183,11 @@ internal sealed class SelectExecutor
     /// expression <c>FN_EXP_n</c> with n the column's position (<c>SUM(amount * 2)</c> in column 2 →
     /// <c>SUM_EXP_2</c>). A compound item the aggregate pattern only spans textually
     /// (<c>MAX(a) - MIN(a)</c>: "argument" <c>a) - MIN(a</c>) is a plain expression, <c>EXP_n</c>.</summary>
-    private static string AggregateName(string func, string? arg, int position)
+    private static string AggregateName(string func, string? arg, int position, bool distinct = false)
     {
         string fn = func.ToUpperInvariant();
         string prefix = fn == "COUNT" ? "CNT" : fn;
+        if (distinct) prefix = "D" + prefix;
         if (arg is null || arg.Trim() == "*") return prefix;
         string a = arg.Trim();
         if (!IsParenBalanced(a)) return ExpName(position);
@@ -2329,8 +2331,18 @@ internal sealed class SelectExecutor
         if (HasTopLevelComma(a)) return false; // exclude scalar MIN(a,b)/MAX(a,b)
         func = m.Groups[1].Value.ToUpperInvariant();
         arg = a.Trim();
-        if (arg.StartsWith("DISTINCT ", StringComparison.OrdinalIgnoreCase)) arg = arg[9..].TrimStart();
+        if (StartsWithDistinct(arg)) arg = arg[8..].TrimStart();
         return true;
+    }
+
+    private static bool StartsWithDistinct(string argument)
+        => argument.Length > 8 && argument.StartsWith("DISTINCT", StringComparison.OrdinalIgnoreCase)
+            && (char.IsWhiteSpace(argument[8]) || argument[8] == '(');
+
+    private static bool HasDistinctArgument(string text)
+    {
+        var match = AggRx.Match(text);
+        return match.Success && StartsWithDistinct(match.Groups["arg"].Value.TrimStart());
     }
 
     private static bool HasTopLevelComma(string s)
