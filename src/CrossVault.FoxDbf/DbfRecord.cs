@@ -195,6 +195,20 @@ public readonly struct DbfRecord
         return VfpValue.FromField(blanks ? GetVfpValue(index) : GetExpressionValue(index), column.Type, column.Decimal);
     }
 
+    internal VfpValue GetIndexScaledValue(string name)
+    {
+        int index = IndexOfColumn(name);
+        if (index < 0) return VfpValue.Null;
+        var column = _table.Columns[index];
+        object? value = this[index];
+        if (value is DateOnly date) return VfpValue.Date(date, empty: false);
+        if (value is DateTime timestamp) return VfpValue.DateTime(timestamp, empty: false);
+        // Index keys retain stored, padded text and distinguish empty dates from true NULLs.
+        if (value is string) value = GetStoredExpressionValue(index);
+        else if (value is null && column.Type is 'D' or 'T') value = GetVfpValue(index);
+        return VfpValue.FromField(value, column.Type, column.Decimal);
+    }
+
     internal object? GetVfpValue(int index)
     {
         var value = GetExpressionValue(index);   // a C field at its full width, as VFP reads it.

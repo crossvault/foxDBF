@@ -1512,42 +1512,9 @@ internal static class CdxIndexBuilder
         public bool TryGetColumn(string name, out char type, out int length, out int decimals)
             => new TableSchema(_record.Table).TryGetColumn(name, out type, out length, out decimals);
 
-        public VfpValue GetValue(string name)
-        {
-            var value = VfpValue.FromClr(GetField(name));
-            foreach (var column in _record.Table.Columns)
-                if (string.Equals(column.Name, name, StringComparison.OrdinalIgnoreCase))
-                    return value.WithFieldScale(column.Type, column.Decimal);
-            return value;
-        }
+        public VfpValue GetValue(string name) => _record.GetIndexScaledValue(name);
+        public object? GetField(string name) => GetValue(name);
 
-        public object? GetField(string name)
-        {
-            // VFP evaluates an index KEY/FOR expression over the FULL declared field width — a
-            // CHARACTER field keeps its trailing space padding (and any leading spaces). The record
-            // reader (DbfRecord[name]) TRIMS character fields (§A5/ruby-dbf oracle), which is correct
-            // for display but WRONG inside a composite key: e.g. str(parentid)+objecttype+lower(name)
-            // must embed objecttype as "Field     " (C(10)), not the trimmed "Field". Re-decode the
-            // raw bytes at full width for 'C' fields; a NULL-flagged field still reads as NULL.
-            var value = _record[name];
-            if (value is DateOnly date) return VfpValue.Date(date, empty: false);
-            if (value is DateTime timestamp) return VfpValue.DateTime(timestamp, empty: false);
-            if (value is null)
-            {
-                foreach (var col in _record.Table.Columns)
-                {
-                    if (string.Equals(col.Name, name, StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Blank D/T fields remain typed empties in KEY/FOR expressions; genuine
-                        // .NULL. still follows the record's null flag (VFP9 empty-date oracle).
-                        if (col.Type is 'D' or 'T')
-                            return _record.GetVfpValue(name);
-                        break;
-                    }
-                }
-            }
-            return value is string ? _record.GetStoredExpressionValue(name) : value;
-        }
     }
 
     /// <summary>Adapts a <see cref="DbfTable"/> to the expression engine static-schema contract.</summary>

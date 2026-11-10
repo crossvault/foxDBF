@@ -8,6 +8,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- INDEX ON resolves field metadata once per read while preserving stored text, empty dates and currency scale.
+
 - SQL computed numeric columns cap their scale at 18. Numeric storage reduces fractional digits
   to fit the declared width before overflowing; microVFP REPLACE reports true numeric overflow as error 39.
 
