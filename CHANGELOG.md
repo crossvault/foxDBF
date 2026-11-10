@@ -8,6 +8,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- Embedded microVFP SQL applies array-reference normalization to projections without an alias
+  and with an implicit alias, including aggregate arguments and subquery projections;
+  `SELECT ALEN(arr)` now returns the same array length as `SELECT ALEN(arr) AS n`.
+- BREAKING: SELECT INTO CURSOR rejects an open table alias or a query source's file stem with VFP9 error 24,
+  including sources opened under a different alias. Existing unrelated cursors remain replaceable.
+  INTO TABLE rejects overwriting a query source with error 102 and can replace an unrelated open table.
+- BREAKING: ORDER BY and GROUP BY reject direct `ALEN` calls and array subscripts with VFP9 error 1806;
+  refer to their projected column by its alias or ordinal.
+
 - Embedded microVFP SQL now normalizes array references within expression fragments and supports subscripts,
   including UPDATE assignments and ISBLANK/IN/BETWEEN/LIKE predicates in UPDATE, DELETE and SELECT.
   Bracket string literals and table, alias and column names remain unchanged, including names like `ALEN` and `LOOKUP`.

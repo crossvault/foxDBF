@@ -111,7 +111,7 @@ internal sealed partial class DmlExecutor
         if (defaults is null) return;
         for (int i = 0; i < columns.Count; i++)
             if (!map.ContainsKey(columns[i].Name) && defaults[i] is { } expression)
-                map[columns[i].Name] = VfpExpression.Parse(expression).Evaluate(new ImportRow(columns, map), session.Context).ToClr();
+                map[columns[i].Name] = SqlParser.ParseExpression(expression, xbase: true).Evaluate(new ImportRow(columns, map), session.Context).ToClr();
     }
 
     internal static void ValidateImportRules(VfpSession session, string table, IReadOnlyList<DbfColumn> columns,
@@ -122,7 +122,7 @@ internal sealed partial class DmlExecutor
         rules ??= TableRules(session, table);
         if (rules is null) return;
         VfpValue Eval(string expression) => evaluate is not null ? evaluate(expression)
-            : VfpExpression.Parse(expression).Evaluate(new ImportRow(columns, map, recno), session.Context);
+            : SqlParser.ParseExpression(expression, xbase: true).Evaluate(new ImportRow(columns, map, recno), session.Context);
         int field = 0;
         foreach (var col in columns)
         {
