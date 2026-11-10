@@ -1490,12 +1490,18 @@ public static class PrgParser
             int open = expression.IndexOf('(');
             if (open < 0 || !expression.EndsWith(')')) return PrgExpr.Parse(item).IsParsed;
             string name = expression[..open].Trim().ToUpperInvariant();
-            if (name is not ("AVG" or "SUM" or "STD" or "VAR" or "CNT" or "MIN" or "MAX")) return PrgExpr.Parse(item).IsParsed;
+            if (name is not ("AVG" or "SUM" or "STD" or "VAR" or "CNT" or "MIN" or "MAX" or "NPV")) return PrgExpr.Parse(item).IsParsed;
             string argument = expression[(open + 1)..^1].Trim();
+            if (name == "NPV")
+            {
+                var arguments = PrgScan.SplitTopCommas(argument);
+                // Split a leading scope even when arity/empty operands will fail at execution.
+                return arguments.All(a => a.Length == 0 || PrgExpr.Parse(a).IsParsed);
+            }
             return name == "CNT" && argument.Length == 0 || PrgExpr.Parse(argument).IsParsed;
         }
 
-        private static SumStmt BuildSum(string text)
+        private static PrgStatement BuildSum(string text)
         {
             string rest = PrgScan.AfterFirstWord(text);
             bool calculate = PrgScan.FirstWord(text) == "CALCULATE";
@@ -1554,22 +1560,45 @@ public static class PrgParser
             // With TO but no expression, VFP reports syntax error after scope positioning.
             if (exprs.Count == 0 && targets.Count > 0) exprs.Add(PrgExpr.Parse(""));
             List<string>? functions = null;
+            List<NpvArguments?>? npv = null;
             if (PrgScan.FirstWord(text) == "CALCULATE")
             {
                 functions = new List<string>();
+                npv = new List<NpvArguments?>();
+                // VFP9 emits these errors when the line executes, so TRY/CATCH and dead branches work.
+                UnknownCommand Invalid(int number) => new("CALCULATE", rest) { KnownVerb = true, ErrorNumber = number };
+                var items = PrgScan.SplitTopCommas(head);
+                if (items.Count > 1 && items[0].Length == 0) return Invalid(36);
+                if (items.Any(item => item.Length == 0)) return Invalid(10);
                 for (int i = 0; i < exprs.Count; i++)
                 {
                     string expression = exprs[i].Text.Trim();
                     int open = expression.IndexOf('(');
                     string name = open < 0 ? "" : expression[..open].Trim().ToUpperInvariant();
-                    if (name is not ("AVG" or "SUM" or "STD" or "VAR" or "CNT" or "MIN" or "MAX") || !expression.EndsWith(')'))
-                        throw new MicroVfpRuntimeException("Syntax error.", 10);
+                    if (name is not ("AVG" or "SUM" or "STD" or "VAR" or "CNT" or "MIN" or "MAX" or "NPV"))
+                        return Invalid(expression.Length == 0 ? 10 : 36);
+                    int close = MatchParen(expression, open);
+                    if (close < 0) return Invalid(10);
+                    if (close != expression.Length - 1) return Invalid(36);
                     string argument = expression[(open + 1)..^1].Trim();
                     functions.Add(name);
-                    exprs[i] = PrgExpr.Parse(name == "CNT" && argument.Length == 0 ? "1" : argument);
+                    if (name == "CNT" && argument.Length == 0) argument = "1";
+                    var arguments = PrgScan.SplitTopCommas(argument);
+                    if (arguments.Count == 0 || arguments.Any(a => a.Length == 0)) return Invalid(152);
+                    if (name == "NPV" ? arguments.Count is not (2 or 3) : arguments.Count != 1) return Invalid(10);
+                    if (name == "NPV")
+                    {
+                        npv.Add(new(PrgExpr.Parse(arguments[0]), arguments.Count == 3 ? PrgExpr.Parse(arguments[2]) : null));
+                        exprs[i] = PrgExpr.Parse(arguments[1]);
+                    }
+                    else
+                    {
+                        npv.Add(null);
+                        exprs[i] = PrgExpr.Parse(argument);
+                    }
                 }
             }
-            return new SumStmt(exprs, scope, forE, whileE, targets, PrgScan.FirstWord(text) == "AVERAGE", functions);
+            return new SumStmt(exprs, scope, forE, whileE, targets, PrgScan.FirstWord(text) == "AVERAGE", functions, npv);
         }
 
         // COUNT [Scope] [FOR lExpr] [WHILE lExpr] TO VarName [NOOPTIMIZE] — the clauses may come in any order
@@ -2102,6 +2131,13 @@ public static class PrgParser
             {
                 char c = s[i];
                 if (inStr) { if (c == q) inStr = false; continue; }
+                if (c == '[' && PrgScan.IsBracketLiteralStart(s, i))
+                {
+                    int close = s.IndexOf(']', i + 1);
+                    if (close < 0) return -1;
+                    i = close;
+                    continue;
+                }
                 if (c == '\'' || c == '"') { inStr = true; q = c; continue; }
                 if (c == '(') depth++;
                 else if (c == ')') { depth--; if (depth == 0) return i; }

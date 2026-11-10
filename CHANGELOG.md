@@ -4,6 +4,20 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- microVFP `CALCULATE NPV(rate, flow [, initial])` now matches VFP9 discounting, scoped and filtered
+  records, per-record rates, NULL handling and numeric result precision, including mixed aggregate lists.
+
+### Fixed
+
+- Invalid microVFP `CALCULATE` items now raise VFP9's catchable errors when executed, including the
+  matching syntax, missing-expression and unrecognized-phrase messages. Unexecuted invalid lines no
+  longer prevent a program from loading.
+- Currency literals accept a minus after `$`, including negative initial values in `CALCULATE NPV`.
+
 ## [0.13.0] - 2026-11-10
 
 ### Changed

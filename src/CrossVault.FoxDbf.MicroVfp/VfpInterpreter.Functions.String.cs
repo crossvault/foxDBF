@@ -96,7 +96,10 @@ public sealed partial class VfpInterpreter
         VfpType.Date => v.IsEmptyDate ? TransformEmptyDate() : v.AsDate.ToString("MM/dd/yyyy", CultureInfo.InvariantCulture),
         VfpType.DateTime => v.IsEmptyDate ? TransformEmptyDate() + "   :  :   AM"
             : v.AsDateTime.ToString("MM/dd/yyyy hh:mm:ss tt", CultureInfo.InvariantCulture),
-        // SQL cursor overflow remains numeric; VFP's default TRANSFORM renders ten stars.
+        // CALCULATE NPV's non-finite result keeps its calculation scale, including after SET DECIMALS.
+        // VFP9 reserves at least two fractional places in this overflow display.
+        VfpType.Numeric when v.OverflowDisplayWidth > 0 => new string('*', v.OverflowDisplayWidth),
+        // Stored DBF/SQL overflow retains its own marker width.
         VfpType.Numeric when double.IsNaN(v.AsDouble) => new string('*', 11),
         VfpType.Numeric when double.IsInfinity(v.AsDouble) => new string('*', 10),
         VfpType.Currency => (v.AsNumber < 0 ? "$-" : "$")

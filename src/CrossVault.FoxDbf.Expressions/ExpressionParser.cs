@@ -201,11 +201,10 @@ internal sealed class ExpressionParser
             case TokenType.DateTimeLit:
                 Next();
                 return new LiteralNode(t.Value);
-            // A '$' in PREFIX position followed by a number is a currency literal ($0, $12.50); in infix
+            // A '$' in PREFIX position followed by a number is a currency literal ($0, $-12.50); in infix
             // position '$' stays the substring operator (handled by the binary loop, never reaches here).
-            case TokenType.Dollar when _pos + 1 < _tokens.Count && _tokens[_pos + 1].Type == TokenType.Number:
-                Next();
-                return new LiteralNode(VfpValue.Currency(Math.Round(Next().Value.AsNumber, 4, MidpointRounding.AwayFromZero)));
+            case TokenType.Dollar:
+                return ParseCurrencyLiteral();
             case TokenType.True: Next(); return new LiteralNode(VfpValue.Logical(true));
             case TokenType.False: Next(); return new LiteralNode(VfpValue.Logical(false));
             case TokenType.NullLit: Next(); return new LiteralNode(VfpValue.Null);
@@ -240,6 +239,19 @@ internal sealed class ExpressionParser
                                             : $"Unexpected token at position {t.Pos}.",
                     t.Pos);
         }
+    }
+
+    // Keep currency temporaries off the recursive ParsePrefix frame so the nesting guard remains reachable.
+    private AstNode ParseCurrencyLiteral()
+    {
+        var dollar = Next();
+        bool negative = Peek.Type == TokenType.Minus;
+        if (negative) Next();
+        // VFP9 accepts the minus after $, but rejects unary plus and parenthesized values (36).
+        if (Peek.Type != TokenType.Number)
+            throw new ExpressionException("Command contains unrecognized phrase/keyword.", dollar.Pos) { VfpErrorNumber = 36 };
+        decimal amount = Next().Value.AsNumber;
+        return new LiteralNode(VfpValue.Currency(Math.Round(negative ? -amount : amount, 4, MidpointRounding.AwayFromZero)));
     }
 
     private AstNode ParseIdentifier()

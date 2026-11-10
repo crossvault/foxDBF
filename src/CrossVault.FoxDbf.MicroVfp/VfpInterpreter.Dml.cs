@@ -1225,6 +1225,7 @@ public sealed partial class VfpInterpreter
         var minima = new VfpValue[n];
         var maxima = new VfpValue[n];
         var sawNull = new bool[n];
+        var npvInitialized = new bool[n];
         var schema = new SelectExecutor.TableSchema(wa.Table, wa.Alias);
         var types = sum.Expressions.Select(e => e.Parsed?.InferType(schema) ?? default).ToArray();
         var currencies = types.Select(t => t.Type == VfpType.Currency).ToArray();
@@ -1233,6 +1234,9 @@ public sealed partial class VfpInterpreter
         for (int k = 0; k < n; k++)
         {
             string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
+            // NPV checks its flow and initial value at the first qualifying row (or final pointer),
+            // not at the caller's current record. Its rate is evaluated separately for each row.
+            if (function == "NPV") continue;
             if (sum.CalculateFunctions is not null && sum.Expressions[k].Text == "*")
                 throw new MicroVfpRuntimeException("Expression is invalid.", 152);
             var type = types[k].Type;
@@ -1286,6 +1290,28 @@ public sealed partial class VfpInterpreter
             }
             sumTypesChecked = true;
         }
+        void AccumulateNpv(int k, NpvArguments arguments, bool include)
+        {
+            if (!npvInitialized[k])
+            {
+                if (arguments.Initial is not null)
+                {
+                    var initial = Eval(arguments.Initial);
+                    if (!IsNumeric(initial)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
+                    acc[k] = initial.AsDouble;
+                }
+                npvInitialized[k] = true;
+            }
+            var flow = Eval(sum.Expressions[k]);
+            if (!IsNumeric(flow)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
+            if (!include) return;
+            var rate = Eval(arguments.Rate);
+            // VFP9 skips a NULL rate without consuming a period; a NULL flow instead raises error 27.
+            if (rate.IsNull) return;
+            if (!IsNumeric(rate)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
+            counts[k]++;
+            acc[k] += flow.AsDouble / Math.Pow(1 + rate.AsDouble, counts[k]);
+        }
         Span<int> precisionBits = stackalloc int[4];
         for (int i = start; !stopped && i < order.Count; i++)
         {
@@ -1298,6 +1324,11 @@ public sealed partial class VfpInterpreter
                 CheckSumTypes();
                 for (int k = 0; k < n; k++)
                 {
+                    if (sum.Npv?[k] is { } arguments)
+                    {
+                        AccumulateNpv(k, arguments, include: true);
+                        continue;
+                    }
                     var v = Eval(sum.Expressions[k]);
                     if (v.IsNull) { sawNull[k] = true; continue; }
                     string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
@@ -1340,6 +1371,9 @@ public sealed partial class VfpInterpreter
         }
         RepositionChildren(area);
         CheckSumTypes();
+        for (int k = 0; k < n; k++)
+            if (!npvInitialized[k] && sum.Npv?[k] is { } arguments)
+                AccumulateNpv(k, arguments, include: false);
         for (int k = 0; k < sum.To.Count && k < n; k++)
         {
             string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
@@ -1348,7 +1382,7 @@ public sealed partial class VfpInterpreter
                 AssignTo(sum.To[k], counts[k] == 0 && sawNull[k] ? VfpValue.Null : function == "MIN" ? minima[k] : maxima[k]);
                 continue;
             }
-            bool currency = currencies[k] && function is not ("CNT" or "STD" or "VAR");
+            bool currency = currencies[k] && function is not ("CNT" or "STD" or "VAR" or "NPV");
             double result = function switch
             {
                 "AVG" => counts[k] > 0 ? acc[k] / counts[k] : 0,
@@ -1370,6 +1404,8 @@ public sealed partial class VfpInterpreter
                 : function == "MIN" ? minima[k].AsNumber : function == "MAX" ? maxima[k].AsNumber : (decimal)result;
             var value = currency ? VfpValue.Currency(Math.Round(currencyResult, 4, MidpointRounding.AwayFromZero))
                 : VfpValue.Number(result).WithDisplayDecimals(decimals);
+            if (function == "NPV" && !double.IsFinite(result))
+                value = value.WithOverflowDisplayWidth(11 + Math.Max(2, decimals));
             if (function is "MIN" or "MAX" && counts[k] == 0 && sawNull[k]) value = VfpValue.Null;
             AssignTo(sum.To[k], value);
         }

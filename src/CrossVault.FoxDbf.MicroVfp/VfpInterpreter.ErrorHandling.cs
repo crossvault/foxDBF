@@ -94,6 +94,7 @@ public sealed partial class VfpInterpreter
 
     private void ExecUnknown(UnknownCommand uc)
     {
+        if (uc.ErrorNumber is int number) throw Loud(number, uc);
         if (uc.Verb == "CLOSE")
         {
             string what = PrgScan.FirstWord(uc.Arguments);
@@ -109,9 +110,13 @@ public sealed partial class VfpInterpreter
     private static MicroVfpRuntimeException Loud(int number, UnknownCommand uc)
     {
         string text = (uc.Verb + " " + uc.Arguments).Trim();
-        string msg = number == UnrecognizedVerbErrorNumber
-            ? "Unrecognized command verb."
-            : "Command contains unrecognized phrase/keyword.";
+        string msg = number switch
+        {
+            10 => "Syntax error.",
+            152 => "Missing expression.",
+            UnrecognizedVerbErrorNumber => "Unrecognized command verb.",
+            _ => "Command contains unrecognized phrase/keyword."
+        };
         return new MicroVfpRuntimeException(msg, number) { Statement = text, LineNo = uc.Line };
     }
 

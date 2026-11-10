@@ -323,6 +323,8 @@ internal sealed record InsertStmt(string Sql, SqlStatement? Parsed) : PrgStateme
     internal SqlStatement? ParsedCache;
 }
 
+internal sealed record NpvArguments(PrgExpr Rate, PrgExpr? Initial);
+
 internal sealed record SumStmt(
     IReadOnlyList<PrgExpr> Expressions,
     string? Scope,
@@ -330,7 +332,8 @@ internal sealed record SumStmt(
     PrgExpr? While,
     IReadOnlyList<string> To,
     bool Average = false,
-    IReadOnlyList<string>? CalculateFunctions = null) : PrgStatement;
+    IReadOnlyList<string>? CalculateFunctions = null,
+    IReadOnlyList<NpvArguments?>? Npv = null) : PrgStatement;
 
 internal sealed record UnlockStmt(bool All, NameRef? Record, NameRef? In) : PrgStatement;
 
@@ -555,6 +558,8 @@ internal sealed record UnknownCommand(string Verb, string Arguments) : PrgStatem
 {
     /// <summary>True when the verb itself is one microVFP models but this clause form was not recognised.</summary>
     public bool KnownVerb { get; init; }
+    /// <summary>A command-specific parse error, raised only if this statement executes.</summary>
+    public int? ErrorNumber { get; init; }
 }
 
 // ── structured error handling ────────────────────────────────────────────────
