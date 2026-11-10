@@ -81,21 +81,34 @@ internal static partial class VfpRuntime
             case "BITLSHIFT": return VfpValue.Number((double)(unchecked((int)(long)x) << (int)y)).WithDisplayDecimals(0);
             case "BITRSHIFT": return VfpValue.Number((double)((uint)unchecked((int)(long)x) >> (int)y)).WithDisplayDecimals(0);
             case "RGB": return VfpValue.Number(x + y * 256 + Arg(args, 2).AsDouble * 65536).WithDisplayDecimals(0);
-            case "HOUR": return VfpValue.Number((double)Arg(args, 0).AsDateTime.Hour).WithDisplayDecimals(0);
-            case "MINUTE": return VfpValue.Number((double)Arg(args, 0).AsDateTime.Minute).WithDisplayDecimals(0);
-            case "SEC": return VfpValue.Number((double)Arg(args, 0).AsDateTime.Second).WithDisplayDecimals(0);
-            case "TTOD": return VfpValue.Date(Arg(args, 0).AsDate, Arg(args, 0).IsEmptyDate);
-            case "QUARTER": return VfpValue.Number(Arg(args, 0).IsEmptyDate ? 0d : ((Arg(args, 0).AsDate.Month - (args.Length > 1 ? (int)y : 1) + 12) % 12) / 3 + 1d).WithDisplayDecimals(0);
+            case "HOUR": return VfpValue.Number((double)DateArg(args).AsDateTime.Hour).WithDisplayDecimals(0);
+            case "MINUTE": return VfpValue.Number((double)DateArg(args).AsDateTime.Minute).WithDisplayDecimals(0);
+            case "SEC": return VfpValue.Number((double)DateArg(args).AsDateTime.Second).WithDisplayDecimals(0);
+            case "TTOD":
+            {
+                var value = DateArg(args, VfpType.DateTime);
+                return VfpValue.Date(value.AsDate, value.IsEmptyDate);
+            }
+            case "QUARTER":
+            {
+                var value = DateArg(args);
+                return VfpValue.Number(value.IsEmptyDate ? 0d : ((value.AsDate.Month - (args.Length > 1 ? (int)y : 1) + 12) % 12) / 3 + 1d).WithDisplayDecimals(0);
+            }
             case "WEEK":
             {
                 var rule = args.Length > 1 ? (int)y : 1;
                 var day = args.Length > 2 ? IntArg(args, 2) : 1;
                 if (rule is < 0 or > 3 || day is < 0 or > 7) throw InvalidFunctionArgument();
-                return VfpValue.Number(Arg(args, 0).IsEmptyDate ? 0d : Inv.Calendar.GetWeekOfYear(Arg(args, 0).AsDateTime,
+                var value = DateArg(args);
+                return VfpValue.Number(value.IsEmptyDate ? 0d : Inv.Calendar.GetWeekOfYear(value.AsDateTime,
                     rule == 2 ? CalendarWeekRule.FirstFourDayWeek : rule == 3 ? CalendarWeekRule.FirstFullWeek : CalendarWeekRule.FirstDay,
                     (DayOfWeek)(Math.Max(1, day) - 1))).WithDisplayDecimals(0);
             }
-            case "DMY": case "MDY": return VfpValue.Character(Arg(args, 0).IsEmptyDate ? "" : Arg(args, 0).AsDateTime.ToString(name == "DMY" ? "dd MMMM yyyy" : "MMMM dd, yyyy", Inv));
+            case "DMY": case "MDY":
+            {
+                var value = DateArg(args);
+                return VfpValue.Character(value.IsEmptyDate ? "" : value.AsDateTime.ToString(name == "DMY" ? "dd MMMM yyyy" : "MMMM dd, yyyy", Inv));
+            }
             case "CREATEBINARY": return VfpValue.Varbinary(EncodeByteString(Arg(args, 0), ctx));
             case "BINTOC": return BinaryToCharacter(args, ctx);
             case "CTOBIN": return CharacterToBinary(args, ctx);

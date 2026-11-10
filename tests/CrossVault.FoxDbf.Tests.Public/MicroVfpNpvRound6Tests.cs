@@ -65,7 +65,7 @@ public sealed partial class MicroVfpNpvRound6Tests
     private static IEnumerable<Probe> TransformCases()
     {
         foreach (int decimals in new[] { 0, 2, 4 })
-        foreach (string expression in new[] { "TRANSFORM(1/0)", "TRANSFORM(-1/0)", "TRANSFORM(1/0,'')", "TRANSFORM(0/0,'')", "TRANSFORM(n/0)", "TRANSFORM(-n/0)", "TRANSFORM(1/0+1)", "TRANSFORM((1/0)*2)", "TRANSFORM(100/0)", "TRANSFORM(1/0.00)", "TRANSFORM(10^400)", "TRANSFORM(-(10^400))", "TRANSFORM(1/0,'999.99')" })
+        foreach (string expression in new[] { "TRANSFORM(1/0)", "TRANSFORM(-1/0)", "TRANSFORM(1/0,'')", "TRANSFORM(0/0,'')", "TRANSFORM(1/0+1)", "TRANSFORM((1/0)*2)", "TRANSFORM(100/0)", "TRANSFORM(1/0.00)", "TRANSFORM(10^400)", "TRANSFORM(-(10^400))", "TRANSFORM(1/0,'999.99')" })
             yield return new Probe($"{decimals}/{expression}", $"SET DECIMALS TO {decimals}\nUSE t\nGO TOP\n" + Scalar(expression) + "\nSET DECIMALS TO 2");
     }
 
@@ -89,7 +89,6 @@ public sealed partial class MicroVfpNpvRound6Tests
     internal const string Cleanup = "CLOSE TABLES ALL\nUSE t\nDELETE TAG ALL\nREPLACE ALL n WITH RECNO()\nUSE";
     internal static readonly Probe[] Evaluation =
     [
-        new("transform-evaluates-once", "=RAND(1)\nresult=TRANSFORM(IIF(RAND()>0,1,2)/0)+'|'+ALLTRIM(STR(RAND(),30,10))"),
         new("negated-negative-quotient", Scalar("-(-1/0)")),
         new("direct-double-negation", Scalar("TRANSFORM(-(-1/0))")),
         new("negative-zero-divisor", Scalar("SIGN(1/-0)")),

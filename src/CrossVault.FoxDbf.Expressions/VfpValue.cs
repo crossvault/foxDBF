@@ -157,7 +157,7 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         new(VfpType.Date, 0d, 0m, false, null, !empty, date.ToDateTime(TimeOnly.MinValue));
     internal static VfpValue DateTime(System.DateTime date, bool empty) =>
         new(VfpType.DateTime, 0d, 0m, false, null, !empty, date);
-    internal bool IsEmptyDate => _date == default && !_bool;
+    internal bool IsEmptyDate => _type is VfpType.Date or VfpType.DateTime && _date == default && !_bool;
 
     /// <summary>
     /// Maps a raw CLR field value (as returned by <see cref="IRowContext.GetField"/>)
@@ -267,10 +267,10 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     public bool AsLogical => _bool;
 
     /// <summary>Date payload.</summary>
-    public DateOnly AsDate => DateOnly.FromDateTime(_date);
+    public DateOnly AsDate => _type is VfpType.Date or VfpType.DateTime ? DateOnly.FromDateTime(_date) : default;
 
     /// <summary>DateTime payload.</summary>
-    public System.DateTime AsDateTime => _date;
+    public System.DateTime AsDateTime => _type is VfpType.Date or VfpType.DateTime ? _date : default;
 
     /// <summary>
     /// Maps this value back to a raw CLR object (the inverse of <see cref="FromClr"/>), preserving

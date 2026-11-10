@@ -43,7 +43,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - BREAKING: `ASCAN(a,x,0)` raises error 1234; a count of 0 searches the rest of the array,
   and `ASCAN(a,x,start)` returns 0 when start is past the end, as in VFP9.
 - `NORMALIZE` and index `KEY()` preserve fields named `nan` and `infinity`.
-- Overflow comparisons, direct `TRANSFORM` expressions and `SUM`/`AVERAGE`/`CALCULATE` display match VFP9.
+- Overflow comparisons and `SUM`/`AVERAGE`/`CALCULATE` display match VFP9.
+  Direct `TRANSFORM` of division overflow uses expression widths for constant arithmetic
+  (for example, `TRANSFORM((1-1)/0)` has eight asterisks with `SET DECIMALS TO 2`).
+  Dynamic expressions retain their runtime overflow width; their exact VFP9 widths remain partially unsupported.
+- Date functions reject numeric, character and logical arguments with VFP9 error 11, including
+  `DTOC`/`DTOS`/`TTOC`/`TTOD`, date parts, date names and time parts. `TTOD` requires a DateTime,
+  `DTOT` requires a Date, and `QUARTER(NULL)` raises error 11. The empty DateTime literal `{/:}` is accepted.
 - Invalid microVFP `CALCULATE` items raise VFP9's catchable errors when executed, with VFP9's syntax,
   missing-expression and unrecognized-phrase messages. An unexecuted invalid line no longer prevents a
   program from loading.

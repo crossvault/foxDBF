@@ -316,7 +316,7 @@ internal sealed partial class FunctionNode : AstNode
         // resolved after its arguments were evaluated (VfpRuntime's unknown-function path does that for others).
         if (_upper == "ICAS") _upper = "ICASE";
         _args = args;
-        _formatOverflow = _upper == "TRANSFORM" && args.Length == 1 && args[0].HasQuotient;
+        _formatOverflow = _upper == "TRANSFORM" && args.Length == 1 && args[0].HasQuotient && args[0].IsSqlConstant;
     }
 
     public override VfpValue Eval(IRowContext row, EvaluationContext ctx)
@@ -355,13 +355,13 @@ internal sealed partial class FunctionNode : AstNode
         return VfpRuntime.CallFunction(_upper, values, ctx, row);
     }
 
-    // Round6 TRANSFORM pins: a direct quotient uses its expression width, whereas a
-    // stored variable retains its assigned width. Infer only for this rare overflow path.
+    // Round8's VFP9 matrix limits static widths to function-free constant arithmetic.
+    // Memvars and function results carry runtime widths; SQL inference cannot recover them.
+    // Restrict the hook at parse time, without adding metadata to field reads or assignments.
     public VfpValue[] PrepareOverflowFormat(VfpValue[] values, IRowContext row, EvaluationContext ctx)
     {
         if (_formatOverflow && values[0].Type == VfpType.Numeric && !double.IsFinite(values[0].AsDouble))
         {
-            // Round6's seeded RAND pin: formatting must not evaluate an IIF condition again.
             var schema = new SqlInferenceSchema(row as ISchema, null, ctx, overflowDisplay: true);
             values[0] = values[0].WithOverflowDisplayWidth(_args[0].InferSql(schema).Length);
         }

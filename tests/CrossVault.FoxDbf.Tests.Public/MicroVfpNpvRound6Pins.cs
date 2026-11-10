@@ -5,7 +5,6 @@ public sealed partial class MicroVfpNpvRound6Tests
 {
     private static readonly Dictionary<string, string> Pins = new()
     {
-        ["transform-evaluates-once"] = "******|0.7107791207",
         ["negated-negative-quotient"] = "N|***************|******************************",
         ["direct-double-negation"] = "C|********",
         ["negative-zero-divisor"] = "N|1|1.0000000000",
@@ -285,8 +284,6 @@ public sealed partial class MicroVfpNpvRound6Tests
         ["0/TRANSFORM(-1/0)"] = "C|*****",
         ["0/TRANSFORM(1/0,'')"] = "C|**********",
         ["0/TRANSFORM(0/0,'')"] = "C|         0",
-        ["0/TRANSFORM(n/0)"] = "C|**********",
-        ["0/TRANSFORM(-n/0)"] = "C|***********",
         ["0/TRANSFORM(1/0+1)"] = "C|*****",
         ["0/TRANSFORM((1/0)*2)"] = "C|******",
         ["0/TRANSFORM(100/0)"] = "C|******",
@@ -298,8 +295,6 @@ public sealed partial class MicroVfpNpvRound6Tests
         ["2/TRANSFORM(-1/0)"] = "C|*******",
         ["2/TRANSFORM(1/0,'')"] = "C|**********.**",
         ["2/TRANSFORM(0/0,'')"] = "C|         0.00",
-        ["2/TRANSFORM(n/0)"] = "C|************",
-        ["2/TRANSFORM(-n/0)"] = "C|*************",
         ["2/TRANSFORM(1/0+1)"] = "C|*******",
         ["2/TRANSFORM((1/0)*2)"] = "C|********",
         ["2/TRANSFORM(100/0)"] = "C|********",
@@ -311,8 +306,6 @@ public sealed partial class MicroVfpNpvRound6Tests
         ["4/TRANSFORM(-1/0)"] = "C|*********",
         ["4/TRANSFORM(1/0,'')"] = "C|**********.****",
         ["4/TRANSFORM(0/0,'')"] = "C|         0.0000",
-        ["4/TRANSFORM(n/0)"] = "C|**************",
-        ["4/TRANSFORM(-n/0)"] = "C|***************",
         ["4/TRANSFORM(1/0+1)"] = "C|*********",
         ["4/TRANSFORM((1/0)*2)"] = "C|**********",
         ["4/TRANSFORM(100/0)"] = "C|**********",

@@ -538,24 +538,29 @@ internal static partial class VfpRuntime
             case "CTOD": return Ctod(Arg(args, 0).AsString);
             case "CTOT": return Ctot(Arg(args, 0).AsString);
             // VFP9: a Date becomes midnight, including the empty Date; NULL propagates above.
-            case "DTOT": return Arg(args, 0).Type == VfpType.Date
-                ? VfpValue.DateTime(Arg(args, 0).AsDateTime, Arg(args, 0).IsEmptyDate) : VfpValue.Null;
+            case "DTOT":
+            {
+                var value = DateArg(args, VfpType.Date);
+                return VfpValue.DateTime(value.AsDateTime, value.IsEmptyDate);
+            }
             case "DTOC":
             {
-                var d = Arg(args, 0).AsDate;
-                return VfpValue.Character(Arg(args, 0).IsEmptyDate ? "  /  /    "
+                var value = DateArg(args);
+                var d = value.AsDate;
+                return VfpValue.Character(value.IsEmptyDate ? "  /  /    "
                                                        : d.ToString("MM/dd/yyyy", Inv));
             }
             case "DTOS":
             {
-                var d = Arg(args, 0).AsDate;
+                var value = DateArg(args);
+                var d = value.AsDate;
                 // VFP: an empty/blank date yields 8 spaces, NOT "00010101".
-                return VfpValue.Character(Arg(args, 0).IsEmptyDate ? new string(' ', 8)
+                return VfpValue.Character(value.IsEmptyDate ? new string(' ', 8)
                                                        : d.ToString("yyyyMMdd", Inv));
             }
             case "TTOC":
             {
-                var value = Arg(args, 0);
+                var value = DateArg(args);
                 int mode = IntArg(args, 1);
                 string format = mode == 1 ? "yyyyMMddHHmmss" : mode == 2 ? "HH:mm:ss" : "MM/dd/yyyy hh:mm:ss tt";
                 return VfpValue.Character(value.IsEmptyDate
@@ -565,12 +570,12 @@ internal static partial class VfpRuntime
 
             // ---- date ----
             case "DATE": return VfpValue.Date(DateOnly.FromDateTime(DateTime.Today));
-            case "DAY": return VfpValue.Integer(Arg(args, 0).AsDate.Day);
-            case "MONTH": return VfpValue.Integer(Arg(args, 0).AsDate.Month);
-            case "YEAR": return VfpValue.Integer(Arg(args, 0).AsDate.Year);
-            case "DOW": return VfpValue.Integer((int)Arg(args, 0).AsDate.DayOfWeek + 1);
-            case "CDOW": return VfpValue.Character(Inv.DateTimeFormat.GetDayName(Arg(args, 0).AsDate.DayOfWeek));
-            case "CMONTH": return VfpValue.Character(Inv.DateTimeFormat.GetMonthName(Arg(args, 0).AsDate.Month));
+            case "DAY": return VfpValue.Integer(DateArg(args).AsDate.Day);
+            case "MONTH": return VfpValue.Integer(DateArg(args).AsDate.Month);
+            case "YEAR": return VfpValue.Integer(DateArg(args).AsDate.Year);
+            case "DOW": return VfpValue.Integer((int)DateArg(args).AsDate.DayOfWeek + 1);
+            case "CDOW": return VfpValue.Character(Inv.DateTimeFormat.GetDayName(DateArg(args).AsDate.DayOfWeek));
+            case "CMONTH": return VfpValue.Character(Inv.DateTimeFormat.GetMonthName(DateArg(args).AsDate.Month));
             case "GOMONTH": return Gomonth(args);
 
             // ---- numeric ----
@@ -697,7 +702,11 @@ internal static partial class VfpRuntime
     // tail. A known name propagates .NULL.; an unknown one is reported like any other unknown call.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static VfpValue NullArgument(string name, VfpValue[] args, EvaluationContext ctx, IRowContext row)
-        => EngineFunctionNames.Contains(name) ? VfpValue.Null : UnknownFunction(name, args, ctx, row);
+    {
+        // Round8 oracle: unlike the other date functions, QUARTER rejects a NULL date.
+        if (name == "QUARTER" && args[0].IsNull) throw InvalidFunctionArgument();
+        return EngineFunctionNames.Contains(name) ? VfpValue.Null : UnknownFunction(name, args, ctx, row);
+    }
 
     /// <summary>A name neither the host nor the engine implements, already expanded by CallFunction.
     /// The host decides the failure; without one (SQL / ADO.NET / index evaluation), it yields NULL.</summary>
@@ -708,6 +717,17 @@ internal static partial class VfpRuntime
     }
 
     private static VfpValue Arg(VfpValue[] a, int i) => i < a.Length ? a[i] : VfpValue.Null;
+    // Round8 oracle: scalar date functions reject non-date payloads with error 11.
+    // TTOD and DTOT require one particular date kind; the other functions accept D and T.
+    private static VfpValue DateArg(VfpValue[] args, VfpType required = VfpType.Unknown)
+    {
+        var value = Arg(args, 0);
+        if (value.Type is not (VfpType.Date or VfpType.DateTime)
+            || (required != VfpType.Unknown && value.Type != required))
+            throw InvalidFunctionArgument();
+        return value;
+    }
+
     private static VfpValue MakeDateTime(VfpValue[] args)
     {
         if (args.Length == 0) return VfpValue.DateTime(DateTime.Now);
