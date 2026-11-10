@@ -4,6 +4,12 @@ public sealed class MicroVfpFinal6Tests
 {
     internal static readonly (string Name, string Script)[] Cases =
     [
+        ("STR(123.4,3,2)", "result=STR(123.4,3,2)"),
+        ("STR(1234.5,4,2)", "result=STR(1234.5,4,2)"),
+        ("STR(999.4,3,2)", "result=STR(999.4,3,2)"),
+        ("STR(123.4,4,2)", "result=STR(123.4,4,2)"),
+        ("STR($123.4,3,2)", "result=STR($123.4,3,2)"),
+
         ("STR(123,3,1)", "result=STR(123,3,1)"),
         ("STR($123,3,1)", "result=STR($123,3,1)"),
         ("STR(999.5,3,1)", "result=STR(999.5,3,1)"),
@@ -60,6 +66,12 @@ public sealed class MicroVfpFinal6Tests
     ];
     internal static readonly Dictionary<string, string> Expected = new()
     {
+        ["STR(123.4,3,2)"] = "123",
+        ["STR(1234.5,4,2)"] = "1235",
+        ["STR(999.4,3,2)"] = "999",
+        ["STR(123.4,4,2)"] = " 123",
+        ["STR($123.4,3,2)"] = "123",
+
         ["STR(123,3,1)"] = "123",
         ["STR($123,3,1)"] = "123",
         ["STR(999.5,3,1)"] = "***",

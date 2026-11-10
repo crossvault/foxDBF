@@ -183,8 +183,8 @@ public sealed class ExpressionCollationAndEdgeTests
         => Assert.Equal(expected, Eval(expr).AsString);
 
     [Theory]
-    [InlineData("STR(123.4,3,2)", "***")]      // dec>0 and width <= int digits -> asterisks
-    [InlineData("STR(1234.5,4,2)", "****")]    // can't fit int part + a decimal -> asterisks
+    [InlineData("STR(123.4,3,2)", "123")]     // VFP9 reduces to zero decimals (final6 byte/text oracle).
+    [InlineData("STR(1234.5,4,2)", "1235")]   // The rounded integer still fits.
     [InlineData("STR(12345,4)", "****")]       // integer overflow -> asterisks
     public void Str_AsterisksOnlyWhenIntegerDoesNotFit(string expr, string expected)
         => Assert.Equal(expected, Eval(expr).AsString);

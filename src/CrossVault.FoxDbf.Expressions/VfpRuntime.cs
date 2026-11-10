@@ -724,56 +724,33 @@ internal static partial class VfpRuntime
 
     private static VfpValue Str(VfpValue[] a)
     {
-        double n = Arg(a, 0).AsDouble;
-        int len = a.Length > 1 ? IntArg(a, 1) : 10;
-        int dec = a.Length > 2 ? IntArg(a, 2) : 0;
-        if (Arg(a, 0).Type == VfpType.Currency)
-        {
-            int scale = NumericStorageDecimals(n, Math.Max(0, len), Math.Clamp(dec, 0, 28));
-            string text = Arg(a, 0).RoundForDisplay(scale).ToString("F" + scale, Inv);
-            if (text.Length > len && text.StartsWith("0.", StringComparison.Ordinal)) text = text[1..];
-            else if (text.Length > len && text.StartsWith("-0.", StringComparison.Ordinal)) text = "-" + text[2..];
-            return VfpValue.Character(text.Length > len ? new string('*', Math.Max(0, len)) : text.PadLeft(len));
-        }
-        return VfpValue.Character(StrCore(n, len, dec));
+        var value = Arg(a, 0);
+        int len = Math.Max(0, a.Length > 1 ? IntArg(a, 1) : 10);
+        int dec = Math.Clamp(a.Length > 2 ? IntArg(a, 2) : 0, 0, 28);
+        if (!double.IsFinite(value.AsDouble) || Math.Abs(value.AsDouble) >= (double)decimal.MaxValue)
+            return VfpValue.Character(StrCore(value.AsDouble, len, dec));
+        // The scale and text must use the same exact value at rounding-carry boundaries.
+        decimal number = value.Type == VfpType.Currency ? value.AsNumber : value.AsDisplayNumber;
+        int scale = NumericStorageDecimals(number, len, dec);
+        return VfpValue.Character(FitNumericText(value.RoundForDisplay(scale).ToString("F" + scale, Inv), len));
     }
 
-    /// <summary>
-    /// VFP STR(): right-justified, leading-space padded. On overflow VFP only returns
-    /// asterisks when the value HAS a decimal point and the width cannot even hold the
-    /// integer digits; otherwise it REDUCES the decimal count to fit. So
-    /// STR(1234.5,6,2) = "1234.5", not "******".
-    /// </summary>
-    private static string StrCore(double n, int len, int dec)
+    private static string FitNumericText(string text, int width)
     {
-        if (len < 0) len = 0;
-        if (dec < 0) dec = 0;
-        if (!double.IsFinite(n)) return new string('*', len);
+        if (text.Length > width && text.StartsWith("0.", StringComparison.Ordinal)) text = text[1..];
+        else if (text.Length > width && text.StartsWith("-0.", StringComparison.Ordinal)) text = "-" + text[2..];
+        return text.Length > width ? new string('*', width) : text.PadLeft(width);
+    }
 
-        // VFP9 keeps fractional digits by omitting the zero in a narrow sub-unit result.
-        if (Math.Abs(n) < 1 && dec > 0 && len <= dec + (n < 0 ? 2 : 1))
-        {
-            int scale = NumericStorageDecimals(n, len, Math.Min(dec, Math.Max(0, len - 1)));
-            string text = Round(n, scale).ToString("F" + scale, Inv);
-            if (text.Length > len && text.StartsWith("0.", StringComparison.Ordinal)) text = text[1..];
-            else if (text.Length > len && text.StartsWith("-0.", StringComparison.Ordinal)) text = "-" + text[2..];
-            if (text.Length <= len) return text.PadLeft(len);
-        }
-
-        // Integer-digit count of the rounded-to-zero magnitude, including a sign slot.
-        double absInt = Math.Floor(Math.Abs(n));
-        int intDigits = absInt < 1 ? 1 : (int)Math.Floor(Math.Log10(absInt)) + 1;
-        if (n < 0) intDigits++; // room for '-'
-
-        if (dec > 0 && len <= intDigits)
-            return new string('*', len);
-
-        // Shrink decimals to whatever fits: width - intDigits - 1 (the '.').
-        int effectiveDec = dec > 0 ? Math.Clamp(len - intDigits - 1, 0, dec) : 0;
-        double rounded = Round(n, effectiveDec);
-        string s = rounded.ToString("F" + effectiveDec, Inv);
-        if (s.Length > len) return new string('*', len);
-        return s.PadLeft(len);
+    private static string StrCore(double number, int len, int dec)
+    {
+        len = Math.Max(0, len);
+        if (!double.IsFinite(number)) return new string('*', len);
+        int scale = NumericStorageDecimals(number, len, Math.Clamp(dec, 0, 28));
+        double rounded = Round(number, scale);
+        // IEEE negative zero has no sign in VFP9 numeric storage or STR output.
+        if (rounded == 0) rounded = 0;
+        return FitNumericText(rounded.ToString("F" + scale, Inv), len);
     }
 
     private static VfpValue Strzero(VfpValue[] a)
@@ -980,14 +957,49 @@ internal static partial class VfpRuntime
         return VfpValue.Currency(Math.Round(value / factor, 0, MidpointRounding.AwayFromZero) * factor);
     }
 
-    internal static int NumericStorageDecimals(double value, int width, int decimals)
+    private static readonly decimal[] NumericPowers = BuildNumericPowers();
+
+    private static decimal[] BuildNumericPowers()
     {
+        var powers = new decimal[29];
+        powers[0] = 1m;
+        for (int i = 1; i < powers.Length; i++) powers[i] = powers[i - 1] * 10m;
+        return powers;
+    }
+
+    internal static bool NumericIntegerFits(decimal rounded, int width)
+    {
+        int digits = width - (rounded < 0 ? 1 : 0);
+        return digits > 28 || digits > 0 && Math.Abs(rounded) < NumericPowers[digits];
+    }
+
+    internal static int NumericStorageDecimals(decimal value, int width, int decimals)
+    {
+        decimal magnitude = Math.Abs(value);
+        int capacity = width - decimals - 1 - (value < 0 ? 1 : 0);
+        // One full unit of headroom excludes carries without rounding or counting digits.
+        if (decimals > 0 && capacity > 0
+            && (capacity > 28 || magnitude < NumericPowers[capacity] - 1m)) return decimals;
         for (int scale = decimals; scale > 0; scale--)
         {
-            double rounded = Math.Abs(Math.Round(value, Math.Min(scale, 15), MidpointRounding.AwayFromZero));
-            int digits = rounded < 1 ? 0 : (int)Math.Floor(Math.Log10(rounded)) + 1;
-            if (value < 0) digits++;
-            if (digits + scale + 1 <= width) return scale;
+            decimal rounded = Math.Round(value, scale, MidpointRounding.AwayFromZero);
+            int digits = width - scale - 1 - (rounded < 0 ? 1 : 0);
+            if (digits >= 0 && (digits > 28 || Math.Abs(rounded) < NumericPowers[digits])) return scale;
+        }
+        return 0;
+    }
+
+    internal static int NumericStorageDecimals(double value, int width, int decimals)
+    {
+        double magnitude = Math.Abs(value);
+        int capacity = width - decimals - 1 - (value < 0 ? 1 : 0);
+        if (decimals > 0 && capacity > 0
+            && magnitude < Math.Pow(10, capacity) - 1d) return decimals;
+        for (int scale = decimals; scale > 0; scale--)
+        {
+            double rounded = Round(value, scale);
+            int digits = width - scale - 1 - (rounded < 0 ? 1 : 0);
+            if (digits >= 0 && Math.Abs(rounded) < Math.Pow(10, digits)) return scale;
         }
         return 0;
     }

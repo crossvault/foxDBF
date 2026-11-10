@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- STR and computed numeric SELECT columns preserve exact decimal carry boundaries, reduce
+  scale when rounding adds an integer digit, and suppress the sign of rounded zero.
+  Numeric storage shares this width calculation and skips scale searching when values clearly fit.
 - Large double-to-currency conversions no longer add a spurious 0.0001. ADO.NET also wraps
   currency expression overflow as a DbException with VFP error 1988. Y/B encoding and numeric
   overflow checks accept unsigned CLR integers and use the same numeric-string policy as N/F.

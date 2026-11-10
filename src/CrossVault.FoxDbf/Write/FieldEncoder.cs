@@ -221,6 +221,15 @@ public static class FieldEncoder
             string text when decimal.TryParse(text, NumberStyles.Number, Inv, out var n) => n,
             _ => value,
         };
+        decimals = value switch
+        {
+            decimal n => VfpRuntime.NumericStorageDecimals(n, dest.Length, decimals),
+            double n => VfpRuntime.NumericStorageDecimals(n, dest.Length, decimals),
+            float n => VfpRuntime.NumericStorageDecimals((double)n, dest.Length, decimals),
+            long n => VfpRuntime.NumericStorageDecimals((decimal)n, dest.Length, decimals),
+            int n => VfpRuntime.NumericStorageDecimals((decimal)n, dest.Length, decimals),
+            _ => decimals,
+        };
         char[]? rented = null;
         Span<char> chars = dest.Length <= MaxStackNumberChars
             ? stackalloc char[MaxStackNumberChars]
@@ -234,6 +243,9 @@ public static class FieldEncoder
                 if (TryFormatNumber(value, scale, chars, out int charsWritten, out bool handled))
                 {
                     var text = chars[..charsWritten];
+                    // .NET retains the IEEE sign of a zero rounded from a negative double.
+                    if (text.StartsWith("-") && text[1..].IndexOfAnyExcept('0', '.') < 0)
+                        text = text[1..];
                     if (text.Length > dest.Length && text.StartsWith("0.")) text = text[1..];
                     else if (text.Length > dest.Length && text.StartsWith("-0."))
                     {

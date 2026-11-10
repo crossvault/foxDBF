@@ -2402,14 +2402,12 @@ internal sealed class SelectExecutor
             else if (column.VfpType is 'N' or 'F' && column.Length > 0)
             {
                 decimal original = Convert.ToDecimal(value);
-                int decimals = VfpRuntime.NumericStorageDecimals((double)original, column.Length,
+                int decimals = VfpRuntime.NumericStorageDecimals(original, column.Length,
                     Math.Clamp(column.Decimals, 0, 28));
                 value = Math.Round(original, decimals, MidpointRounding.AwayFromZero);
-                string numericText = ((decimal)value).ToString("F" + decimals, CultureInfo.InvariantCulture);
-                int length = numericText.Length;
-                if (numericText.StartsWith("0.", StringComparison.Ordinal) || numericText.StartsWith("-0.", StringComparison.Ordinal)) length--;
-                // VFP's all-star numeric cursor value is +infinity when copied into a B field.
-                if (length > column.Length) return double.PositiveInfinity;
+                // Positive scales already fit; at scale zero only integer overflow remains.
+                if (decimals == 0 && !VfpRuntime.NumericIntegerFits((decimal)value, column.Length))
+                    return double.PositiveInfinity;
             }
         }
         value = CoerceCell(value, column.ClrType);
