@@ -126,9 +126,9 @@ public sealed class VfpExpression
     internal VfpTypeInfo InferSqlType(ISchema schema, IRowContext row, EvaluationContext context)
         => _root.InferSql(new SqlInferenceSchema(schema, row, context));
 
-    internal static VfpExpression ParseSql(string text, bool aggregates = false, bool predicates = false)
+    internal static VfpExpression ParseSql(string text, bool aggregates = false, bool predicates = false, bool allowLookup = false)
     {
-        var (root, normalized, hasSqlInfix, infixFields) = ExpressionParser.ParseSql(text, aggregates, predicates);
+        var (root, normalized, hasSqlInfix, infixFields) = ExpressionParser.ParseSql(text, aggregates, predicates, allowLookup);
         return new VfpExpression(normalized, root) { HasSqlInfix = hasSqlInfix, SqlInfixFields = infixFields };
     }
 

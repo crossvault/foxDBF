@@ -34,9 +34,10 @@ namespace CrossVault.FoxDbf.MicroVfp;
 /// arrays (bracket subscripts → parens; ALEN/AERROR array-name argument → quoted name).</summary>
 internal static class MicroVfpExprRewrite
 {
-    // Normalize before SQL tokenization: array brackets otherwise look like string literals.
+    // Brackets must be disambiguated before SQL tokenization. Reference names are
+    // rewritten only in expression fragments, so e.g. INSERT INTO alen (id) stays intact.
     // Keeping the resulting SQL AST preserves ISBLANK and infix semantics without per-row reparsing.
-    internal static SqlStatement ParseSql(string sql) => SqlParser.Parse(Normalize(sql));
+    internal static SqlStatement ParseSql(string sql) => SqlParser.Parse(ConvertSubscripts(sql), Normalize);
 
     private static bool IsIdentChar(char c) => VfpIdentifier.IsPart(c);
 

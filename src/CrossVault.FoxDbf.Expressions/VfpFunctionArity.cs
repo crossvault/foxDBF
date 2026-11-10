@@ -78,7 +78,7 @@ internal static class VfpFunctionArity
         return table.ToFrozenDictionary(StringComparer.Ordinal);
     }
 
-    internal static AstNode Bind(string name, AstNode[] args, int position, bool sql = false)
+    internal static AstNode Bind(string name, AstNode[] args, int position, bool sql = false, bool allowLookup = false)
     {
         string canonical = VfpFunctionAbbreviations.Canonical(name.ToUpperInvariant());
         if (!Table.TryGetValue(canonical, out var arity)) return new FunctionNode(name, args);
@@ -94,8 +94,8 @@ internal static class VfpFunctionArity
         // the BIT functions even propagate NULL before reporting their runtime count error.
         int runtimeError = canonical switch
         {
-            // VFP9 cannot pass field references to LOOKUP from a SQL expression, even with a tag.
-            "LOOKUP" when sql => 11,
+            // VFP9 rejects LOOKUP in SELECT/WHERE/HAVING/ON/SET, but accepts INSERT VALUES.
+            "LOOKUP" when sql && !allowLookup => 11,
             "DATE" or "DATETIME" when count is 1 or 2 => 1229,
             "BITSET" or "BITCLEAR" when count == 1 => 1229,
             "BITSET" or "BITCLEAR" when count == 3 => 1230,
