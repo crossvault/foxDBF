@@ -249,9 +249,12 @@ public static class SqlParser
             // VfpExpression leaf, so the engine handles it unchanged (single-VfpExpression fast path).
             if (IsKw("NOT"))
             {
-                if (Kw(Peek(1), "EXISTS") ||
-                    (Peek(1).Kind == TokKind.LParen && ParenContainsSubquery(_pos + 1)) ||
-                    LeafHasTopLevelSubquery(_pos + 1))
+                // Look through repeated NOTs before deciding which parser owns the operand.
+                int operand = _pos + 1;
+                while (Kw(_t[operand], "NOT")) operand++;
+                if (Kw(_t[operand], "EXISTS") ||
+                    (_t[operand].Kind == TokKind.LParen && ParenContainsSubquery(operand)) ||
+                    LeafHasTopLevelSubquery(operand))
                 {
                     Advance();
                     return new NotPredicate(ParseBoolNot());
@@ -350,8 +353,14 @@ public static class SqlParser
                         // bounds. The scalar BETWEEN(...) function has no preceding operand.
                         int operand = p - 1;
                         if (operand >= start && Kw(_t[operand], "NOT")) operand--;
+                        // The SQL lexer splits .T./.F./.NULL. into dot, word, dot.
+                        // Do not mistake a dotted .NOT. before scalar BETWEEN(...) for an operand.
+                        bool dottedLiteral = operand >= start + 2 && _t[operand].Kind == TokKind.Dot &&
+                            _t[operand - 2].Kind == TokKind.Dot &&
+                            (Kw(_t[operand - 1], "T") || Kw(_t[operand - 1], "F") ||
+                             Kw(_t[operand - 1], "Y") || Kw(_t[operand - 1], "N") || Kw(_t[operand - 1], "NULL"));
                         if (operand >= start && !Kw(_t[operand], "NOT") &&
-                            _t[operand].Kind is TokKind.Word or TokKind.Number or TokKind.String or TokKind.Date or TokKind.RParen)
+                            (dottedLiteral || _t[operand].Kind is TokKind.Word or TokKind.Number or TokKind.String or TokKind.Date or TokKind.RParen))
                             betweenBound = true;
                     }
                     if (Kw(t, "AND") && betweenBound) betweenBound = false;

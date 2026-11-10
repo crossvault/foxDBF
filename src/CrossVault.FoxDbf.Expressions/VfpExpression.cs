@@ -54,7 +54,8 @@ public sealed class VfpExpression
     /// <summary>The original source text.</summary>
     public string Text { get; }
 
-    internal bool IsSqlCandidate(IRowContext row, EvaluationContext context) => _root.IsSqlCandidate(row, context);
+    internal bool IsSqlCandidate(IRowContext row, EvaluationContext context, bool negated = false)
+        => _root.IsSqlCandidate(row, context, negated);
     internal bool HasSqlInfix { get; private init; }
     internal IReadOnlyCollection<string> SqlInfixFields { get; private init; } = Array.Empty<string>();
 

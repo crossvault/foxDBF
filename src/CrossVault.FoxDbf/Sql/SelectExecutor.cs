@@ -595,10 +595,12 @@ internal sealed class SelectExecutor
     //  Subquery predicates (IN / NOT IN / EXISTS / NOT EXISTS / scalar) — three-valued logic.
     // =======================================================================================
 
-    private static bool IsPredicateCandidate(SqlPredicate predicate, IRowContext row, EvaluationContext context) => predicate switch
+    private static bool IsPredicateCandidate(SqlPredicate predicate, IRowContext row, EvaluationContext context, bool negated = false) => predicate switch
     {
-        AndPredicate and => IsPredicateCandidate(and.Left, row, context) && IsPredicateCandidate(and.Right, row, context),
-        ExprPredicate expr => expr.Expression.IsSqlCandidate(row, context),
+        AndPredicate conjunction when !negated => IsPredicateCandidate(conjunction.Left, row, context) && IsPredicateCandidate(conjunction.Right, row, context),
+        OrPredicate disjunction when negated => IsPredicateCandidate(disjunction.Left, row, context, true) && IsPredicateCandidate(disjunction.Right, row, context, true),
+        NotPredicate negation => IsPredicateCandidate(negation.Operand, row, context, !negated),
+        ExprPredicate expr => expr.Expression.IsSqlCandidate(row, context, negated),
         _ => true,
     };
 

@@ -7,6 +7,159 @@ namespace CrossVault.FoxDbf.Tests;
 
 public sealed class SqlInfixPredicateTests
 {
+    // Captured from FollowUpPredicates_MatchNativeVfp9; all rows use the same three-row fixture.
+    internal static readonly (string Predicate, string Expected, string IndexedExpected)[] FollowUpInputs =
+    [
+        ("cname LIKE 'A%%' ESCAPE '%'", "1,2,", "1,2,"),
+        ("'A!' LIKE 'A!!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'Alpha' LIKE 'A%%' ESCAPE '%'", "1,2,3,", "1,2,3,"),
+        ("'A%' LIKE 'A%%' ESCAPE '%'", "1,2,3,", "1,2,3,"),
+        ("'Ab' LIKE 'A__' ESCAPE '_'", "", ""),
+        ("'A_' LIKE 'A__' ESCAPE '_'", "", ""),
+        ("'Axy' LIKE 'A__' ESCAPE '_'", "1,2,3,", "1,2,3,"),
+        ("'A%' LIKE 'A_%' ESCAPE '_'", "1,2,3,", "1,2,3,"),
+        ("'Abc' LIKE 'A_%' ESCAPE '_'", "1,2,3,", "1,2,3,"),
+        ("'Ab' LIKE 'A%_' ESCAPE '%'", "1,2,3,", "1,2,3,"),
+        ("'A!xyz' LIKE 'A!!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!%' LIKE 'A!!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!' LIKE 'A!!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!b' LIKE 'A!!_' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!_' LIKE 'A!!_' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A_' LIKE 'A!!_' ESCAPE '!'", "", ""),
+        ("'A!!x' LIKE 'A!!!%' ESCAPE '!'", "", ""),
+        ("'A!%' LIKE 'A!!!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!%' LIKE 'A!!!%' ESCAPE '!'", "", ""),
+        ("'A!' LIKE 'A!' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A' LIKE 'A!' ESCAPE '!'", "", ""),
+        ("'A!!' LIKE 'A!!' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!' LIKE 'A!!' ESCAPE '!'", "", ""),
+        ("'A!x' LIKE 'A!x' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'Ax' LIKE 'A!x' ESCAPE '!'", "", ""),
+        ("'A!!x' LIKE 'A!!x' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!x' LIKE 'A!!x' ESCAPE '!'", "", ""),
+        ("'A%' LIKE 'A'+CHR(0)+'%'", "", ""),
+        ("'A%' LIKE 'A'+CHR(0)+'%' ESCAPE ''", "", ""),
+        ("'A%' LIKE 'A'+CHR(0)+'%' ESCAPE CHR(0)", "", ""),
+        ("'A'+CHR(0)+'x' LIKE 'A'+CHR(0)+'%'", "1,2,3,", "1,2,3,"),
+        ("'A'+CHR(0)+'x' LIKE 'A'+CHR(0)+'%' ESCAPE ''", "1,2,3,", "1,2,3,"),
+        ("'A'+CHR(0)+'x' LIKE 'A'+CHR(0)+'%' ESCAPE CHR(0)", "1,2,3,", "1,2,3,"),
+        (".T. BETWEEN .T. AND .T. AND EXISTS (SELECT * FROM t z)", "1,2,3,", "1,2,3,"),
+        (".T. BETWEEN .T. AND .F. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".T. BETWEEN .T. AND .NULL. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".T. BETWEEN .F. AND .T. AND EXISTS (SELECT * FROM t z)", "1,2,3,", "1,2,3,"),
+        (".T. BETWEEN .F. AND .F. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".T. BETWEEN .F. AND .NULL. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".T. BETWEEN .NULL. AND .T. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".T. BETWEEN .NULL. AND .F. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".T. BETWEEN .NULL. AND .NULL. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".F. BETWEEN .T. AND .T. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".F. BETWEEN .T. AND .F. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".F. BETWEEN .T. AND .NULL. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".F. BETWEEN .F. AND .T. AND EXISTS (SELECT * FROM t z)", "1,2,3,", "1,2,3,"),
+        (".F. BETWEEN .F. AND .F. AND EXISTS (SELECT * FROM t z)", "1,2,3,", "1,2,3,"),
+        (".F. BETWEEN .F. AND .NULL. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".F. BETWEEN .NULL. AND .T. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".F. BETWEEN .NULL. AND .F. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".F. BETWEEN .NULL. AND .NULL. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".NULL. BETWEEN .T. AND .T. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".NULL. BETWEEN .T. AND .F. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".NULL. BETWEEN .T. AND .NULL. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".NULL. BETWEEN .F. AND .T. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".NULL. BETWEEN .F. AND .F. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".NULL. BETWEEN .F. AND .NULL. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".NULL. BETWEEN .NULL. AND .T. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".NULL. BETWEEN .NULL. AND .F. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".NULL. BETWEEN .NULL. AND .NULL. AND EXISTS (SELECT * FROM t z)", "", ""),
+        ("NOT (cid NOT IN (1,'x'))", "error:107", "1,"),
+        ("NOT NOT cid IN (1,'x')", "error:107", "1,"),
+        ("NOT NOT NOT NOT cid IN (1,'x')", "error:107", "1,"),
+        ("NOT NOT NOT cid IN (1,'x')", "error:107", "error:107"),
+        ("NOT (cid NOT IN (1,.NULL.,'x'))", "error:107", "1,"),
+        ("NOT NOT cid IN ('x',1)", "error:107", "error:107"),
+        ("NOT (cid NOT IN (1,'x')) AND EXISTS (SELECT * FROM t z)", "error:107", "1,"),
+        ("NOT (NOT (cid IN (1,'x') AND rid=1))", "error:107", "1,"),
+        ("NOT (NOT cid IN (1,'x') OR rid<>1)", "error:107", "1,"),
+        ("'A!!x' LIKE 'A!!!!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!!x' LIKE 'A!!!!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!%' LIKE 'A!!!!!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!!%' LIKE 'A!!!!!%' ESCAPE '!'", "", ""),
+        ("'A!!xY' LIKE 'A!!x%' ESCAPE '!'", "", ""),
+        ("'A!xY' LIKE 'A!!x%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!!' LIKE 'A!!!' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!!!' LIKE 'A!!!!' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!' LIKE 'A!!!!' ESCAPE '!'", "", ""),
+        ("'A!!x' LIKE 'A!!%x' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'zzA!x' LIKE '%A!!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'zzA!%' LIKE '%A!!!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!x' LIKE 'A!!%x' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!_' LIKE 'A!!!!_' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!x' LIKE 'A!!!!_' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!_' LIKE 'A!!!!!_' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!%x' LIKE 'A!!!%x' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A%' LIKE 'A!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A_' LIKE 'A!_' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'Alpha' LIKE 'A!%' ESCAPE '!'", "", ""),
+        ("'Alpha' LIKE 'A%' ESCAPE '%'", "1,2,3,", "1,2,3,"),
+        ("'Ab' LIKE 'A_' ESCAPE '_'", "1,2,3,", "1,2,3,"),
+        (".T. NOT BETWEEN .F. AND .T. AND EXISTS (SELECT * FROM t z)", "", ""),
+        ("NOT .F. BETWEEN .F. AND .T. AND EXISTS (SELECT * FROM t z)", "", ""),
+        (".NULL. NOT BETWEEN .F. AND .T. AND EXISTS (SELECT * FROM t z)", "", ""),
+        ("'Ax' LIKE 'A!x%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!x' LIKE 'A!x%' ESCAPE '!'", "", ""),
+        ("'A!' LIKE '%A!!' ESCAPE '!'", "", ""),
+        ("'A!!' LIKE '%A!!' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!' LIKE '%A!' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A' LIKE '%A!' ESCAPE '!'", "", ""),
+        ("'Ax%' LIKE 'A!x!%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!x%' LIKE 'A!x!%' ESCAPE '!'", "", ""),
+        ("'A!x' LIKE '%A!x' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'Ax' LIKE '%A!x' ESCAPE '!'", "", ""),
+        ("'A!x' LIKE 'A!x_' ESCAPE '!'", "", ""),
+        ("'Axx' LIKE 'A!x_' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        ("'A!!x' LIKE 'A!!!x%' ESCAPE '!'", "", ""),
+        ("'A!x' LIKE 'A!!!x%' ESCAPE '!'", "1,2,3,", "1,2,3,"),
+        (".Y. BETWEEN .N. AND .Y. AND EXISTS (SELECT * FROM t z)", "1,2,3,", "1,2,3,"),
+        (".N. BETWEEN .N. AND .Y. AND EXISTS (SELECT * FROM t z)", "1,2,3,", "1,2,3,"),
+        (".NOT. BETWEEN(.T.,.F.,.T.) AND EXISTS (SELECT * FROM t z)", "", ""),
+        ("NOT NOT (cid IN (1,'x') AND EXISTS (SELECT * FROM t z))", "error:107", "1,"),
+        ("NOT (cid NOT IN (1,'x') OR NOT EXISTS (SELECT * FROM t z))", "error:107", "1,"),
+    ];
+
+    public static IEnumerable<object[]> FollowUpCases()
+    {
+        foreach (var input in FollowUpInputs)
+            foreach (var mode in new[] { (Indexed: false, Optimize: true), (Indexed: true, Optimize: true), (Indexed: true, Optimize: false) })
+                foreach (bool hosted in new[] { false, true })
+                    yield return [input.Predicate, mode.Indexed, mode.Optimize, hosted,
+                        mode.Indexed ? input.IndexedExpected : input.Expected];
+    }
+
+    [Theory]
+    [MemberData(nameof(FollowUpCases))]
+    public void FollowUpConditions_MatchVfp9(string predicate, bool indexed, bool optimize, bool hosted, string expected)
+    {
+        using var temp = new SqlTestSupport.TempDir();
+        using (var writer = DbfWriter.Create(temp.File("t.dbf"), new[]
+        {
+            new DbfColumnDef("rid", 'I', 4), new DbfColumnDef("cid", 'I', 4, nullable: true),
+            new DbfColumnDef("cname", 'C', 10, nullable: true),
+        }))
+        {
+            writer.AppendRecord(1, 1, "Alpha");
+            writer.AppendRecord(2, 2, "A!");
+            writer.AppendRecord(3, null, null);
+            if (indexed)
+            {
+                writer.CreateTag(new CdxTagDefinition("cid", "cid"));
+                writer.CreateTag(new CdxTagDefinition("cname", "cname"));
+            }
+        }
+        string sql = $"SELECT rid FROM t WHERE {predicate} ORDER BY rid";
+        Assert.Equal(expected, hosted
+            ? ExecuteHosted(temp.Path, sql, false, false, optimize)
+            : Execute(temp.Path, sql, false, false, optimize));
+    }
+
     internal static readonly string[] Predicates =
     [
         "cid IN (1,2)", "cid NOT IN (1,2)", "NOT cid IN (1,2)", "NOT (cid IN (1,2))",

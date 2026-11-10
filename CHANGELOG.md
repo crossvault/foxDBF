@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- SQL LIKE follows VFP9 escape precedence, including wildcard escape characters, doubled escapes,
+  literal suffixes and CHR(0). BETWEEN accepts dotted logical/NULL literals alongside subqueries;
+  double negation preserves index-dependent IN filtering and error behavior.
 - DISTINCT aggregate arguments accept token whitespace and parentheses, and generated names use
   VFP9's DCNT/DSUM/DAVG prefixes. COUNT(DISTINCT *) reports 152; multiple DISTINCT aggregates report 1819.
   WHERE-qualified COUNT(*) evaluates HAVING against the filtered rows.

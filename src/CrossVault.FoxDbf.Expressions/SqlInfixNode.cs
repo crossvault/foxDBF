@@ -13,9 +13,9 @@ internal sealed class SqlInfixNode(string kind, AstNode[] operands) : AstNode
         (kind != "LIKE" || operands.Skip(1).All(o => LikeNullError(o) != 0)) ? field.Name : null;
     private readonly bool _constantMembers = kind == "IN" && operands.Skip(1).All(o => o.IsSqlConstant);
 
-    internal override bool IsSqlCandidate(IRowContext row, EvaluationContext context)
+    internal override bool IsSqlCandidate(IRowContext row, EvaluationContext context, bool negated = false)
     {
-        if (!_constantMembers || _field is null || context.SqlIndexedFields?.Contains(_field) != true) return true;
+        if (negated || !_constantMembers || _field is null || context.SqlIndexedFields?.Contains(_field) != true) return true;
         var value = operands[0].Eval(row, context);
         if (!VfpRuntime.IsNumeric(value)) return true;
         bool numericMember = false;
@@ -149,13 +149,16 @@ internal static partial class VfpRuntime
 
     private static bool MatchesSqlLike(string value, string pattern, char escape)
     {
+        // VFP9 treats wildcard ESCAPEs as wildcards and CHR(0) as no escape. Escaping
+        // applies only before the final wildcard; the remaining suffix is compared literally.
+        int escapeEnd = escape is '\0' or '%' or '_' ? -1 : pattern.AsSpan().LastIndexOfAny('%', '_');
         int v = 0, p = 0, star = -1, retry = 0;
         while (true)
         {
             // Only the value may have excess trailing blanks. Pattern blanks and '_' consume
-            // actual characters. ESCAPE quotes only '%' and '_' (not itself), as in VFP9.
+            // actual characters. Before a wildcard, ESCAPE quotes any following character.
             if (p == pattern.Length && value.AsSpan(v).TrimEnd(' ').IsEmpty) return true;
-            bool quoted = p + 1 < pattern.Length && pattern[p] == escape && pattern[p + 1] is '%' or '_';
+            bool quoted = p < escapeEnd && pattern[p] == escape;
             if (!quoted && p < pattern.Length && pattern[p] == '%')
             {
                 star = ++p;
