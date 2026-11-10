@@ -49,4 +49,13 @@ public sealed class MicroVfpNumericScaleTests
     [Fact]
     public void SumDouble_UsesDecimalsAtFieldCreation()
         => Assert.Equal("4.6912", MicroVfpXbaseUpdateTests.Run(DoubleSetup, DoubleScenario));
+
+    // VFP9 (MicroVfpNumericScaleVfp9OracleTests.CalculateScopesNullsAndSettings): a NEXT scope before the
+    // CALCULATE list keeps the one-operand MIN/MAX aggregates; the scalar MIN/MAX arity does not apply.
+    [Fact]
+    public void CalculateNextScope_AcceptsOneOperandMinMax()
+        => Assert.Equal("1.23|1.23|0|0|1|1.23|1.23", MicroVfpXbaseUpdateTests.Run(
+            "CREATE TABLE t (n N(10,4) NULL)\nINSERT INTO t VALUES (.NULL.)\nINSERT INTO t VALUES (1.2345)\nINSERT INTO t VALUES (3.4567)\nUSE",
+            "USE t\nSET DECIMALS TO 2\nCALCULATE NEXT 2 AVG(n),SUM(n),STD(n),VAR(n),CNT(n),MIN(n),MAX(n) TO a,b,c,d,e,f,g\n"
+            +"result=TRANSFORM(a)+'|'+TRANSFORM(b)+'|'+TRANSFORM(c)+'|'+TRANSFORM(d)+'|'+TRANSFORM(e)+'|'+TRANSFORM(f)+'|'+TRANSFORM(g)"));
 }
