@@ -33,12 +33,19 @@ public sealed class ExpressionEngineTests
     [InlineData("10-2-3", 5)]      // - is left-associative
     [InlineData("10/4", 2.5)]
     [InlineData("-5+3", -2)]       // unary minus
-    [InlineData("- -5", 5)]        // double unary minus
     [InlineData("2^3", 8)]         // power
     [InlineData("9^0.5", 3)]       // sqrt via power
     [InlineData("2*-3", -6)]       // unary minus after operator
     public void Arithmetic_PrecedenceAndAssociativity(string expr, double expected)
         => Assert.Equal(expected, Eval(expr).AsDouble, 9);
+
+    [Fact]
+    public void RepeatedUnaryMinus_RaisesVfp9MissingOperand()
+    {
+        // MicroVfpCalculateNpvVfp9OracleTests: even whitespace does not make two minus signs legal.
+        var error = Assert.Throws<ExpressionException>(() => Eval("- -5"));
+        Assert.Equal(1231, error.VfpErrorNumber);
+    }
 
     [Theory]
     [InlineData("7%3", 1)]

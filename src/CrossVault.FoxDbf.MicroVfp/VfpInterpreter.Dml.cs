@@ -1201,6 +1201,14 @@ public sealed partial class VfpInterpreter
         throw new MicroVfpRuntimeException("Command contains unrecognized phrase/keyword.", 36);
     }
 
+    private VfpValue EvalAggregateOperand(PrgExpr expression)
+    {
+        bool previous = _requireDmlNames;
+        _requireDmlNames = true;
+        try { return Eval(expression); }
+        finally { _requireDmlNames = previous; }
+    }
+
     private void ExecSum(SumStmt sum)
     {
         int area = Session.CurrentArea;
@@ -1237,20 +1245,6 @@ public sealed partial class VfpInterpreter
             // NPV checks its flow and initial value at the first qualifying row (or final pointer),
             // not at the caller's current record. Its rate is evaluated separately for each row.
             if (function == "NPV") continue;
-            if (sum.CalculateFunctions is not null && sum.Expressions[k].Text == "*")
-                throw new MicroVfpRuntimeException("Expression is invalid.", 152);
-            var type = types[k].Type;
-            if (type == VfpType.Unknown && sum.CalculateFunctions is not null) type = Eval(sum.Expressions[k]).Type;
-            if (sum.CalculateFunctions is not null && function is not ("MIN" or "MAX") && type is not (VfpType.Numeric or VfpType.Integer or VfpType.Currency))
-                throw new MicroVfpRuntimeException("Expression is not numeric.", 27);
-            minima[k] = maxima[k] = type switch
-            {
-                VfpType.Character => VfpValue.Character(new string(' ', types[k].Length)),
-                VfpType.Date => VfpValue.Date(default),
-                VfpType.DateTime => VfpValue.DateTime(default),
-                VfpType.Logical => VfpValue.Logical(false),
-                _ => VfpValue.Number(0d)
-            };
             if (sum.CalculateFunctions is null && sum.Expressions[k].Parsed is { } expression)
             {
                 int? scale = null;
@@ -1270,23 +1264,33 @@ public sealed partial class VfpInterpreter
         if (start < 0) start = order.Count;
         int remaining = kind == LocScope.Next ? count : kind == LocScope.Record ? 1 : int.MaxValue;
         bool stopped = remaining <= 0;
-        bool sumTypesChecked = sum.CalculateFunctions is not null;
+        bool sumTypesChecked = false;
         void CheckSumTypes()
         {
             if (sumTypesChecked) return;
-            // VFP9 probes dynamic SUM/AVERAGE expressions once at the first matching row,
+            // VFP9 probes aggregate expressions once at the first matching row,
             // or at the final pointer when nothing matches, even on an empty table.
             for (int k = 0; k < n; k++)
             {
+                string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
+                if (function == "NPV") continue;
+                if (sum.CalculateFunctions is not null && sum.Expressions[k].Text == "*")
+                    throw new MicroVfpRuntimeException("Expression is invalid.", 152);
                 var type = types[k].Type;
-                if (type is not (VfpType.Numeric or VfpType.Integer or VfpType.Currency))
-                {
-                    // Inference describes one IIF/ICASE/EVL branch; VFP9 checks the evaluated result.
-                    var probe = Eval(sum.Expressions[k]);
-                    if (!probe.IsNull || type == VfpType.Unknown) type = probe.Type;
-                }
-                if (type is not (VfpType.Numeric or VfpType.Integer or VfpType.Currency))
+                // Inferred numeric types can still contain undefined names in the evaluated branch.
+                // VFP9 probes even with no matching rows, but leaves unchosen IIF branches alone.
+                var probe = EvalAggregateOperand(sum.Expressions[k]);
+                if (!probe.IsNull || type == VfpType.Unknown) type = probe.Type;
+                if (function is not ("MIN" or "MAX") && type is not (VfpType.Numeric or VfpType.Integer or VfpType.Currency))
                     throw new MicroVfpRuntimeException("Expression is not numeric.", 27);
+                minima[k] = maxima[k] = type switch
+                {
+                    VfpType.Character => VfpValue.Character(new string(' ', types[k].Length)),
+                    VfpType.Date => VfpValue.Date(default),
+                    VfpType.DateTime => VfpValue.DateTime(default),
+                    VfpType.Logical => VfpValue.Logical(false),
+                    _ => VfpValue.Number(0d)
+                };
             }
             sumTypesChecked = true;
         }
@@ -1296,16 +1300,16 @@ public sealed partial class VfpInterpreter
             {
                 if (arguments.Initial is not null)
                 {
-                    var initial = Eval(arguments.Initial);
+                    var initial = EvalAggregateOperand(arguments.Initial);
                     if (!IsNumeric(initial)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
                     acc[k] = initial.AsDouble;
                 }
                 npvInitialized[k] = true;
             }
-            var flow = Eval(sum.Expressions[k]);
+            var flow = EvalAggregateOperand(sum.Expressions[k]);
             if (!IsNumeric(flow)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
             if (!include) return;
-            var rate = Eval(arguments.Rate);
+            var rate = EvalAggregateOperand(arguments.Rate);
             // VFP9 skips a NULL rate without consuming a period; a NULL flow instead raises error 27.
             if (rate.IsNull) return;
             if (!IsNumeric(rate)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
@@ -1329,7 +1333,7 @@ public sealed partial class VfpInterpreter
                         AccumulateNpv(k, arguments, include: true);
                         continue;
                     }
-                    var v = Eval(sum.Expressions[k]);
+                    var v = EvalAggregateOperand(sum.Expressions[k]);
                     if (v.IsNull) { sawNull[k] = true; continue; }
                     string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
                     // SUM/AVERAGE check eligibility once (CheckSumTypes); later non-numeric values are skipped.

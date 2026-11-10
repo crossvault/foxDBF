@@ -189,6 +189,219 @@ public sealed class MicroVfpCalculateNpvTests
         return probes.ToArray();
     }
 
+
+    private static readonly Dictionary<string, string> ReviewPins = new()
+    {
+        ["context_x=(1 +"] = "ERR:1231|Missing operand.|777",
+        ["context_IF 1 +\nx=1\nENDIF"] = "ERR:1231|Missing operand.|777",
+        ["context_x=- -$5^2"] = "ERR:1231|Missing operand.|777",
+        ["context_x=- -5"] = "ERR:1231|Missing operand.|777",
+        ["context_CALCULATE SUM(n) FOR $+1 TO x"] = "ERR:152|Missing expression.|777",
+        ["context_SUM $+1 FOR .F. TO x"] = "ERR:36|Command contains unrecognized phrase/keyword.|777",
+        ["context_CALCULATE SUM(IIF(n=100,missing,n)) FOR n>100 TO x"] = "0|0.0000000000|N",
+        ["context_SUM IIF(n=100,missing,n) FOR n>100 TO x"] = "0|0.0000000000|N",
+        ["context_CALCULATE NPV(n + $+1,n) FOR .F. TO x"] = "ERR:1231|Missing operand.|777",
+        ["currency_$"] = "ERR:36|Command contains unrecognized phrase/keyword.|777",
+        ["currency_$-5%3"] = "$1.0000|1.0000000000|Y",
+        ["currency_$-5*2"] = "$-10.0000|-10.0000000000|Y",
+        ["currency_$-5^2"] = "25|25.0000000000|N",
+        ["currency_$abc"] = "ERR:36|Command contains unrecognized phrase/keyword.|777",
+        ["currency_'a' $ $"] = "ERR:1231|Missing operand.|777",
+        ["currency_-$-5"] = "$5.0000|5.0000000000|Y",
+        ["currency_-$5^2"] = "25|25.0000000000|N",
+        ["currency_2^$-1"] = "0.5000|0.5000000000|N",
+        ["dead_NPV($+1,n)"] = "777|777.0000000000|N",
+        ["dead_NPV($+1,n) FOR .F."] = "777|777.0000000000|N",
+        ["dead_NPV(0.1,n,$+1)"] = "777|777.0000000000|N",
+        ["dead_NPV(0.1,n,$+1) FOR .F."] = "777|777.0000000000|N",
+        ["dead_NPV(0.1,n,1 +)"] = "777|777.0000000000|N",
+        ["dead_NPV(0.1,n,1 +) FOR .F."] = "777|777.0000000000|N",
+        ["dead_NPV(1 +,n)"] = "777|777.0000000000|N",
+        ["dead_NPV(1 +,n) FOR .F."] = "777|777.0000000000|N",
+        ["dynamic_AVERAGE IIF(.F.,n,missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_AVERAGE IIF(.F.,n,missing) FOR .F."] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_AVERAGE IIF(.T.,n,missing)"] = "100|100.0000000000|N",
+        ["dynamic_AVERAGE IIF(.T.,n,missing) FOR .F."] = "0|0.0000000000|N",
+        ["dynamic_AVERAGE n+missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_AVERAGE n+missing FOR .F."] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_CALCULATE SUM(IIF(.F.,n,missing))"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_CALCULATE SUM(IIF(.F.,n,missing)) FOR .F."] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_CALCULATE SUM(IIF(.T.,n,missing))"] = "100|100.0000000000|N",
+        ["dynamic_CALCULATE SUM(IIF(.T.,n,missing)) FOR .F."] = "0|0.0000000000|N",
+        ["dynamic_CALCULATE SUM(n+missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_CALCULATE SUM(n+missing) FOR .F."] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_SUM IIF(.F.,n,missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_SUM IIF(.F.,n,missing) FOR .F."] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_SUM IIF(.T.,n,missing)"] = "100|100.0000000000|N",
+        ["dynamic_SUM IIF(.T.,n,missing) FOR .F."] = "0|0.0000000000|N",
+        ["dynamic_SUM n+missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["dynamic_SUM n+missing FOR .F."] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_AVERAGE_m.missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_AVERAGE_missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_AVG(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_AVG(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_CNT(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_CNT(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_MAX(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_MAX(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_MIN(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_MIN(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_NPV(0.1,m.missing,-500)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_NPV(0.1,missing,-500)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_NPV(0.1,n,m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_NPV(0.1,n,missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_NPV(m.missing,n,-500)"] = "-500|-500.0000000000|N",
+        ["empty_NPV(missing,n,-500)"] = "-500|-500.0000000000|N",
+        ["empty_STD(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_STD(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_SUM(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_SUM(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_SUM_m.missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_SUM_missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_VAR(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_VAR(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["empty_defined_null_rate"] = "-500|-500.0000000000|N",
+        ["extra_currency_$*2"] = "ERR:36|Command contains unrecognized phrase/keyword.|777",
+        ["extra_currency_$+1"] = "ERR:36|Command contains unrecognized phrase/keyword.|777",
+        ["extra_currency_'a' $ $+1"] = "ERR:1231|Missing operand.|777",
+        ["extra_currency_'a' $ $abc"] = "ERR:1231|Missing operand.|777",
+        ["extra_currency_-$ 5^2"] = "25|25.0000000000|N",
+        ["extra_currency_-($5)^2"] = "25|25.0000000000|N",
+        ["extra_currency_--$5^2"] = "ERR:1231|Missing operand.|777",
+        ["extra_currency_-5^2"] = "25|25.0000000000|N",
+        ["extra_currency_1 +"] = "ERR:1231|Missing operand.|777",
+        ["extra_currency_1+$"] = "ERR:1231|Missing operand.|777",
+        ["extra_parse_NPV(0.1,$+1)"] = "ERR:152|Missing expression.|777",
+        ["extra_parse_NPV(0.1,1 +)"] = "ERR:1231|Missing operand.|777",
+        ["extra_parse_SUM($+1)"] = "ERR:152|Missing expression.|777",
+        ["extra_parse_SUM(1 +)"] = "ERR:1231|Missing operand.|777",
+        ["filtered_AVERAGE_m.missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_AVERAGE_missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_AVG(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_AVG(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_CNT(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_CNT(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_MAX(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_MAX(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_MIN(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_MIN(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_NPV(0.1,m.missing,-500)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_NPV(0.1,missing,-500)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_NPV(0.1,n,m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_NPV(0.1,n,missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_NPV(m.missing,n,-500)"] = "-500|-500.0000000000|N",
+        ["filtered_NPV(missing,n,-500)"] = "-500|-500.0000000000|N",
+        ["filtered_STD(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_STD(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_SUM(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_SUM(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_SUM_m.missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_SUM_missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_VAR(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_VAR(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["filtered_defined_null_rate"] = "-500|-500.0000000000|N",
+        ["parse_NPV($+1,n)"] = "ERR:152|Missing expression.|777",
+        ["parse_NPV($+1,n) FOR .F."] = "ERR:152|Missing expression.|777",
+        ["parse_NPV(0.1,n,$+1)"] = "ERR:152|Missing expression.|777",
+        ["parse_NPV(0.1,n,$+1) FOR .F."] = "ERR:152|Missing expression.|777",
+        ["parse_NPV(0.1,n,1 +)"] = "ERR:1231|Missing operand.|777",
+        ["parse_NPV(0.1,n,1 +) FOR .F."] = "ERR:1231|Missing operand.|777",
+        ["parse_NPV(1 +,n)"] = "ERR:1231|Missing operand.|777",
+        ["parse_NPV(1 +,n) FOR .F."] = "ERR:1231|Missing operand.|777",
+        ["rows_AVERAGE_m.missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_AVERAGE_missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_AVG(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_AVG(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_CNT(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_CNT(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_MAX(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_MAX(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_MIN(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_MIN(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_NPV(0.1,m.missing,-500)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_NPV(0.1,missing,-500)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_NPV(0.1,n,m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_NPV(0.1,n,missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_NPV(m.missing,n,-500)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_NPV(missing,n,-500)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_STD(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_STD(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_SUM(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_SUM(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_SUM_m.missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_SUM_missing"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_VAR(m.missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_VAR(missing)"] = "ERR:12|Variable 'MISSING' is not found.|777",
+        ["rows_defined_null_rate"] = "-500|-500.0000000000|N",
+    };
+
+    internal static readonly Probe[] ReviewProbes = BuildReviewProbes();
+
+    private static Probe[] BuildReviewProbes()
+    {
+        var probes = new List<Probe>();
+        const string oneRow = "CREATE TABLE t (n N(10,2) NULL)\nINSERT INTO t VALUES (100)\nUSE";
+        void Add(string name, string command, string before = "", bool empty = false)
+        {
+            string script = "USE t\nGO TOP\nSET DECIMALS TO 4\nx=777\n" + before
+                + "\nTRY\n" + command + "\n" + Value
+                + "\nCATCH TO failure\nresult='ERR:'+TRANSFORM(failure.ErrorNo)+'|'+failure.Message+'|'+TRANSFORM(x)\nENDTRY";
+            probes.Add(new(name, empty ? "CREATE TABLE t (n N(10,2) NULL)\nUSE" : oneRow, script, ReviewPins[name]));
+        }
+        foreach (string scope in new[] { "rows", "filtered", "empty" })
+        {
+            string filter = scope == "filtered" ? " FOR .F." : "";
+            foreach (string operand in new[] { "missing", "m.missing" })
+            {
+                foreach (string item in new[] { $"NPV({operand},n,-500)", $"NPV(0.1,{operand},-500)",
+                    $"NPV(0.1,n,{operand})", $"SUM({operand})", $"AVG({operand})", $"MIN({operand})",
+                    $"MAX({operand})", $"CNT({operand})", $"STD({operand})", $"VAR({operand})" })
+                    Add(scope + "_" + item, $"CALCULATE {item}{filter} TO x", empty: scope == "empty");
+                foreach (string verb in new[] { "SUM", "AVERAGE" })
+                    Add(scope + "_" + verb + "_" + operand, $"{verb} {operand}{filter} TO x", empty: scope == "empty");
+            }
+            Add(scope + "_defined_null_rate", $"CALCULATE NPV(rate,n,-500){filter} TO x", "rate=.NULL.", scope == "empty");
+        }
+        foreach (string filter in new[] { "", " FOR .F." })
+        foreach (string expression in new[] { "1 +", "$+1" })
+        foreach (string item in new[] { $"NPV({expression},n)", $"NPV(0.1,n,{expression})" })
+        {
+            Add("parse_" + item + filter, $"CALCULATE {item}{filter} TO x");
+            Add("dead_" + item + filter, $"IF .F.\nCALCULATE {item}{filter} TO x\nENDIF");
+        }
+        foreach (string expression in new[] { "$-5^2", "-$5^2", "$", "$abc", "'a' $ $", "$-5*2", "2^$-1", "$-5%3", "-$-5" })
+            Add("currency_" + expression, "x=" + expression);
+        foreach (string filter in new[] { "", " FOR .F." })
+        foreach (string expression in new[] { "n+missing", "IIF(.T.,n,missing)", "IIF(.F.,n,missing)" })
+        foreach (string command in new[] { $"SUM {expression}", $"AVERAGE {expression}", $"CALCULATE SUM({expression})" })
+            Add("dynamic_" + command + filter, command + filter + " TO x");
+        foreach (string expression in new[] { "-($5)^2", "-$ 5^2", "--$5^2", "-5^2", "'a' $ $abc", "'a' $ $+1", "$+1", "1 +", "1+$", "$*2" })
+            Add("extra_currency_" + expression, "x=" + expression);
+        foreach (string item in new[] { "SUM(1 +)", "SUM($+1)", "NPV(0.1,1 +)", "NPV(0.1,$+1)" })
+            Add("extra_parse_" + item, $"CALCULATE {item} FOR .F. TO x");
+        foreach (string command in new[] { "x=(1 +", "IF 1 +\nx=1\nENDIF", "x=- -$5^2", "x=- -5",
+            "CALCULATE SUM(n) FOR $+1 TO x", "SUM $+1 FOR .F. TO x",
+            "CALCULATE SUM(IIF(n=100,missing,n)) FOR n>100 TO x",
+            "SUM IIF(n=100,missing,n) FOR n>100 TO x",
+            "CALCULATE NPV(n + $+1,n) FOR .F. TO x" })
+            Add("context_" + command, command);
+        return probes.ToArray();
+    }
+
+    public static IEnumerable<object[]> ReviewCases => ReviewProbes.Select(p => new object[] { p.Name });
+
+    [Theory]
+    [MemberData(nameof(ReviewCases))]
+    public void ReviewOperandsAndCurrency_MatchVfp9(string name)
+    {
+        var probe = ReviewProbes.Single(p => p.Name == name);
+        Assert.Equal(probe.Expected, MicroVfpXbaseUpdateTests.Run(probe.Setup, probe.Script));
+    }
+
+    [Fact]
+    public void VfpValue_SizeRemains48Bytes()
+        => Assert.Equal(48, System.Runtime.CompilerServices.Unsafe.SizeOf<CrossVault.FoxDbf.Expressions.VfpValue>());
+
     public static IEnumerable<object[]> Cases => Probes.Select(p => new object[] { p.Name });
 
     [Theory]

@@ -13,7 +13,7 @@ namespace CrossVault.FoxDbf.Expressions;
 ///   OR 10 | AND 20 | comparison 40 | additive 50 | multiplicative 60 | power 70
 /// Prefix:
 ///   .NOT./!  parses an operand at 30 (looser than comparison, tighter than AND)
-///   unary -  parses an operand at 65 (tighter than *, looser than ^)
+///   unary -  parses an operand at 71 (tighter than ^, as in VFP9)
 /// </summary>
 internal sealed class ExpressionParser
 {
@@ -125,7 +125,14 @@ internal sealed class ExpressionParser
             if (lbp < minBp || lbp == 0) break;
             Next();
             int rbp = t.Type == TokenType.Caret ? lbp : lbp + 1; // ^ is right-associative
-            var right = ParseExpr(rbp);
+            bool currencyOperand = Peek.Type == TokenType.Dollar;
+            AstNode right;
+            try { right = ParseExpr(rbp); }
+            catch (ExpressionException error) when (currencyOperand && error.VfpErrorNumber == 36)
+            {
+                // VFP9 reports a missing operand for an invalid currency after a binary operator.
+                throw new ExpressionException("Missing operand.", error.Position) { VfpErrorNumber = 1231 };
+            }
             left = new BinaryNode(MapBinOp(t.Type), left, right);
         }
         return left;
@@ -180,7 +187,7 @@ internal sealed class ExpressionParser
                 }
             }
         }
-        catch (ExpressionException ex) when (ex.VfpErrorNumber is null)
+        catch (ExpressionException ex) when (ex.VfpErrorNumber is null or 1231)
         {
             throw new ExpressionException(ex.Message, ex, ex.Position) { VfpErrorNumber = kind == "LIKE" ? 36 : 10 };
         }
@@ -211,7 +218,9 @@ internal sealed class ExpressionParser
 
             case TokenType.Minus:
                 Next();
-                return new UnaryNode(UnOp.Neg, ParseExpr(65));
+                if (Peek.Type == TokenType.Minus)
+                    throw new ExpressionException("Missing operand.", Peek.Pos) { VfpErrorNumber = 1231 };
+                return new UnaryNode(UnOp.Neg, ParseExpr(71));
             case TokenType.Plus:
                 Next();
                 return ParseExpr(65); // unary plus is a no-op
@@ -234,9 +243,10 @@ internal sealed class ExpressionParser
                 return ParseIdentifier();
 
             default:
+                if (t.Type == TokenType.Eof)
+                    throw new ExpressionException("Missing operand.", t.Pos) { VfpErrorNumber = 1231 };
                 throw new ExpressionException(
-                    t.Type == TokenType.Eof ? "Unexpected end of expression."
-                                            : $"Unexpected token at position {t.Pos}.",
+                    $"Unexpected token at position {t.Pos}.",
                     t.Pos);
         }
     }

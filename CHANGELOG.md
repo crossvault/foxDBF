@@ -16,7 +16,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Invalid microVFP `CALCULATE` items now raise VFP9's catchable errors when executed, including the
   matching syntax, missing-expression and unrecognized-phrase messages. Unexecuted invalid lines no
   longer prevent a program from loading.
+- `CALCULATE`, `SUM` and `AVERAGE` raise VFP9 error 12 for undefined operand names instead of treating
+  them as NULL, preserving the destination on failure. NPV still skips explicitly NULL rates and does
+  not evaluate its rate when no rows qualify. Invalid NPV rate/initial expressions fail even without rows.
 - Currency literals accept a minus after `$`, including negative initial values in `CALCULATE NPV`.
+  Malformed currency operands now report the matching VFP9 error in assignments and aggregates.
+- BREAKING: Unary minus binds before exponentiation, matching VFP9 (`-5^2` and `-$5^2` both return 25).
+- NPV overflow display precision no longer increases the size of values copied by expression hot paths
+  (`VfpValue` remains 48 bytes).
 
 ## [0.13.0] - 2026-11-10
 

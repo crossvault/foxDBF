@@ -718,12 +718,17 @@ public static class PrgParser
             {
                 ReplaceStmt r => r.Clauses.Select(c => c.Value).Concat(new[] { r.For, r.While }),
                 XbaseUpdateStmt u => u.Replacement.Clauses.Select(c => c.Value),
-                SumStmt s => s.Expressions.Concat(new[] { s.For, s.While }),
+                SumStmt s => s.Expressions
+                    .Concat(s.Npv?.SelectMany(a => new[] { a?.Rate, a?.Initial }) ?? Array.Empty<PrgExpr?>())
+                    .Concat(new[] { s.For, s.While }),
                 CountStmt c => new[] { c.For, c.While },
                 LocateStmt l => new[] { l.For, l.While },
                 _ => Array.Empty<PrgExpr?>(),
             };
             var error = expressions.Select(e => e?.ParseError).FirstOrDefault(e => e?.VfpErrorNumber is not null);
+            // VFP9 CALCULATE reports invalid currency as a missing expression, including in FOR.
+            if (node is SumStmt { CalculateFunctions: not null } && error?.VfpErrorNumber == 36)
+                return new ExpressionErrorStmt("Missing expression.", 152) with { Line = line };
             return (error is null ? node : new ExpressionErrorStmt(error.Message, error.VfpErrorNumber!.Value)) with { Line = line };
         }
 
@@ -1483,6 +1488,9 @@ public static class PrgParser
         // A CALCULATE item is one of VFP9's aggregate calls (AVG/CNT/MAX/MIN/STD/SUM/VAR) around an
         // expression; MIN/MAX there take one operand, unlike the scalar functions of the same name, so the
         // scalar arity check must not judge them (VFP9: `CALCULATE NEXT 2 ... MIN(n),MAX(n)` is valid).
+        private static bool IsCalculateFunction(string name)
+            => name is "AVG" or "SUM" or "STD" or "VAR" or "CNT" or "MIN" or "MAX" or "NPV";
+
         private static bool IsSumItem(string item, bool calculate)
         {
             if (!calculate) return PrgExpr.Parse(item).IsParsed;
@@ -1490,7 +1498,7 @@ public static class PrgParser
             int open = expression.IndexOf('(');
             if (open < 0 || !expression.EndsWith(')')) return PrgExpr.Parse(item).IsParsed;
             string name = expression[..open].Trim().ToUpperInvariant();
-            if (name is not ("AVG" or "SUM" or "STD" or "VAR" or "CNT" or "MIN" or "MAX" or "NPV")) return PrgExpr.Parse(item).IsParsed;
+            if (!IsCalculateFunction(name)) return PrgExpr.Parse(item).IsParsed;
             string argument = expression[(open + 1)..^1].Trim();
             if (name == "NPV")
             {
@@ -1566,7 +1574,12 @@ public static class PrgParser
                 functions = new List<string>();
                 npv = new List<NpvArguments?>();
                 // VFP9 emits these errors when the line executes, so TRY/CATCH and dead branches work.
-                UnknownCommand Invalid(int number) => new("CALCULATE", rest) { KnownVerb = true, ErrorNumber = number };
+                ExpressionErrorStmt Invalid(int number) => new(number switch
+                {
+                    10 => "Syntax error.",
+                    152 => "Missing expression.",
+                    _ => "Command contains unrecognized phrase/keyword."
+                }, number);
                 var items = PrgScan.SplitTopCommas(head);
                 if (items.Count > 1 && items[0].Length == 0) return Invalid(36);
                 if (items.Any(item => item.Length == 0)) return Invalid(10);
@@ -1575,7 +1588,7 @@ public static class PrgParser
                     string expression = exprs[i].Text.Trim();
                     int open = expression.IndexOf('(');
                     string name = open < 0 ? "" : expression[..open].Trim().ToUpperInvariant();
-                    if (name is not ("AVG" or "SUM" or "STD" or "VAR" or "CNT" or "MIN" or "MAX" or "NPV"))
+                    if (!IsCalculateFunction(name))
                         return Invalid(expression.Length == 0 ? 10 : 36);
                     int close = MatchParen(expression, open);
                     if (close < 0) return Invalid(10);

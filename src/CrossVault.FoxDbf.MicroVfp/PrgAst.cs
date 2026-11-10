@@ -558,8 +558,6 @@ internal sealed record UnknownCommand(string Verb, string Arguments) : PrgStatem
 {
     /// <summary>True when the verb itself is one microVFP models but this clause form was not recognised.</summary>
     public bool KnownVerb { get; init; }
-    /// <summary>A command-specific parse error, raised only if this statement executes.</summary>
-    public int? ErrorNumber { get; init; }
 }
 
 // ── structured error handling ────────────────────────────────────────────────

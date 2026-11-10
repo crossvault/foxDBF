@@ -66,12 +66,13 @@ public sealed class MicroVfpLoudUnsupportedTests
     }
 
     [Fact]
-    public void UnparseableExpression_Raises10_InsteadOfNull()
+    public void MissingOperand_Raises1231_InsteadOfNull()
     {
         var i = New();
         var ex = Raises(i, "x = (1 +");
-        Assert.Equal(10, ex.VfpErrorNumber);
-        Assert.Equal(10, Raises(i, "IF 1 +\n  y = 1\nENDIF").VfpErrorNumber);
+        // MicroVfpCalculateNpvVfp9OracleTests probes both forms: VFP9 reports Missing operand.
+        Assert.Equal(1231, ex.VfpErrorNumber);
+        Assert.Equal(1231, Raises(i, "IF 1 +\n  y = 1\nENDIF").VfpErrorNumber);
     }
 
     [Fact]

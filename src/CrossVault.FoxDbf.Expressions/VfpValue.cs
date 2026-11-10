@@ -38,19 +38,16 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     private readonly string? _str;
     private readonly bool _isBinary;
     private readonly byte _displayDecimalsPlusOne;
-    private readonly byte _overflowDisplayWidth;
     private readonly bool _bool;
     private readonly System.DateTime _date; // date + datetime payload
 
     private VfpValue(VfpType type, double num, decimal dec, bool isExact,
-                     string? str, bool b, System.DateTime date, bool isBinary = false, byte displayDecimalsPlusOne = 0,
-                     byte overflowDisplayWidth = 0)
+                     string? str, bool b, System.DateTime date, bool isBinary = false, byte displayDecimalsPlusOne = 0)
     {
         _type = type; _num = num; _dec = dec; _isExact = isExact;
         _str = str; _bool = b; _date = date;
         _isBinary = isBinary;
         _displayDecimalsPlusOne = displayDecimalsPlusOne;
-        _overflowDisplayWidth = overflowDisplayWidth;
     }
 
     /// <summary>The value's VFP type tag.</summary>
@@ -66,13 +63,17 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     // it across assignment and later SET DECIMALS changes without rounding their payload.
     internal int DisplayDecimals => _displayDecimalsPlusOne - 1;
     internal VfpValue WithDisplayDecimals(int decimals) => new(_type, _num, _dec, _isExact,
-        _str, _bool, _date, _isBinary, (byte)(Math.Clamp(decimals, -1, 19) + 1), _overflowDisplayWidth);
+        _str, _bool, _date, _isBinary, (byte)(Math.Clamp(decimals, -1, 19) + 1));
 
     // VFP9 calculated overflow (NPV) has a different TRANSFORM width from stored DBF overflow.
     // Retain the observed width on the value so assignments and later SET DECIMALS preserve it.
-    internal int OverflowDisplayWidth => _overflowDisplayWidth;
-    internal VfpValue WithOverflowDisplayWidth(int width) => new(_type, _num, _dec, _isExact,
-        _str, _bool, _date, _isBinary, _displayDecimalsPlusOne, (byte)width);
+    // Non-finite double-backed numbers do not use the exact-decimal payload. Reuse it
+    // for display metadata to keep this hot-path value at 48 bytes, without boxing.
+    internal int OverflowDisplayWidth => _type == VfpType.Numeric && !_isExact && !double.IsFinite(_num)
+        ? (int)_dec : 0;
+    internal VfpValue WithOverflowDisplayWidth(int width) => _type == VfpType.Numeric && !_isExact && !double.IsFinite(_num)
+        ? new(_type, _num, width, _isExact, _str, _bool, _date, _isBinary, _displayDecimalsPlusOne)
+        : this;
 
     internal static VfpValue FromField(object? value, char type, int decimals) => value switch
     {
