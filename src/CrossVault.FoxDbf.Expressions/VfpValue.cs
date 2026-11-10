@@ -75,22 +75,7 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         ? new(_type, _num, width, _isExact, _str, _bool, _date, _isBinary, _displayDecimalsPlusOne)
         : this;
 
-    // Round7: direct overflow formatting follows the operands actually selected at runtime.
-    // Numeric values do not use the date payload; pack expression width/scale there so the
-    // value stays 48 bytes. This is separate from the overflow width retained by assignment.
-    internal int ExpressionNumericWidth => VfpRuntime.IsNumeric(this) ? (int)(_date.Ticks >> 5) : 0;
-    internal int ExpressionNumericDecimals => (int)(_date.Ticks & 31);
-    internal VfpValue WithExpressionNumericFormat(int width, int decimals) => VfpRuntime.IsNumeric(this)
-        ? new(_type, _num, _dec, _isExact, _str, _bool,
-            new System.DateTime(width > 0 ? ((long)width << 5) | (uint)Math.Clamp(decimals, 0, 19) : 0),
-            _isBinary, _displayDecimalsPlusOne)
-        : this;
-
-    internal static VfpValue FromField(object? value, char type, int decimals, int width = 0)
-        => FromFieldValue(value, type, decimals).WithExpressionNumericFormat(
-            type == 'I' ? 11 : type == 'B' ? 21 : width, decimals);
-
-    private static VfpValue FromFieldValue(object? value, char type, int decimals) => value switch
+    internal static VfpValue FromField(object? value, char type, int decimals) => value switch
     {
         null => Null,
         VfpValue typed => typed.WithFieldScale(type, decimals),
@@ -285,7 +270,7 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     public DateOnly AsDate => DateOnly.FromDateTime(_date);
 
     /// <summary>DateTime payload.</summary>
-    public System.DateTime AsDateTime => VfpRuntime.IsNumeric(this) ? default : _date;
+    public System.DateTime AsDateTime => _date;
 
     /// <summary>
     /// Maps this value back to a raw CLR object (the inverse of <see cref="FromClr"/>), preserving

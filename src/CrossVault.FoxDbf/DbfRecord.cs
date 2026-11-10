@@ -192,7 +192,7 @@ public readonly struct DbfRecord
         int index = IndexOfColumn(name);
         if (index < 0) return VfpValue.Null;
         var column = _table.Columns[index];
-        return VfpValue.FromField(blanks ? GetVfpValue(index) : GetExpressionValue(index), column.Type, column.Decimal, column.Length);
+        return VfpValue.FromField(blanks ? GetVfpValue(index) : GetExpressionValue(index), column.Type, column.Decimal);
     }
 
     internal VfpValue GetIndexScaledValue(string name)
@@ -207,7 +207,7 @@ public readonly struct DbfRecord
         // a blank nullable N/F key encodes numeric zero with the non-NULL marker.
         if (value is string) value = GetStoredExpressionValue(index);
         else if (value is null && column.Type is 'D' or 'T' or 'N' or 'F') value = GetVfpValue(index);
-        return VfpValue.FromField(value, column.Type, column.Decimal, column.Length);
+        return VfpValue.FromField(value, column.Type, column.Decimal);
     }
 
     internal object? GetVfpValue(int index)

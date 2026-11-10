@@ -44,8 +44,6 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   and `ASCAN(a,x,start)` returns 0 when start is past the end, as in VFP9.
 - `NORMALIZE` and index `KEY()` preserve fields named `nan` and `infinity`.
 - Overflow comparisons, direct `TRANSFORM` expressions and `SUM`/`AVERAGE`/`CALCULATE` display match VFP9.
-  `TRANSFORM` division-overflow widths follow the evaluated operands, including memory variables,
-  selected `IIF`/`ICASE`/`NVL`/`EVL` branches and Double fields, without evaluating conditions again.
 - Invalid microVFP `CALCULATE` items raise VFP9's catchable errors when executed, with VFP9's syntax,
   missing-expression and unrecognized-phrase messages. An unexecuted invalid line no longer prevents a
   program from loading.

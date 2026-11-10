@@ -213,7 +213,7 @@ internal sealed partial class DmlExecutor
             string field = name[(name.LastIndexOf('.') + 1)..];
             _columns.TryGetValue(field, out var column);
             object? value = values.TryGetValue(field, out var stored) ? stored : EmptyValue(column);
-            return column is null ? VfpValue.FromClr(value) : VfpValue.FromField(value, column.Type, column.Decimal, column.Length);
+            return column is null ? VfpValue.FromClr(value) : VfpValue.FromField(value, column.Type, column.Decimal);
         }
         public object? GetField(string name)
         {

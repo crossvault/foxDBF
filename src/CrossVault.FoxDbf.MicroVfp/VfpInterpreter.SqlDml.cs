@@ -153,7 +153,7 @@ public sealed partial class VfpInterpreter
             if (dot < 0 && column >= 0 && ColumnIndex(target.Table, field) >= 0)
                 throw new MicroVfpRuntimeException($"SQL: Column '{field}' is ambiguous.", 1832);
             if (column >= 0 && (dot < 0 || name[..dot].Equals(alias, StringComparison.OrdinalIgnoreCase)))
-                return Record is null ? VfpValue.FromField(BlankFor(source.Columns[column]), source.Columns[column].Type, source.Columns[column].Decimal, source.Columns[column].Length)
+                return Record is null ? VfpValue.FromField(BlankFor(source.Columns[column]), source.Columns[column].Type, source.Columns[column].Decimal)
                     : Record.Value.GetScaledValue(source.Columns[column].Name, true);
             return owner.ResolveName(name);
         }

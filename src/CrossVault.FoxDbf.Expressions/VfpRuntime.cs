@@ -47,12 +47,7 @@ internal static partial class VfpRuntime
     // ===================================================================
 
     public static VfpValue GetField(IRowContext row, string name)
-    {
-        if (row is IVfpValueRow typed) return typed.GetValue(name);
-        var value = VfpValue.FromClr(row.GetField(name));
-        return row is ISchema schema && schema.TryGetColumn(name, out char type, out int width, out int decimals)
-            ? value.WithExpressionNumericFormat(type == 'I' ? 11 : type == 'B' ? 21 : width, decimals) : value;
-    }
+        => row is IVfpValueRow typed ? typed.GetValue(name) : VfpValue.FromClr(row.GetField(name));
 
     // ===================================================================
     //  UNARY
@@ -68,9 +63,7 @@ internal static partial class VfpRuntime
                 return v.Type == VfpType.Currency ? VfpValue.Currency(-v.AsNumber)
                     : VfpValue.Number(-v.AsDouble).WithDisplayDecimals(v.DisplayDecimals)
                         .WithOverflowDisplayWidth(double.IsNaN(v.AsDouble) ? v.OverflowDisplayWidth
-                            : quotient ? v.OverflowDisplayWidth + (v.AsDouble > 0 ? 1 : -1) : 11)
-                        .WithExpressionNumericFormat(v.ExpressionNumericWidth > 0 ? v.ExpressionNumericWidth + 1 : 0,
-                            v.ExpressionNumericDecimals);
+                            : quotient ? v.OverflowDisplayWidth + (v.AsDouble > 0 ? 1 : -1) : 11);
             case UnOp.Not:
                 if (v.IsNull) return VfpValue.Null;
                 return VfpValue.Logical(!v.AsLogical);
@@ -174,8 +167,6 @@ internal static partial class VfpRuntime
         if (op == BinOp.Div) scale = Math.Max(scale, ctx.NumericDecimals + (constant ? 0 : 2));
         else if (constant || op == BinOp.Pow) scale = Math.Max(scale, ctx.NumericDecimals);
         var result = VfpValue.Number(value, scale);
-        if (l.ExpressionNumericWidth > 0 && r.ExpressionNumericWidth > 0)
-            result = WithExpressionNumericFormat(result, l, r, op, ctx);
         if (double.IsFinite(value)) return result;
         return result.WithOverflowDisplayWidth(op switch
         {
@@ -187,36 +178,6 @@ internal static partial class VfpRuntime
             // Round5 OverflowPrecision: EXP(1000)*2 adds two columns.
             _ => Math.Max(NumericOverflowWidth(scale) + 2, Math.Max(l.OverflowDisplayWidth, r.OverflowDisplayWidth)),
         });
-    }
-
-    // Round7 VFP9 grid: these widths describe evaluated arithmetic, not SQL storage
-    // (notably B-field overflow may exceed SQL's 20-column limit). Unknown metadata
-    // must not replace the runtime width. Branching functions carry the selected value.
-    private static VfpValue WithExpressionNumericFormat(VfpValue result, in VfpValue l, in VfpValue r,
-        BinOp op, EvaluationContext ctx)
-    {
-        int left = l.ExpressionNumericDecimals, right = r.ExpressionNumericDecimals;
-        int decimals = Math.Max(left, right);
-        int width;
-        switch (op)
-        {
-            case BinOp.Div:
-                decimals = Math.Max(ctx.NumericDecimals + 2, decimals);
-                width = l.ExpressionNumericWidth + r.ExpressionNumericWidth - left - right + decimals
-                    - (left > 0 || right > 0 ? 1 : 0);
-                break;
-            case BinOp.Mul:
-                width = l.ExpressionNumericWidth + r.ExpressionNumericWidth + (left > 0 && right > 0 ? 0 : 1);
-                decimals = left + right;
-                break;
-            case BinOp.Add:
-            case BinOp.Sub:
-                width = Math.Max(l.ExpressionNumericWidth - left, r.ExpressionNumericWidth - right) + decimals + 1;
-                break;
-            default:
-                return result;
-        }
-        return result.WithExpressionNumericFormat(width, decimals);
     }
 
     internal static int NumericOverflowWidth(int decimals) => 10 + (decimals > 0 ? 1 + decimals : 0);
