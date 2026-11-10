@@ -109,6 +109,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
+- SQL conditions support `[NOT] IN (list)`, `[NOT] BETWEEN`, and `[NOT] LIKE [ESCAPE]`, including prefix `NOT`, VFP9 NULL semantics, and embedded microVFP SQL.
 - microVFP supports xBase `UPDATE ON field FROM alias REPLACE ... [RANDOM]`, including
   sequential source matches, VFP9 record pointers and `_TALLY`, errors, buffering,
   validation/triggers and index maintenance through the existing REPLACE writer. Assignments
@@ -348,6 +349,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   Index keys are byte-identical to VFP9, allowing index creation and maintenance, SEEK in both directions
   and Rushmore narrowing on these tables. Previously these combinations were approximate and index writes
   and SEEK were refused.
+
+## [0.12.0] - 2026-11-10
+
+### Added
+
+- SQL conditions support `[NOT] IN (list)`, `[NOT] BETWEEN`, and `[NOT] LIKE [ESCAPE]`, including prefix `NOT`, VFP9 NULL semantics, and embedded microVFP SQL.
 
 ## [0.11.0] - 2026-11-09
 

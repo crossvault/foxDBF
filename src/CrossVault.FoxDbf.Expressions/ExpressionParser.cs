@@ -22,6 +22,9 @@ internal sealed class ExpressionParser
     private int _depth;
     private string? _sql;
     private bool _sqlAggregates;
+    private bool _sqlPredicates;
+    private bool _hasSqlInfix;
+    private HashSet<string>? _infixFields;
     private readonly List<(int Start, int End, string Text)> _nullTests = new();
 
     /// <summary>Recursion-depth cap so a deeply-nested expression (e.g. thousands of parentheses) throws
@@ -30,13 +33,13 @@ internal sealed class ExpressionParser
 
     private ExpressionParser(List<Token> tokens) => _tokens = tokens;
 
-    internal static (AstNode Root, string Text) ParseSql(string text, bool aggregates = false)
+    internal static (AstNode Root, string Text, bool HasSqlInfix, IReadOnlyCollection<string> InfixFields) ParseSql(string text, bool aggregates = false, bool predicates = false)
     {
-        var parser = new ExpressionParser(new ExpressionLexer(text).Tokenize()) { _sql = text, _sqlAggregates = aggregates };
+        var parser = new ExpressionParser(new ExpressionLexer(text).Tokenize()) { _sql = text, _sqlAggregates = aggregates, _sqlPredicates = predicates };
         var root = parser.ParseExpr(0);
         if (parser.Peek.Type != TokenType.Eof)
             throw new ExpressionException("Unexpected trailing input.", parser.Peek.Pos);
-        return (root, parser.SqlText(0, text.Length));
+        return (root, parser.SqlText(0, text.Length), parser._hasSqlInfix, (IReadOnlyCollection<string>?)parser._infixFields ?? Array.Empty<string>());
     }
 
     // Residual filters are reparsed by the optimizer's xBase expression engine. Keep their
@@ -104,6 +107,13 @@ internal sealed class ExpressionParser
                 if (negate) left = new UnaryNode(UnOp.Not, left);
                 continue;
             }
+            if (_sql is not null && minBp <= 40 && IsSqlInfix(t))
+            {
+                if (!_sqlPredicates)
+                    throw new ExpressionException("SQL predicates are not allowed in this expression.", t.Pos) { VfpErrorNumber = 36 };
+                left = ParseSqlInfix(left);
+                continue;
+            }
             int lbp = LeftBp(t.Type);
             if (lbp < minBp || lbp == 0) break;
             Next();
@@ -112,6 +122,65 @@ internal sealed class ExpressionParser
             left = new BinaryNode(MapBinOp(t.Type), left, right);
         }
         return left;
+    }
+
+    private bool IsSqlInfix(Token token)
+    {
+        if (token.Type == TokenType.Not && _pos + 1 < _tokens.Count) token = _tokens[_pos + 1];
+        return token.Type == TokenType.Identifier && token.Text.ToUpperInvariant() is "IN" or "BETWEEN" or "LIKE";
+    }
+
+    private AstNode ParseSqlInfix(AstNode left)
+    {
+        _hasSqlInfix = true;
+        bool negate = Peek.Type == TokenType.Not;
+        if (negate) Next();
+        string kind = Next().Text.ToUpperInvariant();
+        var operands = new List<AstNode> { left };
+        try
+        {
+            if (kind == "IN")
+            {
+                Expect(TokenType.LParen, "Expected '(' after IN.");
+                do
+                {
+                    operands.Add(ParseExpr(0));
+                    if (Peek.Type != TokenType.Comma) break;
+                    Next();
+                } while (true);
+                Expect(TokenType.RParen, "Expected ')' after IN list.");
+            }
+            else
+            {
+                operands.Add(ParseExpr(41));
+                if (kind == "BETWEEN")
+                {
+                    Expect(TokenType.And, "Expected AND between bounds.");
+                    operands.Add(ParseExpr(41));
+                }
+                else
+                {
+                    // A literal NULL is rejected by VFP's SQL LIKE grammar (1833); nullable
+                    // fields and expressions are legal and propagate NULL at evaluation time.
+                    foreach (var operand in operands)
+                        if (operand is LiteralNode && operand.Eval(null!, EvaluationContext.Default).IsNull)
+                            throw new ExpressionException("SQL: LIKE requires a character expression.") { VfpErrorNumber = 1833 };
+                    if (Peek.Type == TokenType.Identifier && Peek.Text.Equals("ESCAPE", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Next();
+                        operands.Add(ParseExpr(41));
+                    }
+                }
+            }
+        }
+        catch (ExpressionException ex) when (ex.VfpErrorNumber is null)
+        {
+            throw new ExpressionException(ex.Message, ex, ex.Position) { VfpErrorNumber = kind == "LIKE" ? 36 : 10 };
+        }
+        _infixFields ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var operand in operands) operand.CollectFields(_infixFields);
+        AstNode node = new SqlInfixNode(kind, operands.ToArray());
+        return negate ? new UnaryNode(UnOp.Not, node) : node;
     }
 
     private AstNode ParsePrefix()

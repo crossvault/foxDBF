@@ -79,6 +79,12 @@ subqueries, `GROUP BY`/`HAVING`, aggregates, `ORDER BY`, `DISTINCT`, `TOP [n [PE
 `CREATE`/`ALTER`/`DROP TABLE`. Positional `?` and named `@`/`:` parameters. SQL `=` follows
 **`SET ANSI`** (the `Ansi` connection-string keyword above), not `SET EXACT`.
 
+Conditions in `WHERE`, `JOIN ON`, `HAVING`, and `UPDATE`/`DELETE WHERE` support
+`x [NOT] IN (list)`, `x [NOT] BETWEEN a AND b`, and `x [NOT] LIKE pattern [ESCAPE 'c']`,
+including prefix `NOT` and parentheses. IN and BETWEEN follow `SET ANSI` and SQL NULL logic;
+LIKE uses case-sensitive `%`/`_` wildcards and accepts excess trailing blanks in the value.
+As in VFP9, these infix predicates are not SELECT-list expressions (error 36).
+
 Character fields are read at their full declared width, exactly as in a VFP cursor: `SELECT name`
 from a `C(10)` returns `'Smith     '`, and leading blanks are part of the value (`' Smith'` is not
 `'Smith'`). Under `SET ANSI OFF` `name = 'Smith'` compares over the shorter operand, so it matches;

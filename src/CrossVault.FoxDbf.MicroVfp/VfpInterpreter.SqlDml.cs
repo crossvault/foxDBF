@@ -60,7 +60,15 @@ public sealed partial class VfpInterpreter
             }
 
             _requireDmlNames = true;
-            var predicate = where is null ? null : PrgExpr.Parse(where.Text);
+            var predicate = where is null ? null
+                : where.HasSqlInfix ? PrgExpr.FromSql(where) : PrgExpr.Parse(where.Text);
+            // SQL predicates use ANSI even inside a program whose xBase expressions use EXACT.
+            var predicateContext = where?.HasSqlInfix == true ? Session.SqlContext() : _ctx;
+            if (where?.HasSqlInfix == true)
+            {
+                predicateContext.VfpBlankFields = true;
+                SelectExecutor.AddInfixIndexes(predicateContext, wa.Cdx, wa.Alias);
+            }
             foreach (var expression in assignments.Select(a => a.Value).Append(predicate))
             {
                 if (expression?.Parsed is not { } tree) continue;
@@ -104,11 +112,12 @@ public sealed partial class VfpInterpreter
                         {
                             if (_ctx.Deleted && source.IsRecordDeleted(sourceRec)) continue;
                             sqlRow.Record = source.GetRecord(sourceRec, includeDeleted: true);
-                            if (predicate is null || Truth(predicate.Parsed!.Evaluate(sqlRow, _ctx))) { matched = true; break; }
+                            if (predicate is null || Truth(predicate.Parsed!.Evaluate(sqlRow, predicateContext))) { matched = true; break; }
                         }
                         if (!matched) continue;
                     }
-                    else if (predicate is not null && !Truth(Eval(predicate))) continue;
+                    else if (predicate is not null && !Truth(where?.HasSqlInfix == true
+                        ? predicate.Parsed!.Evaluate(_row, predicateContext) : Eval(predicate))) continue;
                     mark();
                     // Unlike xBase DELETE, SQL counts matches even when their deletion flag was set.
                     tally++;

@@ -31,6 +31,8 @@ internal sealed class PrgExpr
         Parsed = parsed;
     }
 
+    internal static PrgExpr FromSql(VfpExpression expression) => new(expression.Text, expression);
+
     internal static PrgExpr Constant(VfpValue value) => new(string.Empty, VfpExpression.Constant(value));
 
     // VFP's by-reference marker '@var' is legal only in argument position; it is a no-op for

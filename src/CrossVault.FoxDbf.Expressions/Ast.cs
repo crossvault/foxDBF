@@ -37,6 +37,7 @@ internal abstract class AstNode
         return info.Length > 0 ? info.Decimals : null;
     }
     internal virtual bool IsSqlConstant => false;
+    internal virtual bool IsSqlCandidate(IRowContext row, EvaluationContext context) => true;
 
     /// <summary>Add every FIELD name this node (transitively) reads to <paramref name="into"/>. Only bare
     /// field references count — function names, literals and operators contribute nothing. Used by the
@@ -100,6 +101,7 @@ internal sealed partial class FieldNode : AstNode
 {
     private readonly string _name;
     public FieldNode(string name) => _name = name;
+    internal string Name => _name;
 
     public override VfpValue Eval(IRowContext row, EvaluationContext ctx)
         => VfpRuntime.GetField(row, _name);
@@ -184,6 +186,9 @@ internal sealed partial class BinaryNode : AstNode
     private readonly bool _constant;
     public BinaryNode(BinOp op, AstNode left, AstNode right)
     { _op = op; _left = left; _right = right; _constant = left.IsSqlConstant && right.IsSqlConstant; }
+
+    internal override bool IsSqlCandidate(IRowContext row, EvaluationContext context)
+        => _op != BinOp.And || (_left.IsSqlCandidate(row, context) && _right.IsSqlCandidate(row, context));
 
     // AND / OR short-circuit like VFP9: a logical .F. on the left of AND (.T. on the left of OR) decides the
     // result and the right operand is NOT evaluated — no UDF call, no error from it (VFP9-verified:

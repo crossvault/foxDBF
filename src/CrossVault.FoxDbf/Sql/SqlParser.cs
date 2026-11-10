@@ -162,11 +162,11 @@ public static class SqlParser
             return _src.Substring(from, to - from).Trim();
         }
 
-        private VfpExpression BuildExpr(string text, int srcStart, bool aggregates = false)
+        private VfpExpression BuildExpr(string text, int srcStart, bool aggregates = false, bool predicates = false)
         {
             try
             {
-                return VfpExpression.ParseSql(text, aggregates);
+                return VfpExpression.ParseSql(text, aggregates, predicates);
             }
             catch (ExpressionException ex)
             {
@@ -177,15 +177,15 @@ public static class SqlParser
         }
 
         // Parses an expression fragment terminated per stopWords/stopAtComma.
-        private VfpExpression ParseExprFragment(HashSet<string>? stopWords, bool stopAtComma, bool aggregates = false)
+        private VfpExpression ParseExprFragment(HashSet<string>? stopWords, bool stopAtComma, bool aggregates = false, bool predicates = false)
         {
             var (s, e) = ScanRange(stopWords, stopAtComma);
             if (e <= s) throw Err("Expected an expression.");
-            return BuildExpr(RangeText(s, e), _t[s].Start, aggregates: aggregates);
+            return BuildExpr(RangeText(s, e), _t[s].Start, aggregates: aggregates, predicates: predicates);
         }
 
         // =================================================================
-        //  WHERE predicate tree (built only when a sub-SELECT is present)
+        //  WHERE predicate tree (subqueries and SQL-only infix conditions)
         // =================================================================
 
         private static readonly HashSet<string> WhereClauseStops =
@@ -325,6 +325,7 @@ public static class SqlParser
         private SqlPredicate ParseLeafPred()
         {
             int start = _pos, depth = 0, sqOpen = -1;
+            bool betweenBound = false;
             int p = _pos;
             while (p < _t.Count)
             {
@@ -343,7 +344,18 @@ public static class SqlParser
                 else if (depth == 0)
                 {
                     if (t.Kind is TokKind.Semicolon or TokKind.Eof) break;
-                    if (t.Kind == TokKind.Word && (Kw(t, "AND") || Kw(t, "OR"))) break;
+                    if (Kw(t, "BETWEEN"))
+                    {
+                        // An infix [NOT] BETWEEN owns its first AND, even with parenthesized
+                        // bounds. The scalar BETWEEN(...) function has no preceding operand.
+                        int operand = p - 1;
+                        if (operand >= start && Kw(_t[operand], "NOT")) operand--;
+                        if (operand >= start && !Kw(_t[operand], "NOT") &&
+                            _t[operand].Kind is TokKind.Word or TokKind.Number or TokKind.String or TokKind.Date or TokKind.RParen)
+                            betweenBound = true;
+                    }
+                    if (Kw(t, "AND") && betweenBound) betweenBound = false;
+                    else if (Kw(t, "AND") || Kw(t, "OR")) break;
                     if (t.Kind == TokKind.Word && WhereClauseStops.Contains(t.Text.ToUpperInvariant())) break;
                 }
                 p++;
@@ -353,7 +365,7 @@ public static class SqlParser
             if (sqOpen < 0)
             {
                 if (leafEnd <= start) throw Err("Expected a predicate.");
-                var expr = BuildExpr(RangeText(start, leafEnd), _t[start].Start);
+                var expr = BuildExpr(RangeText(start, leafEnd), _t[start].Start, predicates: true);
                 _pos = leafEnd;
                 return new ExprPredicate(expr);
             }
@@ -507,12 +519,19 @@ public static class SqlParser
             if (IsKw("WHERE"))
             {
                 Advance();
-                // No sub-SELECT anywhere in the clause → the historical single-VfpExpression fast path
-                // (behaviour identical to before). A sub-SELECT → an SQL-level boolean tree.
                 if (FragmentHasSubquery(WhereClauseStops))
                     wherePredicate = ParseBoolOr();
                 else
-                    where = ParseExprFragment(WhereClauseStops, stopAtComma: false);
+                {
+                    where = ParseExprFragment(WhereClauseStops, stopAtComma: false, predicates: true);
+                    // SQL-only predicates cannot be reparsed as xBase optimizer residuals.
+                    // Ordinary WHERE expressions retain their existing fast path.
+                    if (where.HasSqlInfix)
+                    {
+                        wherePredicate = new ExprPredicate(where);
+                        where = null;
+                    }
+                }
             }
 
             var groupBy = new List<VfpExpression>();
@@ -533,7 +552,7 @@ public static class SqlParser
                 // rather than silently mis-evaluate it.
                 if (FragmentHasSubquery(HavingClauseStops))
                     throw new FoxDbfSqlException("SQL: Invalid use of subquery in HAVING.", Current.Start) { VfpErrorNumber = 1810 };
-                having = ParseExprFragment(HavingClauseStops, stopAtComma: false, aggregates: true);
+                having = ParseExprFragment(HavingClauseStops, stopAtComma: false, aggregates: true, predicates: true);
             }
 
             var orderBy = new List<OrderItem>();
@@ -796,7 +815,7 @@ public static class SqlParser
 
                 var src = ParseSource();
                 ExpectKw("ON");
-                var on = ParseExprFragment(JoinOnStops, stopAtComma: false);
+                var on = ParseExprFragment(JoinOnStops, stopAtComma: false, predicates: true);
                 joins.Add(new JoinClause(jt, src, on));
             }
             return joins;
@@ -899,7 +918,7 @@ public static class SqlParser
             if (IsKw("WHERE"))
             {
                 Advance();
-                where = ParseExprFragment(null, stopAtComma: false);
+                where = ParseExprFragment(null, stopAtComma: false, predicates: true);
             }
 
             return new UpdateStatement(db, table, sets, where);
@@ -919,7 +938,7 @@ public static class SqlParser
             if (IsKw("WHERE"))
             {
                 Advance();
-                where = ParseExprFragment(null, stopAtComma: false);
+                where = ParseExprFragment(null, stopAtComma: false, predicates: true);
             }
             return new DeleteStatement(db, table, where);
         }

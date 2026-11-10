@@ -79,10 +79,10 @@ public sealed record UnionClause(
 
 /// <summary>A SQL SELECT query (the data-returning form, not the work-area switch).</summary>
 /// <remarks>
-/// A WHERE clause is carried in EXACTLY ONE of two shapes. When the clause contains NO sub-SELECT
+/// A WHERE clause is carried in EXACTLY ONE of two shapes. When the clause contains no subquery or SQL infix predicate
 /// it stays a single <see cref="Where"/> <see cref="VfpExpression"/> (the historical fast path —
 /// the executor drives <see cref="CrossVault.FoxDbf.Query.QueryOptimizer"/> with its <c>.Text</c>).
-/// When a sub-SELECT appears anywhere in the clause the SQL parser owns the boolean combination and
+/// For SQL infix predicates or a subquery, the SQL parser owns the boolean combination and
 /// emits a <see cref="WherePredicate"/> tree whose leaves are plain expressions or subquery atoms;
 /// in that case <see cref="Where"/> is <see langword="null"/>. HAVING never carries a subquery (VFP
 /// rejects it), so it stays a plain <see cref="Having"/> expression.
@@ -103,12 +103,12 @@ public sealed record SelectStatement(
     SqlPredicate? WherePredicate = null) : SqlStatement;
 
 // ===========================================================================
-//  WHERE predicate tree (only built when a sub-SELECT appears in the clause)
+//  WHERE predicate tree (subqueries and SQL-only infix predicates)
 // ===========================================================================
 
 /// <summary>
-/// A node in a SQL-level WHERE boolean tree. Built ONLY when the WHERE clause contains a sub-SELECT;
-/// a plain (no-subquery) WHERE stays a single <see cref="VfpExpression"/> on
+/// A node in a SQL-level WHERE boolean tree, used for subqueries and SQL-only infix predicates;
+/// an ordinary scalar WHERE stays a single <see cref="VfpExpression"/> on
 /// <see cref="SelectStatement.Where"/>. Leaves are either a plain predicate
 /// (<see cref="ExprPredicate"/>, handed to the expression engine unchanged) or a subquery atom
 /// (<see cref="InSubqueryPredicate"/> / <see cref="ExistsSubqueryPredicate"/> /

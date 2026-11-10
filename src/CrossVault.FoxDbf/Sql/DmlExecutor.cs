@@ -542,7 +542,7 @@ internal sealed partial class DmlExecutor
         // the held lock (WithLock's covered-range guard) rather than re-locking.
         using var lockScope = writer.LockFileScope();
 
-        var matched = MatchedRecords(target, st.Table, st.Where?.Text, ctx);
+        var matched = MatchedRecords(target, st.Table, st.Where, ctx);
         foreach (var (recNo, rec) in matched)
         {
             // Untouched fields retain their bytes. A session/table conversion is lossy, so even
@@ -583,7 +583,7 @@ internal sealed partial class DmlExecutor
         using var lockScope = writer.LockFileScope();
 
         // VFP soft delete: set the deletion flag only — never a pack.
-        var matched = MatchedRecords(target, st.Table, st.Where?.Text, ctx);
+        var matched = MatchedRecords(target, st.Table, st.Where, ctx);
         foreach (var (recNo, _) in matched)
             writer.Delete(recNo - 1);
         return SqlResult.Dml(matched.Count);
@@ -603,14 +603,31 @@ internal sealed partial class DmlExecutor
                 new HashSet<string>(columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase)) },
             null, hostBound: false, checkBare: true);
 
-    /// <summary>The records (1-based recno + the record) matching <paramref name="whereText"/> — no
+    /// <summary>The records (1-based recno + the record) matching <paramref name="where"/> — no
     /// WHERE means ALL rows (<c>.T.</c>). <c>SET DELETED ON</c> excludes already-deleted rows via the
     /// evaluation context, mirroring the SELECT path. Records are returned in ascending recno order,
     /// read from the writable target's live view so just-written state is seen.</summary>
     private List<(int RecNo, DbfRecord Rec)> MatchedRecords(
-        VfpSession.WritableTarget target, string targetAlias, string? whereText, EvaluationContext ctx)
+        VfpSession.WritableTarget target, string targetAlias, VfpExpression? where, EvaluationContext ctx)
     {
         var table = target.Table;
+        if (where?.HasSqlInfix == true)
+        {
+            using var predicateIndex = target.OpenCdx();
+            SelectExecutor.AddInfixIndexes(ctx, predicateIndex, targetAlias);
+            var predicate = where.Compile(ctx);
+            var matches = new List<(int, DbfRecord)>();
+            int number = 0;
+            foreach (var record in table.EnumerateAll(includeDeleted: true))
+            {
+                number++;
+                if (ctx.Deleted && record.IsDeleted) continue;
+                var value = predicate(new RecordRow(record, number, table.RecordCount));
+                if (value.Type == VfpType.Logical && value.AsLogical) matches.Add((number, record));
+            }
+            return matches;
+        }
+        string? whereText = where?.Text;
         // Select and materialize under the caller's file lock, then close the index BEFORE any
         // writes. Moving a key must not revisit a row or invalidate a live index traversal (VFP9).
         using var cdx = target.OpenCdx();
