@@ -177,11 +177,11 @@ public static class SqlParser
         }
 
         // Parses an expression fragment terminated per stopWords/stopAtComma.
-        private VfpExpression ParseExprFragment(HashSet<string>? stopWords, bool stopAtComma)
+        private VfpExpression ParseExprFragment(HashSet<string>? stopWords, bool stopAtComma, bool aggregates = false)
         {
             var (s, e) = ScanRange(stopWords, stopAtComma);
             if (e <= s) throw Err("Expected an expression.");
-            return BuildExpr(RangeText(s, e), _t[s].Start);
+            return BuildExpr(RangeText(s, e), _t[s].Start, aggregates: aggregates);
         }
 
         // =================================================================
@@ -533,7 +533,7 @@ public static class SqlParser
                 // rather than silently mis-evaluate it.
                 if (FragmentHasSubquery(HavingClauseStops))
                     throw new FoxDbfSqlException("SQL: Invalid use of subquery in HAVING.", Current.Start) { VfpErrorNumber = 1810 };
-                having = ParseExprFragment(HavingClauseStops, stopAtComma: false);
+                having = ParseExprFragment(HavingClauseStops, stopAtComma: false, aggregates: true);
             }
 
             var orderBy = new List<OrderItem>();
@@ -670,7 +670,11 @@ public static class SqlParser
 
             var stop = new HashSet<string>(StringComparer.Ordinal)
                 { "ASC", "DESC", "INTO", "UNION" };
-            var expr = ParseExprFragment(stop, stopAtComma: true);
+            int start = _pos;
+            var expr = ParseExprFragment(stop, stopAtComma: true, aggregates: true);
+            for (int i = start; i + 1 < _pos; i++)
+                if (Kw(_t[i], "CNT") && _t[i + 1].Kind == TokKind.LParen)
+                    throw new FoxDbfSqlException("Function name is missing ( ).") { VfpErrorNumber = 1300 };
             bool desc = ReadAscDesc();
             return new OrderItem(expr, null, desc);
         }

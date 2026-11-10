@@ -35,6 +35,7 @@ internal readonly struct ExpressionArgument
 {
     private readonly AstNode _node;
     internal ExpressionArgument(AstNode node) => _node = node;
+    internal bool IsDistinct => _node is SqlDistinctNode;
     internal VfpValue Evaluate(IRowContext row, EvaluationContext context) => _node.Eval(row, context);
 }
 

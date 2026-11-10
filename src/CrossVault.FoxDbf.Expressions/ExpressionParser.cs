@@ -177,6 +177,14 @@ internal sealed class ExpressionParser
                 name = "COUNT";
                 _nullTests.Add((id.Pos, id.Pos + id.Text.Length, name));
             }
+            bool distinct = aggregate && Peek.Type == TokenType.Identifier
+                && Peek.Text.Equals("DISTINCT", StringComparison.OrdinalIgnoreCase);
+            if (distinct)
+            {
+                if (name.ToUpperInvariant() is "MIN" or "MAX")
+                    throw new ExpressionException("SQL: DISTINCT is invalid.", Peek.Pos) { VfpErrorNumber = 1819 };
+                Next();
+            }
             var args = new List<AstNode>();
             if (_sql is not null && name.Equals("COUNT", StringComparison.OrdinalIgnoreCase) && Peek.Type == TokenType.Star
                 || aggregate && Peek.Type == TokenType.Star)
@@ -200,6 +208,7 @@ internal sealed class ExpressionParser
             if (aggregate && args.Count != 1)
                 throw new ExpressionException(args.Count == 0 ? "Expression is invalid. A valid expression is required." : "Function name is missing ( ).", id.Pos)
                     { VfpErrorNumber = args.Count == 0 ? 152 : 1300 };
+            if (distinct) args[0] = new SqlDistinctNode(args[0]);
             return new FunctionNode(name, args.ToArray());
         }
         return new FieldNode(id.Text);

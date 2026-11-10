@@ -1664,8 +1664,12 @@ internal sealed class SelectExecutor
             // differently cased GROUP BY keys that collate equal under GENERAL.
             IRowContext rep = members.Count > 0 ? members[^1] : EmptyRowContext.Instance;
             var row = sel.Items.Select(it => ProjectAggregateItem(it, members, rep, ctx)).ToArray();
+            // VFP9's bare COUNT(*) shortcut leaves HAVING aggregate slots empty. Aliases still
+            // see the projected count; COUNT(*)+0 and other aggregate projections use the group.
+            var havingMembers = sel.GroupBy.Count == 0 && sel.Items.Count == 1
+                && sel.Items[0].AggregateStarFunction == "COUNT" ? new List<IRowContext>() : members;
             if (sel.Having is not null
-                && !EvalHaving(sel.Having, members, AliasRow(rep, row, aliases, scope.IsSourceField, columns), ctx))
+                && !EvalHaving(sel.Having, havingMembers, AliasRow(rep, row, aliases, scope.IsSourceField, columns), ctx))
                 continue;
             result.Add((row, rep));
         }
@@ -1771,12 +1775,21 @@ internal sealed class SelectExecutor
     private static object? ComputeAggregate(
         string func, ExpressionArgument arg, List<IRowContext> members, EvaluationContext ctx)
     {
-        if (func == "COUNT")
+        if (func == "COUNT" && !arg.IsDistinct)
             return (decimal)members.Count(m => !arg.Evaluate(m, ctx).IsNull);
 
         var vals = members.Select(m => arg.Evaluate(m, ctx)).Where(v => !v.IsNull).ToList();
+        if (arg.IsDistinct)
+        {
+            vals.Sort((left, right) => CompareVfp(left, right, ctx));
+            int write = 0;
+            for (int read = 0; read < vals.Count; read++)
+                if (write == 0 || CompareVfp(vals[write - 1], vals[read], ctx) != 0) vals[write++] = vals[read];
+            vals.RemoveRange(write, vals.Count - write);
+        }
         switch (func)
         {
+            case "COUNT": return (decimal)vals.Count;
             case "SUM": return vals.Count == 0 ? null : vals.Aggregate(0m, (acc, v) => acc + v.AsNumber);
             case "AVG": return vals.Count == 0 ? (decimal?)null : vals.Aggregate(0m, (acc, v) => acc + v.AsNumber) / vals.Count;
             case "MIN": return vals.Count == 0 ? null : Norm(ToClr(vals.Aggregate((a, b) => CompareVfp(a, b, ctx) <= 0 ? a : b)));
@@ -2316,6 +2329,7 @@ internal sealed class SelectExecutor
         if (HasTopLevelComma(a)) return false; // exclude scalar MIN(a,b)/MAX(a,b)
         func = m.Groups[1].Value.ToUpperInvariant();
         arg = a.Trim();
+        if (arg.StartsWith("DISTINCT ", StringComparison.OrdinalIgnoreCase)) arg = arg[9..].TrimStart();
         return true;
     }
 

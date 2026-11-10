@@ -614,3 +614,15 @@ internal sealed partial class FunctionNode : AstNode
 
     private static int AtLeastOne(int length) => length > 0 ? length : 1;
 }
+
+// SQL owns DISTINCT's grouping semantics; this marker preserves the argument's ordinary value and type.
+internal sealed class SqlDistinctNode(AstNode argument) : AstNode
+{
+    public override VfpValue Eval(IRowContext row, EvaluationContext ctx) => argument.Eval(row, ctx);
+    public override Expression Build(BuildContext context) => argument.Build(context);
+    public override VfpTypeInfo Infer(ISchema schema) => argument.Infer(schema);
+    internal override VfpTypeInfo InferSql(ISchema schema) => argument.InferSql(schema);
+    internal override bool ContainsFunction(Func<string, int, bool> predicate) => argument.ContainsFunction(predicate);
+    public override void CollectFields(ICollection<string> into, Func<string, int, bool>? skipFunction = null)
+        => argument.CollectFields(into, skipFunction);
+}
