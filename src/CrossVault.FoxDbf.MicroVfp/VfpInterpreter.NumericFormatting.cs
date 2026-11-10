@@ -23,8 +23,10 @@ public sealed partial class VfpInterpreter
         }
         CloseAlternate();
         string name = argument[2..].Trim();
-        bool additive = name.EndsWith(" ADDITIVE", StringComparison.OrdinalIgnoreCase);
-        if (additive) name = name[..^9].TrimEnd();
+        int lastSpace = name.LastIndexOf(' ');
+        string option = lastSpace < 0 ? "" : name[(lastSpace + 1)..];
+        bool additive = option.Length >= 4 && "ADDITIVE".StartsWith(option, StringComparison.OrdinalIgnoreCase);
+        if (additive) name = name[..lastSpace].TrimEnd();
         name = name.Trim('\'', '"', '[', ']');
         if (name.Length == 0)
         {
@@ -108,9 +110,10 @@ public sealed partial class VfpInterpreter
     {
         if (expression.Parsed is not { } parsed) return null;
         var schema = new PrintSchema(this);
-        if (!parsed.ReferencedFields().Any(name => schema.TryGetColumn(name, out _, out _, out _))) return null;
+        var fields = parsed.ReferencedFields();
+        if (fields.Count == 0 || fields.Any(name => !schema.TryGetColumn(name, out _, out _, out _))) return null;
         var info = parsed.InferSqlType(schema);
-        return info.Type == VfpType.Integer ? 11 : info.SqlStorageType == 'B' ? 21 : info.Length;
+        return info.Type == VfpType.Integer ? 11 : info.SqlStorageType == 'B' ? 21 : info.Length > 0 ? info.Length : null;
     }
 
     private sealed class PrintSchema(VfpInterpreter owner) : ISchema

@@ -197,7 +197,13 @@ internal sealed partial class DmlExecutor
     {
         private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<DbfColumn>, Dictionary<string, DbfColumn>> ColumnIndexes = new();
         private readonly Dictionary<string, DbfColumn> _columns = ColumnIndexes.GetValue(columns,
-            static source => source.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase));
+            static source =>
+            {
+                var index = new Dictionary<string, DbfColumn>(StringComparer.OrdinalIgnoreCase);
+                // Preserve the original first-match lookup for duplicate names in imported schemas.
+                foreach (var column in source) index.TryAdd(column.Name, column);
+                return index;
+            });
 
         public int RecNo => recno;
         public int RecCount => recno;
