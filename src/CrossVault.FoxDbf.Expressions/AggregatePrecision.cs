@@ -11,28 +11,29 @@ internal sealed partial class LiteralNode
     }
 }
 
-// VFP9 discovers aggregate type/precision by sampling the expression tree at the first
-// qualifying record (or the final pointer). Each parent samples its children before itself;
-// this is observable with RAND/UDFs. It runs once per command, never per scanned row.
+// VFP9's command-level metadata walk precedes the ordinary per-row evaluations.
+// Round4 AggregateMatrix pins the recursive visits, including IIF depths 1/2/3/5:
+// ordinary operands and conditions once, conditional value arguments twice, then Eval.
+// Sampling starts at the first qualifying record (or final pointer if none qualifies).
 internal sealed partial class UnaryNode
 {
-    internal override (VfpValue Value, int? Decimals) ProbeAggregate(ISchema schema, IRowContext row, EvaluationContext context)
+    internal override (VfpValue Value, int? Decimals) ProbeAggregate<TVfpError>(ISchema schema, IRowContext row, EvaluationContext context)
     {
-        var operand = _operand.ProbeAggregate(schema, row, context);
+        var operand = _operand.ProbeAggregate<TVfpError>(schema, row, context);
         return (Eval(row, context), operand.Decimals);
     }
 }
 
 internal sealed partial class BinaryNode
 {
-    internal override (VfpValue Value, int? Decimals) ProbeAggregate(ISchema schema, IRowContext row, EvaluationContext context)
+    internal override (VfpValue Value, int? Decimals) ProbeAggregate<TVfpError>(ISchema schema, IRowContext row, EvaluationContext context)
     {
-        var left = _left.ProbeAggregate(schema, row, context);
-        var right = _right.ProbeAggregate(schema, row, context);
+        var left = _left.ProbeAggregate<TVfpError>(schema, row, context);
+        var right = _right.ProbeAggregate<TVfpError>(schema, row, context);
         int? scale = left.Decimals is int l && right.Decimals is int r ? _op switch
         {
             BinOp.Mul => Math.Min(18, l + r),
-            BinOp.Div => Math.Max(context.NumericDecimals, Math.Max(l, r)),
+            BinOp.Div => Math.Max(context.NumericDecimals + (IsSqlConstant ? 0 : 2), Math.Min(18, l + r)),
             _ => Math.Max(l, r)
         } : null;
         return (Eval(row, context), scale);
@@ -41,24 +42,28 @@ internal sealed partial class BinaryNode
 
 internal sealed partial class FunctionNode
 {
-    internal override (VfpValue Value, int? Decimals) ProbeAggregate(ISchema schema, IRowContext row, EvaluationContext context)
+    internal override (VfpValue Value, int? Decimals) ProbeAggregate<TVfpError>(ISchema schema, IRowContext row, EvaluationContext context)
     {
         var samples = new (VfpValue Value, int? Decimals)[_args.Length];
-        bool branch = _upper is "IIF" or "NVL" or "EVL";
+        bool branch = _upper is "IIF" or "ICASE" or "NVL" or "EVL";
         for (int i = 0; i < _args.Length; i++)
         {
-            // VFP's branch metadata probing may visit an unchosen value, but does not
-            // surface its error. The oracle observes two samples of branch arguments.
+            // Metadata visits even unchosen branches, suppressing only VFP errors.
+            // Conditions have one recursive visit; value arguments have two. The final
+            // Eval below still uses the function's normal lazy/eager error semantics.
             if (branch)
             {
                 try
                 {
-                    _args[i].ProbeAggregate(schema, row, context);
-                    samples[i] = _args[i].ProbeAggregate(schema, row, context);
+                    bool condition = _upper == "IIF" && i == 0
+                        || _upper == "ICASE" && i % 2 == 0 && i + 1 < _args.Length;
+                    if (!condition) _args[i].ProbeAggregate<TVfpError>(schema, row, context);
+                    samples[i] = _args[i].ProbeAggregate<TVfpError>(schema, row, context);
                 }
-                catch { }
+                catch (TVfpError) { }
+                catch (ExpressionException) { }
             }
-            else samples[i] = _args[i].ProbeAggregate(schema, row, context);
+            else samples[i] = _args[i].ProbeAggregate<TVfpError>(schema, row, context);
         }
         var value = Eval(row, context);
         int? scale = _upper switch

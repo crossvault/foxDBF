@@ -1249,7 +1249,7 @@ public sealed partial class VfpInterpreter
             _calculateOperand = sum.CalculateFunctions is not null;
             try
             {
-                return expression.Parsed is { } parsed ? parsed.ProbeAggregate(schema, _row, _ctx)
+                return expression.Parsed is { } parsed ? parsed.ProbeAggregate<MicroVfpRuntimeException>(schema, _row, _ctx)
                     : (Eval(expression), null);
             }
             finally { _requireDmlNames = previous; _calculateOperand = previousCalculate; }
@@ -1406,8 +1406,9 @@ public sealed partial class VfpInterpreter
             // sentinel; AVERAGE returns zero. Keep the observed distinction, including its type.
             if (currency && function == "AVG" && sum.CalculateFunctions is not null && counts[k] == 0)
                 result = 429496.7295;
+            // SUM and AVERAGE use sampled precision with SET DECIMALS as a floor; CALCULATE uses the setting.
             int decimals = sum.CalculateFunctions is not null ? _ctx.NumericDecimals
-                : sum.Average ? Math.Max(_ctx.NumericDecimals, scales[k]) : scales[k];
+                : Math.Max(_ctx.NumericDecimals, scales[k]);
             decimal currencyResult = !currency ? 0 : function == "SUM" ? currencyAcc[k]
                 : function == "AVG" && counts[k] > 0 ? currencyAcc[k] / counts[k]
                 : function == "MIN" ? minima[k].AsNumber : function == "MAX" ? maxima[k].AsNumber : (decimal)result;

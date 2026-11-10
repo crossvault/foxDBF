@@ -31,7 +31,8 @@ internal abstract class AstNode
 
     // SQL cursor storage has different sizing rules from index expressions.
     internal virtual VfpTypeInfo InferSql(ISchema schema) => Infer(schema);
-    internal virtual (VfpValue Value, int? Decimals) ProbeAggregate(ISchema schema, IRowContext row, EvaluationContext context)
+    // The host supplies its VFP runtime exception type without an expression-engine dependency on microVFP.
+    internal virtual (VfpValue Value, int? Decimals) ProbeAggregate<TVfpError>(ISchema schema, IRowContext row, EvaluationContext context) where TVfpError : Exception
     {
         var value = Eval(row, context);
         var info = Infer(schema);

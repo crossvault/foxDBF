@@ -116,8 +116,8 @@ public sealed class VfpExpression
     public VfpTypeInfo InferType(ISchema schema)
         => _root.Infer(schema);
 
-    internal (VfpValue Value, int? Decimals) ProbeAggregate(ISchema schema, IRowContext row, EvaluationContext context)
-        => _root.ProbeAggregate(schema, row, context);
+    internal (VfpValue Value, int? Decimals) ProbeAggregate<TVfpError>(ISchema schema, IRowContext row, EvaluationContext context) where TVfpError : Exception
+        => _root.ProbeAggregate<TVfpError>(schema, row, context);
 
     internal VfpTypeInfo InferSqlType(ISchema schema) => _root.InferSql(schema);
 
