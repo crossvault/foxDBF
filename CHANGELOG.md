@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- microVFP `TRANSFORM` of empty Date/DateTime values preserves VFP9's blank date separators,
+  century width and empty time with AM suffix under AMERICAN, GERMAN and ANSI date formats.
+  The expression engine also accepts the empty DateTime literal `{//::}`.
 - BREAKING: microVFP `SUM`/`AVERAGE` reject nonnumeric expressions with VFP9 error 27,
   including empty tables and FOR selections without matches. Dynamic expressions receive VFP9's
   initial type probe at the first matching record or the final record pointer.

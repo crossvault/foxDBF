@@ -342,6 +342,9 @@ internal sealed class ExpressionLexer
         if (str.StartsWith('^')) str = str.Substring(1).Trim();
         if (str.Length == 0 || str is "/" or "//" or "..")
             return new(TokenType.DateLit, pos, inner, VfpValue.Date(default));
+        // VFP9's empty DateTime literal retains type T, unlike the empty Date literal {}.
+        if (str == "//::")
+            return new(TokenType.DateTimeLit, pos, inner, VfpValue.DateTime(default));
 
         string datePart = str;
         string? timePart = null;
