@@ -195,7 +195,7 @@ public sealed partial class VfpInterpreter
         }
         // Keep all writes on the interpreter's writer: cached handles, CDX/IDX, triggers, buffers
         // and PRG/COW transactions therefore share precisely the REPLACE path.
-        ExecReplace(new ReplaceStmt(clauses, null, null, null, null), rulesValidated: true);
+        ExecReplace(new ReplaceStmt(clauses, null, null, null, null), rulesValidated: true, reportNumericOverflow: false);
         // VFP retains an invalid SQL candidate in a row/table buffer so it can be corrected or
         // reverted. The same failure must still prevent a later TABLEUPDATE from publishing it.
         if (EnforceReferentialIntegrity && Meta(wa.Area).Buffering > 1)

@@ -100,7 +100,7 @@ public sealed partial class VfpInterpreter
         VfpType.Numeric when double.IsNaN(v.AsDouble) => new string('*', 11),
         VfpType.Numeric when double.IsInfinity(v.AsDouble) => new string('*', 10),
         VfpType.Currency => (v.AsNumber < 0 ? "$-" : "$")
-            + Math.Round(Math.Abs(v.AsDisplayNumber), _ctx.NumericDecimals, MidpointRounding.AwayFromZero).ToString("N" + _ctx.NumericDecimals, CultureInfo.InvariantCulture),
+            + Math.Abs(v.RoundForDisplay(_ctx.NumericDecimals)).ToString("N" + _ctx.NumericDecimals, CultureInfo.InvariantCulture),
         VfpType.Numeric or VfpType.Integer when _ctx.FixedNumeric => FixedNumber(v),
         VfpType.Numeric when v.DisplayDecimals >= 0 && v.AsNumber != decimal.Truncate(v.AsNumber)
             => Math.Round(v.AsDisplayNumber, v.DisplayDecimals, MidpointRounding.AwayFromZero).ToString("F" + v.DisplayDecimals, CultureInfo.InvariantCulture),

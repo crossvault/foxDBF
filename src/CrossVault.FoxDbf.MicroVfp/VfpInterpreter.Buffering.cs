@@ -30,7 +30,7 @@ public sealed partial class VfpInterpreter
     /// <summary>Buffer a REPLACE for the current record instead of writing through. For an EXISTING row the
     /// pre-change on-disk value is captured once (OLDVAL's buffer-start baseline); for a buffered APPENDED
     /// row the edit lands directly on the append entry (which starts as its own buffer state).</summary>
-    private void BufferReplace(ReplaceStmt rp, int area, VfpSession.WorkArea wa, AreaMeta m, bool normalize = false)
+    private void BufferReplace(ReplaceStmt rp, int area, VfpSession.WorkArea wa, AreaMeta m, bool normalize = false, bool reportNumericOverflow = true)
     {
         int rcTable = wa.Table.RecordCount;
         int recno = m.RecNo;
@@ -57,6 +57,7 @@ public sealed partial class VfpInterpreter
             target = edit.Fields;
         }
 
+        bool overflow = false;
         foreach (var clause in rp.Clauses)
         {
             string field = StripQualifier(NameOf(clause.Field));
@@ -70,6 +71,7 @@ public sealed partial class VfpInterpreter
             target[idx] = normalize ? NormalizeUpdateValue(col, v, col.Type == 'Q' ? wa.Table.BinaryTextEncoding : wa.Table.Encoding)
                 : DmlExecutor.StoredFieldValue(wa.Table, col,
                     v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr()));
+            if (reportNumericOverflow && FieldEncoder.NumericOverflow(col, v.ToClr(), wa.Table.Encoding)) overflow = true;
             if (edit is not null)
             {
                 if (normalize && recno <= rcTable) buf.Rows[recno] = edit;
@@ -79,6 +81,7 @@ public sealed partial class VfpInterpreter
                 ValidateBufferedRow(wa, recno, edit, changedField: idx, validateRecord: false);
             }
         }
+        if (overflow) throw new MicroVfpRuntimeException("Numeric overflow. Data was lost.", 39);
     }
 
     private static void CheckReplaceValueType(DbfColumn column, VfpValue value)
@@ -173,6 +176,10 @@ public sealed partial class VfpInterpreter
                 // Reuse VALUES buffering, including row-buffer auto-commit between array rows.
                 // The original SQL is never replayed: CommitAppend uses these captured values.
                 ExecInsert(new InsertStmt(ins.Sql, candidate));
+                if (array)
+                    for (int i = 0; i < count; i++)
+                        if (FieldEncoder.NumericOverflow(columns[i], row[i], wa.Table.Encoding))
+                            throw new MicroVfpRuntimeException("Numeric overflow. Data was lost.", 39);
             }
             finally { Session.InsertArrayRow = previousArrayRow; }
         }

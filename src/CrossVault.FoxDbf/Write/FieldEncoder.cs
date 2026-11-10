@@ -17,8 +17,8 @@ namespace CrossVault.FoxDbf.Write;
 /// length byte, binary/<c>G</c> raw bytes, <c>M</c> a 0 pointer (memo write deferred to D1).
 /// </summary>
 /// <remarks>
-/// Never throws on an out-of-range value where the spec coerces (best-effort, §A10): a
-/// numeric too wide for the field overflows to <c>'*'</c> fill, an impossible date clamps.
+/// N/F overflow writes <c>'*'</c> fill, as VFP9 SQL INSERT/UPDATE do. Integer and currency
+/// overflow throw <see cref="DbfWriteException"/> with VFP error 39; invalid integer types report 9.
 /// </remarks>
 public static class FieldEncoder
 {
@@ -194,6 +194,18 @@ public static class FieldEncoder
             dest[pad + i] = (byte)s[i];
     }
 
+    internal static bool NumericOverflow(DbfColumn column, object? value, Encoding encoding)
+    {
+        if (column.Type is not ('N' or 'F') || value is null) return false;
+        double number = ToDouble(value);
+        // Most writes cannot overflow even after an integer rounding carry.
+        if (double.IsFinite(number) && Math.Abs(number) < Math.Pow(10, column.Length - (number < 0 ? 1 : 0)) - 0.5)
+            return false;
+        Span<byte> bytes = stackalloc byte[column.Length];
+        Encode(column, value, encoding, bytes);
+        return bytes.Length > 0 && bytes[0] == (byte)'*';
+    }
+
     private static bool TryWriteNumberRightJustified(object value, int decimals, Span<byte> dest)
     {
         if (value is double d && !double.IsFinite(d) || value is float f && !float.IsFinite(f))
@@ -201,34 +213,44 @@ public static class FieldEncoder
             dest.Fill((byte)'*');
             return true;
         }
+        // Normalize the CLR numeric types before both the full-scale and reduced-scale attempts.
+        value = value switch
+        {
+            short n => (long)n, byte n => (long)n, sbyte n => (long)n,
+            ushort n => (long)n, uint n => (long)n, ulong n => (decimal)n,
+            string text when decimal.TryParse(text, NumberStyles.Number, Inv, out var n) => n,
+            _ => value,
+        };
         char[]? rented = null;
         Span<char> chars = dest.Length <= MaxStackNumberChars
             ? stackalloc char[MaxStackNumberChars]
-            : (rented = ArrayPool<char>.Shared.Rent(dest.Length)).AsSpan();
-        chars = chars[..dest.Length];
+            : (rented = ArrayPool<char>.Shared.Rent(dest.Length + 1)).AsSpan();
+        // One extra position lets VFP omit a leading zero (.50 / -.12).
 
         try
         {
-            if (TryFormatNumber(value, decimals, chars, out int charsWritten, out bool handled))
+            for (int scale = decimals; scale >= 0; scale--)
             {
-                WriteAsciiRightJustified(chars[..charsWritten], dest);
-                return true;
-            }
-
-            if (handled)
-            {
-                // VFP9 sacrifices fractional digits before declaring numeric overflow.
-                int reduced = VfpRuntime.NumericStorageDecimals(ToDouble(value), dest.Length, decimals);
-                if (reduced < decimals && TryFormatNumber(value, reduced, chars, out charsWritten, out _))
+                if (TryFormatNumber(value, scale, chars, out int charsWritten, out bool handled))
                 {
-                    WriteAsciiRightJustified(chars[..charsWritten], dest);
-                    return true;
+                    var text = chars[..charsWritten];
+                    if (text.Length > dest.Length && text.StartsWith("0.")) text = text[1..];
+                    else if (text.Length > dest.Length && text.StartsWith("-0."))
+                    {
+                        chars[1] = '-';
+                        text = chars[1..charsWritten];
+                    }
+                    if (text.Length <= dest.Length)
+                    {
+                        WriteAsciiRightJustified(text, dest);
+                        return true;
+                    }
                 }
-                dest.Fill((byte)'*');
-                return true;
+                else if (!handled) return false;
+                // Retry from the original value: a rounding carry can require another lost digit.
             }
-
-            return false;
+            dest.Fill((byte)'*');
+            return true;
         }
         finally
         {

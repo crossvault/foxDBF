@@ -115,7 +115,13 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         if (_isExact) return Currency(Math.Round(_dec, 4, MidpointRounding.AwayFromZero)).AsNumber;
         // Cast the scaled integer, not the double itself: decimal(double) discards digits
         // after the fifteenth significant digit, unlike VFP9's fixed-point conversion.
-        double scaled = Math.Round(_num * 10000d, MidpointRounding.AwayFromZero);
+        double scaled = _num * 10000d;
+        double magnitude = Math.Abs(scaled);
+        // VFP9 retains a half when binary multiplication falls one ULP short of the conversion boundary.
+        if (magnitude - Math.Floor(magnitude) < 0.5
+            && Math.BitIncrement(magnitude) - Math.Floor(magnitude) == 0.5)
+            scaled = Math.CopySign(Math.BitIncrement(magnitude), scaled);
+        scaled = Math.Round(scaled, MidpointRounding.AwayFromZero);
         if (!double.IsFinite(scaled) || scaled < long.MinValue || scaled >= 9223372036854775808d)
             throw new ExpressionException("Currency value is out of range.") { VfpErrorNumber = 1988 };
         return (long)scaled / 10000m;
@@ -204,6 +210,16 @@ public readonly struct VfpValue : IEquatable<VfpValue>
                 System.Globalization.CultureInfo.InvariantCulture, out decimal value)
                 ? Math.Round(value, 15, MidpointRounding.AwayFromZero) : AsNumber;
         }
+    }
+
+    internal decimal RoundForDisplay(int decimals)
+    {
+        if (_type != VfpType.Currency)
+            return Math.Round(AsDisplayNumber, decimals, MidpointRounding.AwayFromZero);
+        decimal magnitude = Math.Abs(_dec);
+        int digits = magnitude < 1 ? 1 : (int)Math.Floor(Math.Log10((double)magnitude)) + 1;
+        // Apply the display's significant-digit limit and requested scale in one rounding.
+        return Math.Round(_dec, Math.Min(decimals, Math.Clamp(16 - digits, 0, 4)), MidpointRounding.AwayFromZero);
     }
 
     /// <summary>Numeric payload as <see cref="double"/>.</summary>

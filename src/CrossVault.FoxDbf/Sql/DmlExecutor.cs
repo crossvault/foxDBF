@@ -234,6 +234,9 @@ internal sealed partial class DmlExecutor
                 for (int i = 0; i < k; i++) map[columns[i].Name] = row[i];
                 AppendMemoryRow(st.Table, ref target, map, honourSetNull: false);
                 count++;
+                for (int i = 0; i < k; i++)
+                    if (FieldEncoder.NumericOverflow(columns[i], row[i], target.Writer.Schema.Encoding))
+                        throw new FoxDbfSqlException("Numeric overflow. Data was lost.") { VfpErrorNumber = 39 };
             }
         }
         finally { target.Dispose(); }
@@ -390,6 +393,8 @@ internal sealed partial class DmlExecutor
         if (value is null || column.Type is not ('N' or 'F' or 'I' or 'Y' or 'B')) return value;
         Span<byte> bytes = stackalloc byte[column.Length];
         FieldEncoder.Encode(column, value, schema.Encoding, bytes);
+        if (column.Type is 'N' or 'F' && bytes.Length > 0 && bytes[0] == (byte)'*')
+            return double.PositiveInfinity;
         return FieldDecoder.Decode(column, bytes, schema.Encoding);
     }
 

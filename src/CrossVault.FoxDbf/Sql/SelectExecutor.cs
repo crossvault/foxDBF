@@ -2387,16 +2387,15 @@ internal sealed class SelectExecutor
             else if (column.VfpType == 'Y') value = Math.Round(Convert.ToDecimal(value), 4, MidpointRounding.AwayFromZero);
             else if (column.VfpType is 'N' or 'F' && column.Length > 0)
             {
-                int decimals = Math.Clamp(column.Decimals, 0, 28);
-                value = Math.Round(Convert.ToDecimal(value), decimals, MidpointRounding.AwayFromZero);
+                decimal original = Convert.ToDecimal(value);
+                int decimals = VfpRuntime.NumericStorageDecimals((double)original, column.Length,
+                    Math.Clamp(column.Decimals, 0, 28));
+                value = Math.Round(original, decimals, MidpointRounding.AwayFromZero);
+                string numericText = ((decimal)value).ToString("F" + decimals, CultureInfo.InvariantCulture);
+                int length = numericText.Length;
+                if (numericText.StartsWith("0.", StringComparison.Ordinal) || numericText.StartsWith("-0.", StringComparison.Ordinal)) length--;
                 // VFP's all-star numeric cursor value is +infinity when copied into a B field.
-                if (((decimal)value).ToString("F" + decimals, CultureInfo.InvariantCulture).Length > column.Length)
-                {
-                    decimals = VfpRuntime.NumericStorageDecimals((double)(decimal)value, column.Length, decimals);
-                    value = Math.Round((decimal)value, decimals, MidpointRounding.AwayFromZero);
-                    if (((decimal)value).ToString("F" + decimals, CultureInfo.InvariantCulture).Length > column.Length)
-                        return double.PositiveInfinity;
-                }
+                if (length > column.Length) return double.PositiveInfinity;
             }
         }
         value = CoerceCell(value, column.ClrType);

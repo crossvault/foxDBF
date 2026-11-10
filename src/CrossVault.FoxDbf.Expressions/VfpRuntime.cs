@@ -730,7 +730,7 @@ internal static partial class VfpRuntime
         if (Arg(a, 0).Type == VfpType.Currency)
         {
             int scale = NumericStorageDecimals(n, Math.Max(0, len), Math.Clamp(dec, 0, 28));
-            string text = Math.Round(Arg(a, 0).AsDisplayNumber, scale, MidpointRounding.AwayFromZero).ToString("F" + scale, Inv);
+            string text = Arg(a, 0).RoundForDisplay(scale).ToString("F" + scale, Inv);
             return VfpValue.Character(text.Length > len ? new string('*', Math.Max(0, len)) : text.PadLeft(len));
         }
         return VfpValue.Character(StrCore(n, len, dec));
@@ -970,10 +970,14 @@ internal static partial class VfpRuntime
 
     internal static int NumericStorageDecimals(double value, int width, int decimals)
     {
-        double magnitude = Math.Abs(value);
-        int integerDigits = magnitude < 1 ? 1 : (int)Math.Floor(Math.Log10(magnitude)) + 1;
-        if (value < 0) integerDigits++;
-        return Math.Clamp(width - integerDigits - 1, 0, decimals);
+        for (int scale = decimals; scale > 0; scale--)
+        {
+            double rounded = Math.Abs(Math.Round(value, Math.Min(scale, 15), MidpointRounding.AwayFromZero));
+            int digits = rounded < 1 ? 0 : (int)Math.Floor(Math.Log10(rounded)) + 1;
+            if (value < 0) digits++;
+            if (digits + scale + 1 <= width) return scale;
+        }
+        return 0;
     }
 
     internal static double Round(double n, int dec)

@@ -100,7 +100,7 @@ public sealed class FoxDbfCommand : DbCommand
             return ExecuteEnforcedDml(sql);
 
         EnsureMemoryBridgeFor(sql);
-        var result = _connection.Session.Execute(sql);
+        var result = ExecuteSql(sql);
         return result?.AffectedRecords ?? -1;
     }
 
@@ -128,7 +128,7 @@ public sealed class FoxDbfCommand : DbCommand
         }
 
         EnsureMemoryBridgeFor(sql);
-        var result = _connection.Session.Execute(sql);
+        var result = ExecuteSql(sql);
         if (result?.Rows == null) return null;
 
         foreach (var row in result.Rows)
@@ -137,6 +137,15 @@ public sealed class FoxDbfCommand : DbCommand
                 return row[0] ?? DBNull.Value;
         }
         return null;
+    }
+
+    private SqlResult? ExecuteSql(string sql)
+    {
+        try { return _connection!.Session.Execute(sql); }
+        catch (Exception error) when (error is not DbException && error is IVfpErrorCode { VfpErrorNumber: 39 or 1988 })
+        {
+            throw new FoxDbfException(error.Message, ((IVfpErrorCode)error).VfpErrorNumber!.Value, error);
+        }
     }
 
     protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior)
@@ -186,7 +195,7 @@ public sealed class FoxDbfCommand : DbCommand
             throw new FoxDbfException("ExecuteReader cannot be used with DML statements; use ExecuteNonQuery.");
 
         EnsureMemoryBridgeFor(sql);
-        var result = _connection.Session.Execute(sql);
+        var result = ExecuteSql(sql);
         if (result == null)
             throw new FoxDbfException("ExecuteReader can only be used with SELECT statements.");
 

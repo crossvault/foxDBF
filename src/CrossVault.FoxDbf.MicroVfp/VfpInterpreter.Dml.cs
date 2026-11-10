@@ -624,7 +624,7 @@ public sealed partial class VfpInterpreter
         meta.KeyVisible = null;
     }
 
-    private void ExecReplace(ReplaceStmt rp, bool rulesValidated = false)
+    private void ExecReplace(ReplaceStmt rp, bool rulesValidated = false, bool reportNumericOverflow = true)
     {
         if (rp.Scope is not null || rp.For is not null || rp.While is not null)
         {
@@ -641,7 +641,7 @@ public sealed partial class VfpInterpreter
         var m = Meta(area);
 
         // BUFFERING (mode>1): defer the field writes into the area's buffer instead of writing through.
-        if (m.Buffering > 1) { BufferReplace(rp, area, wa, m); return; }
+        if (m.Buffering > 1) { BufferReplace(rp, area, wa, m, reportNumericOverflow: reportNumericOverflow); return; }
 
         int recIndex = m.RecNo - 1;
         if (recIndex < 0 || recIndex >= wa.Table.RecordCount) return;
@@ -742,11 +742,10 @@ public sealed partial class VfpInterpreter
                         });
                     }
                     assigned++;
-                    if (NumericFieldOverflow(wa.Table.Columns[idx], values[idx], writer.Schema.Encoding))
+                    if (reportNumericOverflow && FieldEncoder.NumericOverflow(wa.Table.Columns[idx], values[idx], writer.Schema.Encoding))
                     {
-                        // REPLACE publishes the overflowing field's stars before reporting error 39.
+                        // VFP9 stores all assignments, including stars, before reporting numeric overflow.
                         assignmentError = new MicroVfpRuntimeException("Numeric overflow. Data was lost.", 39);
-                        break;
                     }
                 }
             }
@@ -803,14 +802,6 @@ public sealed partial class VfpInterpreter
             parentSnap?.Cleanup();
             candSnap?.Cleanup();
         }
-    }
-
-    private static bool NumericFieldOverflow(DbfColumn column, object? value, System.Text.Encoding encoding)
-    {
-        if (column.Type is not ('N' or 'F') || value is null) return false;
-        Span<byte> bytes = stackalloc byte[column.Length];
-        FieldEncoder.Encode(column, value, encoding, bytes);
-        return bytes.Length > 0 && bytes[0] == (byte)'*';
     }
 
     private void ExecReplaceScope(ReplaceStmt rp)
