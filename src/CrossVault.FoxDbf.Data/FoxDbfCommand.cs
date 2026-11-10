@@ -1,4 +1,5 @@
 using System;
+using CrossVault.FoxDbf.Expressions;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
@@ -142,9 +143,13 @@ public sealed class FoxDbfCommand : DbCommand
     private SqlResult? ExecuteSql(string sql)
     {
         try { return _connection!.Session.Execute(sql); }
-        catch (Exception error) when (error is not DbException && error is IVfpErrorCode { VfpErrorNumber: 39 or 1988 })
+        catch (Exception error) when (error is not DbException
+            && (error is IVfpErrorCode { VfpErrorNumber: 39 or 1988 }
+                || error is ExpressionException { VfpErrorNumber: 39 or 1988 }))
         {
-            throw new FoxDbfException(error.Message, ((IVfpErrorCode)error).VfpErrorNumber!.Value, error);
+            int code = error is IVfpErrorCode coded ? coded.VfpErrorNumber!.Value
+                : ((ExpressionException)error).VfpErrorNumber!.Value;
+            throw new FoxDbfException(error.Message, code, error);
         }
     }
 

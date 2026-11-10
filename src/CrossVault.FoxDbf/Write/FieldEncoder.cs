@@ -595,6 +595,10 @@ public static class FieldEncoder
         int i => i,
         short s => s,
         byte b => b,
+        sbyte b => b,
+        ushort u => u,
+        uint u => u,
+        ulong u => u,
         double d => SafeFromDouble(d),
         float f => SafeFromDouble(f),
         string s => decimal.TryParse(s, NumberStyles.Number, Inv, out var r) ? r : 0m,
@@ -618,7 +622,11 @@ public static class FieldEncoder
         int i => i,
         short s => s,
         byte b => b,
-        string s => double.TryParse(s, NumberStyles.Float, Inv, out var r) ? r : 0d,
+        sbyte b => b,
+        ushort u => u,
+        uint u => u,
+        ulong u => u,
+        string s => decimal.TryParse(s, NumberStyles.Number, Inv, out var r) ? (double)r : 0d,
         _ => 0d,
     };
 

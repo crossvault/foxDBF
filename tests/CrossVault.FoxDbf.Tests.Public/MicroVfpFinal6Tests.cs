@@ -4,6 +4,13 @@ public sealed class MicroVfpFinal6Tests
 {
     internal static readonly (string Name, string Script)[] Cases =
     [
+        ("STR(123,3,1)", "result=STR(123,3,1)"),
+        ("STR($123,3,1)", "result=STR($123,3,1)"),
+        ("STR(999.5,3,1)", "result=STR(999.5,3,1)"),
+        ("STR(-0.04,3,1)", "result=STR(-0.04,3,1)"),
+        ("STR(0.995,3,2)", "result=STR(0.995,3,2)"),
+        ("STR(9.995,4,2)", "result=STR(9.995,4,2)"),
+
         ("names_COUNT(DISTINCT n)", "CREATE TABLE t FREE (n N(8,3))\nINSERT INTO t VALUES (1.234)\nINSERT INTO t VALUES (1.234)\nINSERT INTO t VALUES (2.345)\nSELECT COUNT(DISTINCT n) FROM t INTO CURSOR zz\nresult=FIELD(1)"),
         ("names_SUM(DISTINCT n)", "CREATE TABLE t FREE (n N(8,3))\nINSERT INTO t VALUES (1.234)\nINSERT INTO t VALUES (1.234)\nINSERT INTO t VALUES (2.345)\nSELECT SUM(DISTINCT n) FROM t INTO CURSOR zz\nresult=FIELD(1)"),
         ("names_SUM(DISTINCT(n))", "CREATE TABLE t FREE (n N(8,3))\nINSERT INTO t VALUES (1.234)\nINSERT INTO t VALUES (1.234)\nINSERT INTO t VALUES (2.345)\nSELECT SUM(DISTINCT(n)) FROM t INTO CURSOR zz\nresult=FIELD(1)"),
@@ -53,6 +60,13 @@ public sealed class MicroVfpFinal6Tests
     ];
     internal static readonly Dictionary<string, string> Expected = new()
     {
+        ["STR(123,3,1)"] = "123",
+        ["STR($123,3,1)"] = "123",
+        ["STR(999.5,3,1)"] = "***",
+        ["STR(-0.04,3,1)"] = "0.0",
+        ["STR(0.995,3,2)"] = "1.0",
+        ["STR(9.995,4,2)"] = "10.0",
+
         ["names_COUNT(DISTINCT n)"] = "DCNT_N",
         ["names_SUM(DISTINCT n)"] = "DSUM_N",
         ["names_SUM(DISTINCT(n))"] = "DSUM_EXP_1",

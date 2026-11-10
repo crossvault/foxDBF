@@ -118,7 +118,8 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         double scaled = _num * 10000d;
         double magnitude = Math.Abs(scaled);
         // VFP9 retains a half when binary multiplication falls one ULP short of the conversion boundary.
-        if (magnitude - Math.Floor(magnitude) < 0.5
+        if (Math.BitIncrement(magnitude) - magnitude < 0.25
+            && magnitude - Math.Floor(magnitude) < 0.5
             && Math.BitIncrement(magnitude) - Math.Floor(magnitude) == 0.5)
             scaled = Math.CopySign(Math.BitIncrement(magnitude), scaled);
         scaled = Math.Round(scaled, MidpointRounding.AwayFromZero);
