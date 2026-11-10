@@ -80,13 +80,12 @@ public sealed class FieldEncoderFinal6Tests
     [Fact]
     public void ImportRowToleratesCaseInsensitiveDuplicateNames()
     {
-        using var dir = new MicroVfpTestSupport.TempDir("final6_import");
-        using var writer = DbfWriter.Create(dir.File("t.dbf"), [new DbfColumnDef("n", 'N', 8, 3)]);
         var type = typeof(VfpSession).Assembly.GetType("CrossVault.FoxDbf.Sql.DmlExecutor+ImportRow")!;
-        var column = writer.Schema.Columns[0];
-        var row = (IVfpValueRow)Activator.CreateInstance(type, new[] { column, column },
-            new Dictionary<string, object?> { ["n"] = 1.234m }, 0)!;
+        var columns = new[] { new DbfColumn("n", 'N', 8, 3, 0), new DbfColumn("N", 'N', 8, 1, 8) };
+        var row = (IVfpValueRow)Activator.CreateInstance(type, columns,
+            new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["n"] = 1.234m }, 0)!;
         Assert.Equal(1.234m, row.GetValue("n").AsNumber);
+        Assert.Equal(1.234m, row.GetValue("N").AsNumber);
         Assert.Equal(3, row.GetValue("N").DisplayDecimals);
     }
 }

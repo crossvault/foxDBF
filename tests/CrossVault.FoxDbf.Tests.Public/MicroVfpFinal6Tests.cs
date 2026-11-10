@@ -4,6 +4,9 @@ public sealed class MicroVfpFinal6Tests
 {
     internal static readonly (string Name, string Script)[] Cases =
     [
+        ("native_numeric_five", "CREATE TABLE t FREE (y Y,b B,n N(3))\nAPPEND BLANK\nREPLACE y WITH 5,b WITH 5,n WITH 5\nUSE\nresult=STRCONV(SUBSTR(FILETOSTR('t.dbf'),394,19),15)"),
+        ("negative_zero_narrow", "CREATE TABLE t FREE (n N(4,2))\nAPPEND BLANK\nREPLACE n WITH -0.001*1\nUSE\nresult=SUBSTR(FILETOSTR('t.dbf'),330,4)"),
+
         ("replace_integer_bytes_1", "CREATE TABLE t FREE (n I,tail I)\nINSERT INTO t VALUES (1,2)\nSET MULTILOCKS ON\n=CURSORSETPROP('Buffering',1,'t')\nTRY\nREPLACE n WITH 1e20,tail WITH 7\nCATCH TO failure\nENDTRY\nUSE\nresult=STRCONV(SUBSTR(FILETOSTR('t.dbf'),362,8),15)"),
         ("replace_integer_bytes_5", "CREATE TABLE t FREE (n I,tail I)\nINSERT INTO t VALUES (1,2)\nSET MULTILOCKS ON\n=CURSORSETPROP('Buffering',5,'t')\nTRY\nREPLACE n WITH 1e20,tail WITH 7\nCATCH TO failure\nENDTRY\n=TABLEUPDATE(.T.)\nUSE\nresult=STRCONV(SUBSTR(FILETOSTR('t.dbf'),362,8),15)"),
 
@@ -79,6 +82,8 @@ public sealed class MicroVfpFinal6Tests
     ];
     internal static readonly Dictionary<string, string> Expected = new()
     {
+        ["native_numeric_five"] = "50C30000000000000000000000001440202035",
+        ["negative_zero_narrow"] = "0.00",
         ["replace_integer_bytes_1"] = "0000008007000000",
         ["replace_integer_bytes_5"] = "0000008007000000",
 
