@@ -101,7 +101,7 @@ internal sealed class VfpArray
     public void Set(int sub1, int? sub2, VfpValue value)
     {
         int i = Index(sub1, sub2);
-        if (i >= 0 && i < _data.Length) _data[i] = value;
+        if (i >= 0 && i < _data.Length) _data[i] = value.WithExpressionNumericFormat(0, 0);
     }
 
     /// <summary>Reads element <paramref name="n"/> (1-based) by LINEAR (row-major) position — the numbering
@@ -110,7 +110,7 @@ internal sealed class VfpArray
 
     /// <summary>Writes element <paramref name="n"/> (1-based) by LINEAR (row-major) position; out-of-range
     /// writes are ignored.</summary>
-    public void SetLinear(int n, VfpValue value) { if (n >= 1 && n <= _data.Length) _data[n - 1] = value; }
+    public void SetLinear(int n, VfpValue value) { if (n >= 1 && n <= _data.Length) _data[n - 1] = value.WithExpressionNumericFormat(0, 0); }
 
     // ── ADEL / AINS element·row·column (size UNCHANGED; VFP fills/loses at the tail) ──────────────
     // hackfox s4g211: ADEL/AINS "don't affect the size of the array, only its contents". ADEL shifts
@@ -270,6 +270,8 @@ internal sealed class MemoryStore
     /// binding, else create it as an implicit-PRIVATE in the current frame.</summary>
     public void Set(string name, VfpValue value)
     {
+        // VFP9 assignment keeps the runtime overflow width, not the source expression's width.
+        value = value.WithExpressionNumericFormat(0, 0);
         long profileStart = VfpInsertProfile.Start();
         try
         {

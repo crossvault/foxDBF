@@ -64,6 +64,14 @@ internal sealed partial class LiteralNode : AstNode
     private readonly bool _byteLiteral;
     public LiteralNode(VfpValue value)
     {
+        // Literal width is known once, at parse time; conditional forms return this
+        // same value only when its branch is selected (Round7 VFP9 oracle).
+        if (value.Type == VfpType.Numeric && double.IsFinite(value.AsDouble))
+        {
+            string text = value.AsNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            int dot = text.IndexOf('.');
+            value = value.WithExpressionNumericFormat(text.Length, dot < 0 ? 0 : text.Length - dot - 1);
+        }
         _value = value;
         _byteLiteral = value.Type == VfpType.Character && !value.IsBinary
             && value.AsString.AsSpan().IndexOfAnyInRange('\u0080', '\u009f') >= 0;
@@ -333,7 +341,7 @@ internal sealed partial class FunctionNode : AstNode
                 : _args[2].Eval(row, ctx);
         var values = new VfpValue[_args.Length];
         for (int i = 0; i < _args.Length; i++) values[i] = _args[i].Eval(row, ctx);
-        PrepareOverflowFormat(values, row, ctx);
+        PrepareOverflowFormat(values);
         return VfpRuntime.CallFunction(_upper, values, ctx, row);
     }
 
@@ -351,20 +359,16 @@ internal sealed partial class FunctionNode : AstNode
                 : _args[2].Eval(row, ctx, functionResolver);
         var values = new VfpValue[_args.Length];
         for (int i = 0; i < _args.Length; i++) values[i] = _args[i].Eval(row, ctx, functionResolver);
-        PrepareOverflowFormat(values, row, ctx);
+        PrepareOverflowFormat(values);
         return VfpRuntime.CallFunction(_upper, values, ctx, row);
     }
 
-    // Round6 TRANSFORM pins: a direct quotient uses its expression width, whereas a
-    // stored variable retains its assigned width. Infer only for this rare overflow path.
-    public VfpValue[] PrepareOverflowFormat(VfpValue[] values, IRowContext row, EvaluationContext ctx)
+    // Round7: consume evaluated metadata, never infer or re-evaluate a condition here.
+    // Unknown operand widths leave the existing runtime overflow width intact.
+    public VfpValue[] PrepareOverflowFormat(VfpValue[] values)
     {
-        if (_formatOverflow && values[0].Type == VfpType.Numeric && !double.IsFinite(values[0].AsDouble))
-        {
-            // Round6's seeded RAND pin: formatting must not evaluate an IIF condition again.
-            var schema = new SqlInferenceSchema(row as ISchema, null, ctx, overflowDisplay: true);
-            values[0] = values[0].WithOverflowDisplayWidth(_args[0].InferSql(schema).Length);
-        }
+        if (_formatOverflow && values[0].ExpressionNumericWidth > 0)
+            values[0] = values[0].WithOverflowDisplayWidth(values[0].ExpressionNumericWidth);
         return values;
     }
 
@@ -410,7 +414,7 @@ internal sealed partial class FunctionNode : AstNode
         for (int i = 0; i < _args.Length; i++) elems[i] = _args[i].Build(b);
         Expression array = Expression.NewArrayInit(typeof(VfpValue), elems);
         if (_formatOverflow)
-            array = Expression.Call(Expression.Constant(this), nameof(PrepareOverflowFormat), null, array, b.Row, b.Ctx);
+            array = Expression.Call(Expression.Constant(this), nameof(PrepareOverflowFormat), null, array);
         // Pass the already-uppercased name as a constant: zero string work per record.
         return Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.CallFunction), null,
             Expression.Constant(_upper), array, b.Ctx, b.Row);

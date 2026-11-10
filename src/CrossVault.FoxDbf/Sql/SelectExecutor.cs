@@ -2729,7 +2729,7 @@ internal sealed class SelectExecutor
         {
             if (_aliases.Count > 0 && !name.Contains('.') && _aliases.TryGetValue(name, out int col)
                 && col < _row.Length && !_isSourceField(name))
-                return VfpValue.FromField(_row[col], _columns[col].VfpType, _columns[col].Decimals);
+                return VfpValue.FromField(_row[col], _columns[col].VfpType, _columns[col].Decimals, _columns[col].Length);
             return VfpRuntime.GetField(_rep, name);
         }
 

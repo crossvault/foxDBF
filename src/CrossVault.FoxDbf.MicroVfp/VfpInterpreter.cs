@@ -1324,7 +1324,7 @@ public sealed partial class VfpInterpreter
     {
         if (index < 0) return VfpValue.Null;
         var column = area.Table.Columns[index];
-        return VfpValue.FromField(ReadField(area, name), column.Type, column.Decimal);
+        return VfpValue.FromField(ReadField(area, name), column.Type, column.Decimal, column.Length);
     }
 
     // Field read WITH the buffer overlay: a buffered edit to the current record shadows the on-disk value,

@@ -15,8 +15,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ### Changed
 
 - BREAKING: Numeric division by zero returns VFP9 overflow values instead of NULL in SQL,
-  comparisons and index keys. `REPLACE` writes numeric overflow markers and raises error 39;
-  currency division raises 1988.
+  comparisons and index keys. After `REPLACE n WITH n/0` on an N(10,2) field, the field holds
+  numeric overflow (`TRANSFORM(n)` returns ten asterisks); `REPLACE` then raises error 39.
+  Currency division raises 1988.
 - BREAKING: Unary signs bind before exponentiation, as in VFP9 (`-5^2`, `+5^2` and `-$5^2` return 25).
   Mixed or repeated signs raise VFP9's errors (`-+5` and `- -5` are 1231; `+-5` and `++5` are 36).
   Index key text canonicalizes `-n^2` as `-N**2` and folds `-2^2` to `4`. Rebuild (`REINDEX`) indexes that
@@ -39,9 +40,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   leak CLR arithmetic exceptions into the aggregate metadata pass, including unselected conditional branches.
 - Invalid string lengths and widths raise catchable VFP9 errors 11/1903/1908 instead of crashes.
   Binary conversions, date/week boundaries, memo offsets and array arguments return VFP9 values or errors.
-- `ASCAN` matches VFP9 at array boundaries and with nonpositive counts. `NORMALIZE` and index `KEY()`
-  preserve fields named `nan` and `infinity`.
+- BREAKING: `ASCAN(a,x,0)` raises error 1234; a count of 0 searches the rest of the array,
+  and `ASCAN(a,x,start)` returns 0 when start is past the end, as in VFP9.
+- `NORMALIZE` and index `KEY()` preserve fields named `nan` and `infinity`.
 - Overflow comparisons, direct `TRANSFORM` expressions and `SUM`/`AVERAGE`/`CALCULATE` display match VFP9.
+  `TRANSFORM` division-overflow widths follow the evaluated operands, including memory variables,
+  selected `IIF`/`ICASE`/`NVL`/`EVL` branches and Double fields, without evaluating conditions again.
 - Invalid microVFP `CALCULATE` items raise VFP9's catchable errors when executed, with VFP9's syntax,
   missing-expression and unrecognized-phrase messages. An unexecuted invalid line no longer prevents a
   program from loading.
