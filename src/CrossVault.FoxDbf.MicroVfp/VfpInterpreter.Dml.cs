@@ -731,6 +731,11 @@ public sealed partial class VfpInterpreter
                     CheckReplaceValueType(wa.Table.Columns[idx], v);
                     values[idx] = v.IsNull ? null : (type == 'M' && v.IsBinary ? v.ToClr()
                         : type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
+                    if (reportNumericOverflow && type == 'I' && ReplaceIntegerOverflows(v))
+                    {
+                        values[idx] = FieldEncoder.StoredIntegerOverflow;
+                        assignmentError = new MicroVfpRuntimeException("Numeric overflow. Data was lost.", 39);
+                    }
                     if (candidate is not null)
                     {
                         candidate[field] = DmlExecutor.StoredFieldValue(writer.Schema, writer.Schema.Columns[idx], values[idx]);

@@ -68,7 +68,10 @@ public sealed partial class VfpInterpreter
             var v = Eval(clause.Value);
             var col = wa.Table.Columns[idx];
             if (!normalize) CheckReplaceValueType(col, v);
-            target[idx] = normalize ? NormalizeUpdateValue(col, v, col.Type == 'Q' ? wa.Table.BinaryTextEncoding : wa.Table.Encoding)
+            bool integerOverflow = !normalize && col.Type == 'I' && ReplaceIntegerOverflows(v);
+            overflow |= integerOverflow;
+            target[idx] = integerOverflow ? FieldEncoder.StoredIntegerOverflow
+                : normalize ? NormalizeUpdateValue(col, v, col.Type == 'Q' ? wa.Table.BinaryTextEncoding : wa.Table.Encoding)
                 : DmlExecutor.StoredFieldValue(wa.Table, col,
                     v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr()));
             if (reportNumericOverflow && col.Type is 'N' or 'F'
@@ -84,6 +87,10 @@ public sealed partial class VfpInterpreter
         }
         if (overflow) throw new MicroVfpRuntimeException("Numeric overflow. Data was lost.", 39);
     }
+
+    private static bool ReplaceIntegerOverflows(VfpValue value)
+        => !value.IsNull && (!double.IsFinite(value.AsDouble)
+            || Math.Truncate(value.AsDouble) < -2147483647d || Math.Truncate(value.AsDouble) > 2147483647d);
 
     private static void CheckReplaceValueType(DbfColumn column, VfpValue value)
     {

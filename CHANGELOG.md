@@ -20,7 +20,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   currency expression overflow as a DbException with VFP error 1988. Y/B encoding and numeric
   overflow checks accept unsigned CLR integers and use the same numeric-string policy as N/F.
 - UPDATE ON retains overflowing numeric assignments without error 39; REPLACE ALL finishes
-  the selected records before reporting numeric field overflow, matching VFP9.
+  the selected records before reporting numeric field overflow, matching VFP9. REPLACE stores
+  the VFP9 integer-overflow sentinel and continues later assignments, including buffered writes.
 - Numeric storage handles rounding carries and accepts all CLR integer types and numeric strings consistently.
   Numeric storage and STR omit leading zeroes when needed (`.50`, `-.12`). Computed SQL values round once to the stored scale.
 - Numeric overflow follows the command: SQL INSERT/UPDATE, INSERT FROM MEMVAR/SELECT and DbfWriter retain

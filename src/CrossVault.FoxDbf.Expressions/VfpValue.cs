@@ -118,6 +118,7 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         double scaled = _num * 10000d;
         double magnitude = Math.Abs(scaled);
         // VFP9 retains a half when binary multiplication falls one ULP short of the conversion boundary.
+        // Quarter/half-unit ULPs are not conversion noise: bumping those corrupts large currencies.
         if (Math.BitIncrement(magnitude) - magnitude < 0.25
             && magnitude - Math.Floor(magnitude) < 0.5
             && Math.BitIncrement(magnitude) - Math.Floor(magnitude) == 0.5)

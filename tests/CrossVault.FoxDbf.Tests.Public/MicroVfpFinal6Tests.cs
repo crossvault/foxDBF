@@ -4,6 +4,12 @@ public sealed class MicroVfpFinal6Tests
 {
     internal static readonly (string Name, string Script)[] Cases =
     [
+        ("replace_integer_bytes_1", "CREATE TABLE t FREE (n I,tail I)\nINSERT INTO t VALUES (1,2)\nSET MULTILOCKS ON\n=CURSORSETPROP('Buffering',1,'t')\nTRY\nREPLACE n WITH 1e20,tail WITH 7\nCATCH TO failure\nENDTRY\nUSE\nresult=STRCONV(SUBSTR(FILETOSTR('t.dbf'),362,8),15)"),
+        ("replace_integer_bytes_5", "CREATE TABLE t FREE (n I,tail I)\nINSERT INTO t VALUES (1,2)\nSET MULTILOCKS ON\n=CURSORSETPROP('Buffering',5,'t')\nTRY\nREPLACE n WITH 1e20,tail WITH 7\nCATCH TO failure\nENDTRY\n=TABLEUPDATE(.T.)\nUSE\nresult=STRCONV(SUBSTR(FILETOSTR('t.dbf'),362,8),15)"),
+
+        ("replace_integer_1", "CREATE TABLE t FREE (n I,tail I)\nINSERT INTO t VALUES (1,2)\nSET MULTILOCKS ON\n=CURSORSETPROP('Buffering',1,'t')\nresult='OK'\nTRY\nREPLACE n WITH 1e20,tail WITH 7\nCATCH TO failure\nresult='ERR:'+TRANSFORM(failure.ErrorNo)\nENDTRY\nresult=result+'|'+TRANSFORM(n)+'|'+TRANSFORM(tail)"),
+        ("replace_integer_5", "CREATE TABLE t FREE (n I,tail I)\nINSERT INTO t VALUES (1,2)\nSET MULTILOCKS ON\n=CURSORSETPROP('Buffering',5,'t')\nresult='OK'\nTRY\nREPLACE n WITH 1e20,tail WITH 7\nCATCH TO failure\nresult='ERR:'+TRANSFORM(failure.ErrorNo)\nENDTRY\nresult=result+'|'+TRANSFORM(n)+'|'+TRANSFORM(tail)"),
+
         ("currency_75000000000.00004", "CREATE TABLE t FREE (b B,y Y)\nINSERT INTO t VALUES (75000000000.00004,$0)\nREPLACE y WITH b\nUSE\nresult=STRCONV(SUBSTR(FILETOSTR('t.dbf'),370,8),15)"),
         ("currency_37500000000.00004", "CREATE TABLE t FREE (b B,y Y)\nINSERT INTO t VALUES (37500000000.00004,$0)\nREPLACE y WITH b\nUSE\nresult=STRCONV(SUBSTR(FILETOSTR('t.dbf'),370,8),15)"),
         ("currency_100000000.00005", "CREATE TABLE t FREE (b B,y Y)\nINSERT INTO t VALUES (100000000.00005,$0)\nREPLACE y WITH b\nUSE\nresult=STRCONV(SUBSTR(FILETOSTR('t.dbf'),370,8),15)"),
@@ -73,6 +79,19 @@ public sealed class MicroVfpFinal6Tests
     ];
     internal static readonly Dictionary<string, string> Expected = new()
     {
+        ["replace_integer_bytes_1"] = "0000008007000000",
+        ["replace_integer_bytes_5"] = "0000008007000000",
+
+        ["replace_integer_1"] = "ERR:39|***********|7",
+        ["replace_integer_5"] = "ERR:39|***********|7",
+
+        ["currency_75000000000.00004"] = "01E094FB1EAA0200",
+        ["currency_37500000000.00004"] = "0070CA7D0F550100",
+        ["currency_100000000.00005"] = "0110A5D4E8000000",
+        ["currency_1000000.00005"] = "01E40B5402000000",
+        ["replace_all_I"] = "ERR:39|4|3",
+        ["replace_all_Y"] = "ERR:39|1|0",
+
         ["STR(123.4,3,2)"] = "123",
         ["STR(1234.5,4,2)"] = "1235",
         ["STR(999.4,3,2)"] = "999",

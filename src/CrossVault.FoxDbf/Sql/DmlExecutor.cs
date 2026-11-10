@@ -393,6 +393,7 @@ internal sealed partial class DmlExecutor
 
     internal static object? StoredFieldValue(DbfTable schema, DbfColumn column, object? value)
     {
+        if (ReferenceEquals(value, FieldEncoder.StoredIntegerOverflow)) return value;
         if (value is null || column.Type is not ('N' or 'F' or 'I' or 'Y' or 'B')) return value;
         Span<byte> bytes = stackalloc byte[column.Length];
         FieldEncoder.Encode(column, value, schema.Encoding, bytes);

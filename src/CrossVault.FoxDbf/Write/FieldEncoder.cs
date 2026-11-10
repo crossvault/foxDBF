@@ -22,6 +22,9 @@ namespace CrossVault.FoxDbf.Write;
 /// </remarks>
 public static class FieldEncoder
 {
+    // Only REPLACE's accepted overflow uses this boxed sentinel. Ordinary CLR integer
+    // writes still throw 39; the VfpValue payload lets buffered expressions observe stars.
+    internal static readonly object StoredIntegerOverflow = VfpValue.Number(double.NaN);
     // The Julian Day Number of 0001-01-01 (proleptic Gregorian) — the offset between
     // FoxPro 'T' day numbers and .NET DayNumber (0 == 0001-01-01). Mirrors FieldDecoder.
     private const int JdnEpoch = 1_721_426;
@@ -63,7 +66,7 @@ public static class FieldEncoder
 
             case 'I':
             case '+':
-                WriteInt32(dest, ToInt32(value));
+                WriteInt32(dest, ReferenceEquals(value, StoredIntegerOverflow) ? int.MinValue : ToInt32(value));
                 return false;
 
             case 'Y':
