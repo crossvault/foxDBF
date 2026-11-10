@@ -276,6 +276,8 @@ public sealed partial class VfpInterpreter
         int dot = upperName.IndexOf('.');
         if (dot < 0)
         {
+            // CALCULATE treats unresolved calls as invalid subscripts, even without matching rows.
+            if (_calculateOperand) throw new MicroVfpRuntimeException("Invalid subscript reference.", 31);
             string prg = upperName.ToLowerInvariant() + ".prg";
             throw new MicroVfpRuntimeException($"File '{prg}' does not exist.", 1) { Details = prg };
         }

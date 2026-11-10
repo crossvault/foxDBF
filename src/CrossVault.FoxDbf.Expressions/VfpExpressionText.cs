@@ -160,8 +160,8 @@ internal static class VfpExpressionText
                 case TokenType.True: return new Lit(".T.");
                 case TokenType.False: return new Lit(".F.");
                 case TokenType.NullLit: return new Lit(".NULL.");
-                case TokenType.Minus: return new Unary(TokenType.Minus, ParseExpr(65));
-                case TokenType.Plus: return new Unary(TokenType.Plus, ParseExpr(65));
+                case TokenType.Minus: return new Unary(TokenType.Minus, ParseExpr(71));
+                case TokenType.Plus: return new Unary(TokenType.Plus, ParseExpr(71));
                 case TokenType.Not:
                 case TokenType.Bang: return new Unary(TokenType.Not, ParseExpr(30));
                 case TokenType.LParen:
@@ -282,8 +282,8 @@ internal static class VfpExpressionText
             }
             case Unary u:
             {
-                // -2**2: whether VFP folds it as -(2**2) or (-2)**2 is unprobed.
-                if (u.Op == TokenType.Minus && u.Operand is Binary { Op: TokenType.Caret }) throw new NotCanonical();
+                // VFP9 KEY(): -n^2 becomes -N**2, -(n^2) retains parentheses, -2^2 folds to 4.
+                // Unary signs bind before powers (MicroVfpNpvRound3Vfp9OracleTests).
                 var operand = Fold(u.Operand);
                 if (u.Op == TokenType.Plus) return operand;            // +3 → 3, +n45 → n45
                 if (u.Op == TokenType.Minus && operand is Num n)
@@ -330,8 +330,7 @@ internal static class VfpExpressionText
                 }
                 default:
                 {
-                    // Base must be a plain non-negative constant: whether -2**2 folds as (-2)**2 is unprobed.
-                    if (l.Value < 0) throw new NotCanonical();
+                    // VFP9 folds a signed base before exponentiation: -2**2 is 4.
                     double p = Math.Pow((double)l.Value, (double)r.Value);
                     if (double.IsNaN(p) || double.IsInfinity(p) || Math.Abs(p) > 1e18) throw new NotCanonical();
                     return Rounded((decimal)p, l.Decimals);

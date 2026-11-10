@@ -31,10 +31,12 @@ internal abstract class AstNode
 
     // SQL cursor storage has different sizing rules from index expressions.
     internal virtual VfpTypeInfo InferSql(ISchema schema) => Infer(schema);
-    internal virtual int? AggregateDecimals(ISchema schema, Func<string, VfpValue> memory, int decimals)
+    internal virtual (VfpValue Value, int? Decimals) ProbeAggregate(ISchema schema, IRowContext row, EvaluationContext context)
     {
+        var value = Eval(row, context);
         var info = Infer(schema);
-        return info.Length > 0 ? info.Decimals : null;
+        int? scale = info.Length > 0 ? info.Decimals : VfpRuntime.IsNumeric(value) ? LiteralNode.Precision(value) : null;
+        return (value, scale);
     }
     internal virtual bool IsSqlConstant => false;
     internal virtual bool IsSqlCandidate(IRowContext row, EvaluationContext context, bool negated = false) => true;

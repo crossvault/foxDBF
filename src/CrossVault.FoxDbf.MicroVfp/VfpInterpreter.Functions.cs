@@ -42,6 +42,8 @@ public sealed partial class VfpInterpreter
 
         if (!VfpFunctionNames.IsBuiltin(name) && _procs.TryGetValue(name, out var proc))
         {
+            // VFP9 CALCULATE rejects UDF operands before calling them, including EVALUATE indirection.
+            if (_calculateOperand) throw new MicroVfpRuntimeException("Invalid subscript reference.", 31);
             r = CallProc(proc, a, a.Length, null);          // user function ⇒ BY VALUE.
             return true;
         }

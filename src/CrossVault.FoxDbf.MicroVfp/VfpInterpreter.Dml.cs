@@ -1201,12 +1201,16 @@ public sealed partial class VfpInterpreter
         throw new MicroVfpRuntimeException("Command contains unrecognized phrase/keyword.", 36);
     }
 
-    private VfpValue EvalAggregateOperand(PrgExpr expression)
+    private bool _calculateOperand;
+
+    private VfpValue EvalAggregateOperand(PrgExpr expression, bool calculate = false)
     {
         bool previous = _requireDmlNames;
+        bool previousCalculate = _calculateOperand;
         _requireDmlNames = true;
+        _calculateOperand = calculate;
         try { return Eval(expression); }
-        finally { _requireDmlNames = previous; }
+        finally { _requireDmlNames = previous; _calculateOperand = previousCalculate; }
     }
 
     private void ExecSum(SumStmt sum)
@@ -1238,22 +1242,17 @@ public sealed partial class VfpInterpreter
         var types = sum.Expressions.Select(e => e.Parsed?.InferType(schema) ?? default).ToArray();
         var currencies = types.Select(t => t.Type == VfpType.Currency).ToArray();
         var scales = types.Select(t => t.Decimals).ToArray();
-        var unknownScale = new bool[n];
-        for (int k = 0; k < n; k++)
+        (VfpValue Value, int? Decimals) Probe(PrgExpr expression)
         {
-            string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
-            // NPV checks its flow and initial value at the first qualifying row (or final pointer),
-            // not at the caller's current record. Its rate is evaluated separately for each row.
-            if (function == "NPV") continue;
-            if (sum.CalculateFunctions is null && sum.Expressions[k].Parsed is { } expression)
+            bool previous = _requireDmlNames, previousCalculate = _calculateOperand;
+            _requireDmlNames = true;
+            _calculateOperand = sum.CalculateFunctions is not null;
+            try
             {
-                int? scale = null;
-                // Precision discovery must not move expression errors ahead of scope positioning.
-                try { scale = expression.InferAggregateDecimals(schema, name => VfpValue.FromClr(ResolveName(name)), _ctx.NumericDecimals); }
-                catch { }
-                unknownScale[k] = scale is null;
-                if (scale is int known) scales[k] = known;
+                return expression.Parsed is { } parsed ? parsed.ProbeAggregate(schema, _row, _ctx)
+                    : (Eval(expression), null);
             }
+            finally { _requireDmlNames = previous; _calculateOperand = previousCalculate; }
         }
         int start = kind == LocScope.All ? 0 : CurrentIndex(order, m);
         if (kind == LocScope.Record)
@@ -1268,7 +1267,7 @@ public sealed partial class VfpInterpreter
         void CheckSumTypes()
         {
             if (sumTypesChecked) return;
-            // VFP9 probes aggregate expressions once at the first matching row,
+            // VFP9 samples aggregate type/precision at the first matching row,
             // or at the final pointer when nothing matches, even on an empty table.
             for (int k = 0; k < n; k++)
             {
@@ -1278,12 +1277,16 @@ public sealed partial class VfpInterpreter
                     throw new MicroVfpRuntimeException("Expression is invalid.", 152);
                 var type = types[k].Type;
                 // Inferred numeric types can still contain undefined names in the evaluated branch.
-                // VFP9 probes even with no matching rows, but leaves unchosen IIF branches alone.
-                var probe = EvalAggregateOperand(sum.Expressions[k]);
+                // VFP9 probes even with no matching rows; errors in unchosen IIF branches are ignored.
+                var sample = function is "MIN" or "MAX"
+                    ? (Value: EvalAggregateOperand(sum.Expressions[k], calculate: true), Decimals: (int?)null)
+                    : Probe(sum.Expressions[k]);
+                var probe = sample.Value;
+                if (sample.Decimals is int scale) scales[k] = scale;
                 if (!probe.IsNull || type == VfpType.Unknown) type = probe.Type;
                 if (function is not ("MIN" or "MAX") && type is not (VfpType.Numeric or VfpType.Integer or VfpType.Currency))
                     throw new MicroVfpRuntimeException("Expression is not numeric.", 27);
-                minima[k] = maxima[k] = type switch
+                minima[k] = maxima[k] = function is "MIN" or "MAX" ? probe : type switch
                 {
                     VfpType.Character => VfpValue.Character(new string(' ', types[k].Length)),
                     VfpType.Date => VfpValue.Date(default),
@@ -1298,25 +1301,27 @@ public sealed partial class VfpInterpreter
         {
             if (!npvInitialized[k])
             {
+                var sample = Probe(sum.Expressions[k]);
+                if (!IsNumeric(sample.Value)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
                 if (arguments.Initial is not null)
                 {
-                    var initial = EvalAggregateOperand(arguments.Initial);
+                    var initial = EvalAggregateOperand(arguments.Initial, calculate: true);
                     if (!IsNumeric(initial)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
                     acc[k] = initial.AsDouble;
                 }
                 npvInitialized[k] = true;
             }
-            var flow = EvalAggregateOperand(sum.Expressions[k]);
-            if (!IsNumeric(flow)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
             if (!include) return;
-            var rate = EvalAggregateOperand(arguments.Rate);
+            // The rate precedes the flow on each included row (seeded RAND oracle).
+            var rate = EvalAggregateOperand(arguments.Rate, calculate: true);
+            var flow = EvalAggregateOperand(sum.Expressions[k], calculate: true);
+            if (!IsNumeric(flow)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
             // VFP9 skips a NULL rate without consuming a period; a NULL flow instead raises error 27.
             if (rate.IsNull) return;
             if (!IsNumeric(rate)) throw new MicroVfpRuntimeException("Not a numeric expression.", 27);
             counts[k]++;
             acc[k] += flow.AsDouble / Math.Pow(1 + rate.AsDouble, counts[k]);
         }
-        Span<int> precisionBits = stackalloc int[4];
         for (int i = start; !stopped && i < order.Count; i++)
         {
             int rec = kind != LocScope.All && i == start ? Math.Abs(order[i]) : order[i];
@@ -1333,7 +1338,7 @@ public sealed partial class VfpInterpreter
                         AccumulateNpv(k, arguments, include: true);
                         continue;
                     }
-                    var v = EvalAggregateOperand(sum.Expressions[k]);
+                    var v = EvalAggregateOperand(sum.Expressions[k], calculate: sum.CalculateFunctions is not null);
                     if (v.IsNull) { sawNull[k] = true; continue; }
                     string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
                     // SUM/AVERAGE check eligibility once (CheckSumTypes); later non-numeric values are skipped.
@@ -1341,8 +1346,8 @@ public sealed partial class VfpInterpreter
                         throw new MicroVfpRuntimeException("Expression is not numeric.", 27);
                     if (function is "MIN" or "MAX")
                     {
-                        if (counts[k] == 0 || VfpRuntime.Compare(v, minima[k], _ctx) < 0) minima[k] = v;
-                        if (counts[k] == 0 || VfpRuntime.Compare(v, maxima[k], _ctx) > 0) maxima[k] = v;
+                        if (minima[k].IsNull || VfpRuntime.Compare(v, minima[k], _ctx) < 0) minima[k] = v;
+                        if (maxima[k].IsNull || VfpRuntime.Compare(v, maxima[k], _ctx) > 0) maxima[k] = v;
                     }
                     counts[k]++;
                     if (!IsNumeric(v)) continue;
@@ -1350,12 +1355,6 @@ public sealed partial class VfpInterpreter
                     acc[k] += value;
                     currencies[k] |= v.Type == VfpType.Currency;
                     if (currencies[k]) currencyAcc[k] += v.AsNumber;
-                    if (sum.CalculateFunctions is null && unknownScale[k])
-                    {
-                        decimal.GetBits(v.AsNumber, precisionBits);
-                        int digits = (precisionBits[3] >> 16) & 0xff;
-                        scales[k] = Math.Max(scales[k], Math.Max(digits, v.DisplayDecimals));
-                    }
                     if (sum.CalculateFunctions is not null)
                     {
                         // Welford's population variance avoids cancelling two large squared sums.
@@ -1381,6 +1380,12 @@ public sealed partial class VfpInterpreter
         for (int k = 0; k < sum.To.Count && k < n; k++)
         {
             string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
+            // VFP9 still checks the operand, but MIN/MAX NEXT 0 return NULL, not the sample.
+            if (function is "MIN" or "MAX" && kind == LocScope.Next && count == 0)
+            {
+                AssignTo(sum.To[k], VfpValue.Null);
+                continue;
+            }
             if (function is "MIN" or "MAX" && !IsNumeric(minima[k]))
             {
                 AssignTo(sum.To[k], counts[k] == 0 && sawNull[k] ? VfpValue.Null : function == "MIN" ? minima[k] : maxima[k]);

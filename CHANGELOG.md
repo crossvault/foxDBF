@@ -13,6 +13,18 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: Mixed or repeated unary signs now raise VFP9's errors (`-+5` is 1231;
+  `+-5` and `++5` are 36). Unary plus binds before exponentiation. Index key text now
+  canonicalizes `-n^2` as `-N**2` and folds `-2^2` to `4`.
+- BREAKING: A truncated SQL projection such as `SELECT n+ FROM t` now reports VFP9 error
+  1221 instead of 1231. Truncated UPDATE assignments retain 1231 with `Missing operand.`
+  through microVFP, SQL sessions and ADO.NET.
+- `SUM`, `AVERAGE` and `CALCULATE` now match VFP9's operand sampling and numeric display
+  precision, including `RAND()+n`, MIN/MAX's initial sample and NULL result for `NEXT 0`, and
+  NPV's rate-before-flow evaluation. Sampling occurs once per command; rows are still evaluated once.
+- BREAKING: Evaluated user-defined or unresolved function calls in `CALCULATE` operands now
+  raise VFP9 error 31, including indirect `EVALUATE` calls. SUM/AVERAGE continue to support UDFs.
+
 - Invalid microVFP `CALCULATE` items now raise VFP9's catchable errors when executed, including the
   matching syntax, missing-expression and unrecognized-phrase messages. Unexecuted invalid lines no
   longer prevent a program from loading.

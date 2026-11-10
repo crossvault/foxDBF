@@ -191,6 +191,14 @@ public static class SqlParser
             catch (ExpressionException ex)
             {
                 int pos = ex.Position >= 0 ? srcStart + ex.Position : srcStart;
+                // VFP9 reports a missing clause for a truncated SELECT projection before FROM.
+                // UPDATE's truncated assignment instead retains 1231 and its native message.
+                if (ex.VfpErrorNumber == 1231)
+                {
+                    bool missingFrom = aggregates && IsKw("FROM") && ex.Position >= text.Length;
+                    throw new FoxDbfSqlException(missingFrom ? "Command is missing required clause." : ex.Message, ex, pos)
+                    { VfpErrorNumber = missingFrom ? 1221 : 1231 };
+                }
                 throw new FoxDbfSqlException(
                     $"Invalid expression '{text}': {ex.Message}", ex, pos) { VfpErrorNumber = ex.VfpErrorNumber };
             }

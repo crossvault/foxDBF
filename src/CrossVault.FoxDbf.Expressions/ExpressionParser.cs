@@ -218,12 +218,15 @@ internal sealed class ExpressionParser
 
             case TokenType.Minus:
                 Next();
-                if (Peek.Type == TokenType.Minus)
+                if (Peek.Type is TokenType.Minus or TokenType.Plus)
                     throw new ExpressionException("Missing operand.", Peek.Pos) { VfpErrorNumber = 1231 };
                 return new UnaryNode(UnOp.Neg, ParseExpr(71));
             case TokenType.Plus:
                 Next();
-                return ParseExpr(65); // unary plus is a no-op
+                // VFP9 rejects adjacent signs even with whitespace (Round3 oracle).
+                if (Peek.Type is TokenType.Minus or TokenType.Plus)
+                    throw new ExpressionException("Command contains unrecognized phrase/keyword.", Peek.Pos) { VfpErrorNumber = 36 };
+                return ParseExpr(71); // unary plus is a no-op, binding like unary minus
             case TokenType.Not:
             case TokenType.Bang:
                 Next();
