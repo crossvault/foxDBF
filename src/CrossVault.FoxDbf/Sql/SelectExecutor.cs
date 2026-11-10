@@ -130,7 +130,7 @@ internal sealed class SelectExecutor
 
     /// <summary>SQL can explicitly name another work area, but a bare name only falls back to memory.
     /// Undefined bare variables raise 12 when evaluated (not behind a short-circuited AND), as VFP9 does.</summary>
-    private sealed class SqlHostRow : IRowContext
+    private sealed class SqlHostRow : IRowContext, IVfpValueRow
     {
         private readonly IRowContext _host;
         private readonly IVfpMemoryBridge? _memory;
@@ -143,6 +143,9 @@ internal sealed class SelectExecutor
         public int RecNo => _host.RecNo;
         public int RecCount => _host.RecCount;
         public bool Deleted => _host.Deleted;
+
+        public VfpValue GetValue(string name) => name.Contains('.')
+            ? VfpRuntime.GetField(_host, name) : VfpValue.FromClr(GetField(name));
 
         public object? GetField(string name)
         {
@@ -518,7 +521,7 @@ internal sealed class SelectExecutor
         }
         else
         {
-            pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, order, rows.ConvertAll(r => r.Ctx));
+            pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, order, rows.ConvertAll(r => r.Ctx), columns);
         }
 
         // (4) HAVING without grouping, DISTINCT, ORDER BY, TOP.
@@ -1076,7 +1079,7 @@ internal sealed class SelectExecutor
             else
             {
                 var rcs = composites.ConvertAll(c => Bind(new CompositeRowContext(src, c, _outer, VfpBlankFields)));
-                pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, order, rcs);
+                pairs = Aggregate(ctx, sel with { GroupBy = groupBy }, order, rcs, columns);
             }
 
             return Materialize(columns, PostProcess(pairs, sel, order, aggregate, ctx, columns));
@@ -1619,7 +1622,7 @@ internal sealed class SelectExecutor
     }
 
     private static List<(object?[] row, IRowContext rep)> Aggregate(
-        EvaluationContext ctx, SelectStatement sel, OrderScope scope, IReadOnlyList<IRowContext> rows)
+        EvaluationContext ctx, SelectStatement sel, OrderScope scope, IReadOnlyList<IRowContext> rows, IReadOnlyList<SqlColumn> columns)
     {
         // Group by the tuple of GROUP BY expression values (normalized). VFP9 returns the groups SORTED by
         // that tuple in GROUP BY list order (collation-aware, .NULL. first) even without ORDER BY: a stable
@@ -1662,7 +1665,7 @@ internal sealed class SelectExecutor
             IRowContext rep = members.Count > 0 ? members[^1] : EmptyRowContext.Instance;
             var row = sel.Items.Select(it => ProjectAggregateItem(it, members, rep, ctx)).ToArray();
             if (sel.Having is not null
-                && !EvalHaving(sel.Having, members, AliasRow(rep, row, aliases, scope.IsSourceField), ctx))
+                && !EvalHaving(sel.Having, members, AliasRow(rep, row, aliases, scope.IsSourceField, columns), ctx))
                 continue;
             result.Add((row, rep));
         }
@@ -1687,7 +1690,7 @@ internal sealed class SelectExecutor
             var aliases = AliasColumns(scope);
             pairs = pairs.FindAll(p =>
             {
-                var v = having.Evaluate(AliasRow(p.rep, p.row, aliases, scope.IsSourceField), ctx);
+                var v = having.Evaluate(AliasRow(p.rep, p.row, aliases, scope.IsSourceField, columns), ctx);
                 return v.Type == VfpType.Logical && v.AsLogical;
             });
         }
@@ -2630,30 +2633,39 @@ internal sealed class SelectExecutor
 
     /// <summary>The HAVING row over <paramref name="rep"/>: an <see cref="AliasRowContext"/>, still answered by
     /// the microVFP host when the representative row is a hosted one (a UDF in HAVING runs).</summary>
-    private static IRowContext AliasRow(IRowContext rep, object?[] row, Dictionary<string, int> aliases, Func<string, bool> isSourceField)
+    private static IRowContext AliasRow(IRowContext rep, object?[] row, Dictionary<string, int> aliases, Func<string, bool> isSourceField, IReadOnlyList<SqlColumn> columns)
     {
-        var alias = new AliasRowContext(rep, row, aliases, isSourceField);
+        var alias = new AliasRowContext(rep, row, aliases, isSourceField, columns);
         return rep is IVfpFunctionHost host ? new HostedRow(alias, host) : alias;
     }
 
     /// <summary>The row context a HAVING sees: a bare name that is a select-list alias (and no field of the
     /// query's sources — a source field of the same name wins, as in VFP9) reads that column of the
     /// projected output row; everything else resolves against the representative source row.</summary>
-    private sealed class AliasRowContext : IRowContext
+    private sealed class AliasRowContext : IRowContext, IVfpValueRow
     {
         private readonly IRowContext _rep;
         private readonly object?[] _row;
         private readonly Dictionary<string, int> _aliases;
         private readonly Func<string, bool> _isSourceField;
+        private readonly IReadOnlyList<SqlColumn> _columns;
 
-        public AliasRowContext(IRowContext rep, object?[] row, Dictionary<string, int> aliases, Func<string, bool> isSourceField)
+        public AliasRowContext(IRowContext rep, object?[] row, Dictionary<string, int> aliases, Func<string, bool> isSourceField, IReadOnlyList<SqlColumn> columns)
         {
-            _rep = rep; _row = row; _aliases = aliases; _isSourceField = isSourceField;
+            _rep = rep; _row = row; _aliases = aliases; _isSourceField = isSourceField; _columns = columns;
         }
 
         public int RecNo => _rep.RecNo;
         public int RecCount => _rep.RecCount;
         public bool Deleted => _rep.Deleted;
+
+        public VfpValue GetValue(string name)
+        {
+            if (_aliases.Count > 0 && !name.Contains('.') && _aliases.TryGetValue(name, out int col)
+                && col < _row.Length && !_isSourceField(name))
+                return VfpValue.FromField(_row[col], _columns[col].VfpType, _columns[col].Decimals);
+            return VfpRuntime.GetField(_rep, name);
+        }
 
         public object? GetField(string name)
         {

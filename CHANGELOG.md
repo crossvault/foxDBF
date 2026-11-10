@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- SQL HAVING aliases and source fields, DELETE source predicates and import validation preserve
+  currency types and field scales, matching SELECT expressions at exact-half rounding boundaries.
+
 - Currency conversion retains the scaled 64-bit precision of double operands; `ROUND` preserves
   currency digits and `MTON` leaves non-currency numeric payloads intact, including very large numbers.
 

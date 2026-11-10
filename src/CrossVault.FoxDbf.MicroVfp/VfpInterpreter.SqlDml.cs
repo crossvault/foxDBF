@@ -130,13 +130,14 @@ public sealed partial class VfpInterpreter
     // must not move the caller's live source pointer or leave a temporary source work area open.
     // VFP uses the source's disk values even when its open work area has pending buffered edits.
     private sealed class SqlDeleteSourceRow(VfpInterpreter owner, VfpSession.WorkArea target, DbfTable source, string alias)
-        : IRowContext, IVfpFunctionHost
+        : IRowContext, IVfpFunctionHost, IVfpValueRow
     {
         public DbfRecord? Record { get; set; }
         public int RecNo => owner._row.RecNo;
         public int RecCount => owner._row.RecCount;
         public bool Deleted => owner._row.Deleted;
-        public object? GetField(string name)
+        public object? GetField(string name) => GetValue(name);
+        public VfpValue GetValue(string name)
         {
             int dot = name.IndexOf('.');
             string field = dot < 0 ? name : name[(dot + 1)..];
@@ -144,7 +145,8 @@ public sealed partial class VfpInterpreter
             if (dot < 0 && column >= 0 && ColumnIndex(target.Table, field) >= 0)
                 throw new MicroVfpRuntimeException($"SQL: Column '{field}' is ambiguous.", 1832);
             if (column >= 0 && (dot < 0 || name[..dot].Equals(alias, StringComparison.OrdinalIgnoreCase)))
-                return Record is null ? BlankFor(source.Columns[column]) : Record.Value[source.Columns[column].Name];
+                return Record is null ? VfpValue.FromField(BlankFor(source.Columns[column]), source.Columns[column].Type, source.Columns[column].Decimal)
+                    : Record.Value.GetScaledValue(source.Columns[column].Name, true);
             return owner.ResolveName(name);
         }
         public bool TryInvoke(string upperName, VfpValue[] args, EvaluationContext context, out VfpValue result)

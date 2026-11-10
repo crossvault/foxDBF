@@ -567,9 +567,10 @@ public sealed partial class VfpInterpreter
 
     // Opening an index resolves UDFs, but must not require our implementation of every VFP built-in.
     // In a mixed expression, unavailable built-ins must not masquerade as missing program files.
-    private sealed class IndexUseRow(Row row) : IRowContext, IVfpFunctionHost
+    private sealed class IndexUseRow(Row row) : IRowContext, IVfpFunctionHost, IVfpValueRow
     {
         public object? GetField(string name) => row.GetField(name);
+        public VfpValue GetValue(string name) => row.GetValue(name);
         public int RecNo => row.RecNo;
         public bool Deleted => row.Deleted;
         public int RecCount => row.RecCount;
@@ -599,12 +600,13 @@ public sealed partial class VfpInterpreter
     }
 
     /// <summary>The probe's row: the interpreter's own row, recording which names its host answered.</summary>
-    private sealed class ProbeRow : IRowContext, IVfpFunctionHost
+    private sealed class ProbeRow : IRowContext, IVfpFunctionHost, IVfpValueRow
     {
         private readonly Row _row;
         private readonly HashSet<string> _hostNames;
         public ProbeRow(Row row, HashSet<string> hostNames) { _row = row; _hostNames = hostNames; }
         public object? GetField(string name) => _row.GetField(name);
+        public VfpValue GetValue(string name) => _row.GetValue(name);
         public int RecNo => _row.RecNo;
         public bool Deleted => _row.Deleted;
         public int RecCount => _row.RecCount;

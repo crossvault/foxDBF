@@ -37,9 +37,10 @@ public sealed partial class VfpInterpreter
         finally { _indexRow = saved; }
     }
 
-    private sealed class IndexHostRow(VfpInterpreter interpreter, IRowContext row) : IRowContext, IVfpFunctionHost
+    private sealed class IndexHostRow(VfpInterpreter interpreter, IRowContext row) : IRowContext, IVfpFunctionHost, IVfpValueRow
     {
         public object? GetField(string name) => interpreter.ResolveName(name);
+        public VfpValue GetValue(string name) => interpreter.ResolveName(name);
         public int RecNo => row.RecNo;
         public int RecCount => row.RecCount;
         public bool Deleted => row.Deleted;

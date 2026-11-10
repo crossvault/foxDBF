@@ -193,11 +193,18 @@ internal sealed partial class DmlExecutor
         foreach (var (set, key) in additions) set.Add(key);
     }
 
-    private sealed class ImportRow(IReadOnlyList<DbfColumn> columns, Dictionary<string, object?> values, int recno = 0) : IRowContext
+    private sealed class ImportRow(IReadOnlyList<DbfColumn> columns, Dictionary<string, object?> values, int recno = 0) : IRowContext, IVfpValueRow
     {
         public int RecNo => recno;
         public int RecCount => recno;
         public bool Deleted => false;
+        public VfpValue GetValue(string name)
+        {
+            string field = name[(name.LastIndexOf('.') + 1)..];
+            var column = columns.FirstOrDefault(c => c.Name.Equals(field, StringComparison.OrdinalIgnoreCase));
+            return column is null ? VfpValue.FromClr(GetField(name))
+                : VfpValue.FromField(GetField(name), column.Type, column.Decimal);
+        }
         public object? GetField(string name)
         {
             name = name[(name.LastIndexOf('.') + 1)..];
