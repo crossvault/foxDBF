@@ -4,6 +4,27 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [0.13.0] - 2026-11-10
+
+### Changed
+
+- BREAKING: Engine and microVFP built-in calls with an invalid argument count now raise VFP9 errors 1229/1230
+  (or the function-specific VFP9 error), including abbreviated names in expressions, SQL, indexes
+  and microVFP. Unexecuted statements remain legal; built-ins (including `ON`) take precedence over
+  same-named UDFs, while UDFs still accept omitted parameters. Built-in names cannot be declared as
+  arrays (error 1652). Scoped commands preserve argument-count errors even on empty tables;
+  invalid argument counts in stored CDX expressions reject `USE` with error 114.
+  xBase `ISBLANK` preserves VFP9's distinction between field references (including unary `+`) and
+  parenthesized values; SQL `ISBLANK` inspects the actual source-row value, including joins and DML.
+  Runtime-only errors retain VFP9's lazy evaluation and NULL behavior.
+
+### Fixed
+
+- Embedded microVFP SQL now normalizes array references and subscripts before SQL parsing,
+  including UPDATE assignments and ISBLANK/IN/BETWEEN/LIKE predicates in UPDATE, DELETE and SELECT.
+  Bracket string literals remain unchanged. SELECT INTO CURSOR/TABLE sets `_TALLY`, including zero rows.
+  SQL `LOOKUP` raises VFP9 error 11 when evaluated; unselected conditional branches remain legal.
+
 ## [0.12.0] - 2026-11-10
 
 ### Added

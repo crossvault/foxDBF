@@ -119,7 +119,7 @@ public sealed partial class VfpInterpreter
     /// parses but is not the expected statement). Typed as returning a statement so it composes with <c>??</c>.</summary>
     private static SqlStatement ThrowSqlParseError(string sql)
     {
-        try { SqlParser.Parse(sql.Trim()); }
+        try { MicroVfpExprRewrite.ParseSql(sql.Trim()); }
         catch (FoxDbfSqlException ex)
         {
             throw new MicroVfpRuntimeException(ex.Message, ex.VfpErrorNumber ?? 10) { Statement = sql.Trim() };
@@ -138,7 +138,7 @@ public sealed partial class VfpInterpreter
         string t = text.IndexOf('&') >= 0 ? ExpandMacrosInLine(text) : text;
         VfpExpression parsed;
         try { parsed = ParseExpressionCached(MicroVfpExprRewrite.Normalize(t)); }
-        catch (ExpressionException)
+        catch (ExpressionException ex) when (ex.VfpErrorNumber is null)
         {
             var pe = PrgExpr.Parse(t);
             if (!pe.IsParsed)

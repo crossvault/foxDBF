@@ -482,16 +482,11 @@ public sealed class ExpressionEngineTests
     }
 
     [Fact]
-    public void Iif_InvalidArgumentCount_RetainsEagerFallback()
+    public void Iif_InvalidArgumentCount_ReportsVfp9SyntaxError()
     {
-        var expression = VfpExpression.Parse("IIF(.T., BUMP(), BUMP(), 4)");
-        var interpretedRow = new BumpRow();
-        var compiledRow = new BumpRow();
-
-        Assert.Equal(99, expression.Evaluate(interpretedRow).AsInteger);
-        Assert.Equal(2, interpretedRow.BumpCount);
-        Assert.Equal(99, expression.Compile()(compiledRow).AsInteger);
-        Assert.Equal(2, compiledRow.BumpCount);
+        // FunctionArityVfp9OracleTests pins error 1300 before any arguments can run.
+        Assert.Equal(1300, Assert.Throws<ExpressionException>(() =>
+            VfpExpression.Parse("IIF(.T., BUMP(), BUMP(), 4)")).VfpErrorNumber);
     }
 
     [Theory]

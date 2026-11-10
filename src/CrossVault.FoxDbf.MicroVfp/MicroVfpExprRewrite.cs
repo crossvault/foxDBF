@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using CrossVault.FoxDbf.Expressions;
+using CrossVault.FoxDbf.Sql;
 
 namespace CrossVault.FoxDbf.MicroVfp;
 
@@ -26,13 +27,17 @@ namespace CrossVault.FoxDbf.MicroVfp;
 //
 //  Both passes are STRING-LITERAL aware (`'…'`, `"…"`, and an already-recognised `[…]`
 //  literal are copied verbatim). The rewrite is confined to microVFP .prg expression
-//  fragments — it never touches the SQL parser.
+//  fragments and embedded SQL — the standalone SQL parser remains unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>Source-text normalisation that lets the shared expression engine evaluate microVFP memory
 /// arrays (bracket subscripts → parens; ALEN/AERROR array-name argument → quoted name).</summary>
 internal static class MicroVfpExprRewrite
 {
+    // Normalize before SQL tokenization: array brackets otherwise look like string literals.
+    // Keeping the resulting SQL AST preserves ISBLANK and infix semantics without per-row reparsing.
+    internal static SqlStatement ParseSql(string sql) => SqlParser.Parse(Normalize(sql));
+
     private static bool IsIdentChar(char c) => VfpIdentifier.IsPart(c);
 
     /// <summary>The identifier <paramref name="ident"/> calls <paramref name="fn"/>: its name or VFP9's
@@ -42,6 +47,11 @@ internal static class MicroVfpExprRewrite
            || (ident.Length >= 4 && ident.Length < fn.Length && fn.StartsWith(ident, StringComparison.OrdinalIgnoreCase)
                && VfpFunctionAbbreviations.TryExpand(ident.ToUpperInvariant(), out var full) && full == fn);
 
+    // VFP function abbreviations start at four characters. If even that prefix is absent,
+    // this pass cannot rewrite anything; avoid rebuilding ordinary SQL with parentheses.
+    private static bool ContainsFunctionPrefix(string s, string fn)
+        => s.AsSpan().IndexOf(fn.AsSpan(0, 4), StringComparison.OrdinalIgnoreCase) >= 0;
+
     /// <summary>Apply both array rewrites to <paramref name="s"/>; a no-op for text with neither a
     /// subscript bracket nor an ALEN/AERROR call.</summary>
     public static string Normalize(string s)
@@ -49,7 +59,7 @@ internal static class MicroVfpExprRewrite
         if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
         // Every rewrite needs a subscript bracket or a function call. Literals and
         // simple field/arithmetic expressions cannot contain a reference argument.
-        if (s.IndexOfAny(['[', '(']) < 0) return s;
+        if (s.AsSpan().IndexOfAny('[', '(') < 0) return s;
         s = ConvertSubscripts(s);
         s = QuoteArrayFnArg(s, "ALEN");
         s = QuoteArrayFnArg(s, "AERROR");
@@ -71,61 +81,7 @@ internal static class MicroVfpExprRewrite
         // ACOPY takes TWO array names by reference (source AND destination).
         s = QuoteArrayFn2Args(s, "ACOPY");    // ACOPY(aSource, aDest [, nStart [, nCount [, nDestStart]]])
         s = QuoteLookupArgs(s);               // LOOKUP(rReturn, eSearch, rSearched [, cTag]) — field names by reference.
-        s = QuoteIsBlankFieldArg(s);          // ISBLANK(field) — a bare field ref needs RAW-byte inspection.
         return s;
-    }
-
-    /// <summary>ISBLANK's single argument is USUALLY a field whose BLANK state is a RAW-byte property (a
-    /// blanked numeric reads as 0 but is byte-distinct from a written 0). When that argument is a bare field
-    /// reference (an identifier, optionally <c>alias.field</c>) rewrite <c>ISBLANK(f)</c> to
-    /// <c>ISBLANK('f', .T.)</c> so the host receives the NAME (+ a field-ref marker) and can inspect the
-    /// record bytes; a literal / computed / quoted argument is left untouched (evaluated by VALUE). The host
-    /// falls back to value-based blankness when the name is not actually a field (e.g. a memvar).</summary>
-    private static string QuoteIsBlankFieldArg(string s)
-    {
-        if (s.IndexOf("ISBL", StringComparison.OrdinalIgnoreCase) < 0) return s;   // ISBLANK or its abbreviation.
-        var sb = new StringBuilder(s.Length + 8);
-        int i = 0;
-        while (i < s.Length)
-        {
-            char c = s[i];
-            if (c == '\'' || c == '"')                        // copy quoted string verbatim.
-            {
-                char q = c; sb.Append(c); i++;
-                while (i < s.Length) { sb.Append(s[i]); if (s[i] == q) break; i++; }
-                i++;
-                continue;
-            }
-            if (VfpIdentifier.IsStart(c))
-            {
-                int start = i; i++;
-                while (i < s.Length && IsIdentChar(s[i])) i++;
-                string ident = s.Substring(start, i - start);
-                int p = i;
-                while (p < s.Length && char.IsWhiteSpace(s[p])) p++;
-                if (Names(ident, "ISBLANK") && p < s.Length && s[p] == '(')
-                {
-                    int close = MatchParen(s, p);
-                    if (close > p)
-                    {
-                        string inner = s.Substring(p + 1, close - p - 1);
-                        var parts = new List<string>(SplitTopLevelCommas(inner));
-                        // Only the single-argument bare-field form is a field reference.
-                        if (parts.Count == 1 && QuoteIfBareField(parts[0]) is { } q && q != parts[0])
-                        {
-                            sb.Append(ident).Append('(').Append(q).Append(", .T.)");
-                            i = close + 1;
-                            continue;
-                        }
-                    }
-                }
-                sb.Append(ident);
-                continue;
-            }
-            sb.Append(c);
-            i++;
-        }
-        return sb.ToString();
     }
 
     /// <summary>Convert array-subscript brackets <c>name[…]</c> to <c>name(…)</c>, leaving value-position
@@ -162,15 +118,15 @@ internal static class MicroVfpExprRewrite
     /// quotes, so the host receives the array NAME. String-literal aware.</summary>
     private static string QuoteArrayFnArg(string s, string fn)
     {
-        if (s.Length == 0) return s;
+        if (!ContainsFunctionPrefix(s, fn)) return s;
         var sb = new StringBuilder(s.Length + 8);
         int i = 0;
         while (i < s.Length)
         {
             char c = s[i];
-            if (c == '\'' || c == '"')                        // copy quoted string verbatim.
+            if (c is '\'' or '"' or '[')                     // subscripts were already converted.
             {
-                char q = c; sb.Append(c); i++;
+                char q = c == '[' ? ']' : c; sb.Append(c); i++;
                 while (i < s.Length) { sb.Append(s[i]); if (s[i] == q) break; i++; }
                 i++;
                 continue;
@@ -197,15 +153,15 @@ internal static class MicroVfpExprRewrite
     /// both array names by reference. String-literal aware.</summary>
     private static string QuoteArrayFn2Args(string s, string fn)
     {
-        if (s.Length == 0) return s;
+        if (!ContainsFunctionPrefix(s, fn)) return s;
         var sb = new StringBuilder(s.Length + 8);
         int i = 0;
         while (i < s.Length)
         {
             char c = s[i];
-            if (c == '\'' || c == '"')                        // copy quoted string verbatim.
+            if (c is '\'' or '"' or '[')                     // subscripts were already converted.
             {
-                char q = c; sb.Append(c); i++;
+                char q = c == '[' ? ']' : c; sb.Append(c); i++;
                 while (i < s.Length) { sb.Append(s[i]); if (s[i] == q) break; i++; }
                 i++;
                 continue;
@@ -281,9 +237,9 @@ internal static class MicroVfpExprRewrite
         while (i < s.Length)
         {
             char c = s[i];
-            if (c == '\'' || c == '"')
+            if (c is '\'' or '"' or '[')
             {
-                char q = c; sb.Append(c); i++;
+                char q = c == '[' ? ']' : c; sb.Append(c); i++;
                 while (i < s.Length) { sb.Append(s[i]); if (s[i] == q) break; i++; }
                 i++;
                 continue;

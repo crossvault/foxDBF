@@ -219,7 +219,9 @@ internal sealed class ExpressionParser
                 Next();
                 var inner = ParseExpr(0);
                 Expect(TokenType.RParen, "Expected ')'.");
-                return inner;
+                // VFP9 ISBLANK((field)) inspects the value; ISBLANK(field) and ISBLANK(+field)
+                // inspect the raw field bytes. Keep parentheses distinct despite their identical value.
+                return inner is FieldNode field ? new FieldNode(field.Name, isValueExpression: true) : inner;
             }
 
             case TokenType.Identifier:
@@ -278,7 +280,9 @@ internal sealed class ExpressionParser
                 throw new ExpressionException(args.Count == 0 ? "Expression is invalid. A valid expression is required." : "Function name is missing ( ).", id.Pos)
                     { VfpErrorNumber = args.Count == 0 ? 152 : 1300 };
             if (distinct) args[0] = new SqlDistinctNode(args[0]);
-            return new FunctionNode(name, args.ToArray());
+            // SQL MIN/MAX aggregates take one operand; scalar MIN/MAX use VFP's 2..26 limits.
+            return aggregate ? new FunctionNode(name, args.ToArray())
+                : VfpFunctionArity.Bind(name, args.ToArray(), id.Pos, sql: _sql is not null);
         }
         return new FieldNode(id.Text);
     }

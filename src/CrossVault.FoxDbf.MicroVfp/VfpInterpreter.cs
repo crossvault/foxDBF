@@ -553,6 +553,7 @@ public sealed partial class VfpInterpreter
         if (_pendingAppendPaths is { Count: > 0 } && s is not InsertStmt) FlushPendingAppends();
         switch (s)
         {
+            case ExpressionErrorStmt error: throw new MicroVfpRuntimeException(error.Message, error.Number);
             case Assignment a: AssignTo(a.Target, Eval(a.Value)); break;
             case StoreStmt st: { var v = Eval(st.Value); foreach (var t in st.Targets) AssignTo(t, v); break; }
             case VarDecl vd: ExecDecl(vd); break;
@@ -656,6 +657,7 @@ public sealed partial class VfpInterpreter
         for (int i = 0; i < vd.Names.Count; i++)
         {
             string? dim = i < vd.Dimensions.Count ? vd.Dimensions[i] : null;
+            if (dim is not null) ValidateArrayName(vd.Names[i]);
             if (dim is not null && TryParseDims(dim, out int rows, out int cols))
                 Memory.DeclareArray(vd.Names[i], kind, rows, cols);
             else
@@ -669,9 +671,17 @@ public sealed partial class VfpInterpreter
         for (int i = 0; i < dm.Names.Count; i++)
         {
             string? dim = i < dm.Dimensions.Count ? dm.Dimensions[i] : null;
+            if (dim is not null) ValidateArrayName(dm.Names[i]);
             if (dim is not null && TryParseDims(dim, out int rows, out int cols))
                 Memory.RedimOrCreateArray(dm.Names[i], rows, cols);
         }
+    }
+
+    private static void ValidateArrayName(string name)
+    {
+        // VFP9 rejects built-in names (including abbreviations) in array declarations.
+        if (VfpFunctionNames.IsBuiltin(name.ToUpperInvariant()))
+            throw new MicroVfpRuntimeException("Invalid use of a Visual FoxPro function as an array.", 1652);
     }
 
     // Parse the captured bracket text of an array declaration ("(1,12)" / "[5]" / "(lnRows+1,alen(a,2))")
@@ -963,7 +973,10 @@ public sealed partial class VfpInterpreter
         if (parsed is not SelectStatement sel) { ThrowSqlParseError(sq.Sql); return; }
         // VFP9 read semantics: a blank (non-NULL) field is its typed empty, only a set null bit is .NULL.
         var exec = new SelectExecutor(Session, _row) { VfpBlankFields = true };
-        exec.Run(sel);
+        var result = exec.Run(sel);
+        // VFP9 reports the materialized SELECT count, including an empty cursor, in _TALLY.
+        if (result.AffectedRecords >= 0)
+            Memory.Set("_TALLY", VfpValue.Integer(result.AffectedRecords));
         if (sel.Into is { Kind: IntoKind.Cursor } into)
         {
             Session.SelectArea(into.Name);                         // INTO CURSOR selects the cursor.
@@ -1545,7 +1558,7 @@ public sealed partial class VfpInterpreter
 
     private static SqlStatement? SafeParseSql(string sql)
     {
-        try { return SqlParser.Parse(sql); } catch { return null; }
+        try { return MicroVfpExprRewrite.ParseSql(sql); } catch { return null; }
     }
 
     private void ScanDefines(IReadOnlyList<PrgStatement> body)

@@ -25,10 +25,14 @@ internal sealed class PrgExpr
     /// <summary>True when <see cref="Parsed"/> is a real <see cref="VfpExpression"/>.</summary>
     public bool IsParsed => Parsed is not null;
 
-    private PrgExpr(string text, VfpExpression? parsed)
+    // Preserve VFP's compile-time error through command-specific scope parsing.
+    internal ExpressionException? ParseError { get; }
+
+    private PrgExpr(string text, VfpExpression? parsed, ExpressionException? parseError = null)
     {
         Text = text;
         Parsed = parsed;
+        ParseError = parseError;
     }
 
     internal static PrgExpr FromSql(VfpExpression expression) => new(expression.Text, expression);
@@ -97,15 +101,15 @@ internal sealed class PrgExpr
         {
             return new PrgExpr(t, VfpExpression.Parse(norm));
         }
-        catch (ExpressionException)
+        catch (ExpressionException error)
         {
             var stripped = StripByRefMarkers(norm);
             if (!string.Equals(stripped, norm, System.StringComparison.Ordinal))
             {
                 try { return new PrgExpr(t, VfpExpression.Parse(stripped)); }
-                catch (ExpressionException) { }
+                catch (ExpressionException strippedError) { return new PrgExpr(t, null, strippedError); }
             }
-            return new PrgExpr(t, null);
+            return new PrgExpr(t, null, error);
         }
     }
 

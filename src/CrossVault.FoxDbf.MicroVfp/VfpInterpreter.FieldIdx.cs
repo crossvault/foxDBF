@@ -80,8 +80,8 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── ISBLANK() ───────────────────────────
 
-    /// <summary>ISBLANK(eExpression) — .T. when the value is BLANK. For a bare FIELD reference (rewritten to
-    /// <c>ISBLANK('name', .T.)</c> by <see cref="MicroVfpExprRewrite"/>) the blank state is a RAW-byte
+    /// <summary>ISBLANK(eExpression) — .T. when the value is BLANK. For a bare FIELD reference (lowered to
+    /// <c>ISBLANK('name', .T.)</c> by the expression binder after validating the source argument count) the blank state is a RAW-byte
     /// property (a blanked numeric reads 0 but is byte-distinct from a written 0); a non-field expression is
     /// judged by VALUE. Verified vs the VFP9 runtime: C/D blank iff empty; N/L blank iff never assigned; integer
     /// (and other binary types) NEVER blank; numeric 0 / logical .F. NOT blank.</summary>

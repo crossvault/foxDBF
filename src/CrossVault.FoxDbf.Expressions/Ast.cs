@@ -100,8 +100,13 @@ internal sealed partial class LiteralNode : AstNode
 internal sealed partial class FieldNode : AstNode
 {
     private readonly string _name;
-    public FieldNode(string name) => _name = name;
+    public FieldNode(string name, bool isValueExpression = false)
+    {
+        _name = name;
+        IsValueExpression = isValueExpression;
+    }
     internal string Name => _name;
+    internal bool IsValueExpression { get; }
 
     public override VfpValue Eval(IRowContext row, EvaluationContext ctx)
         => VfpRuntime.GetField(row, _name);

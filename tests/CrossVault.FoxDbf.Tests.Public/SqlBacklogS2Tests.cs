@@ -151,9 +151,9 @@ public sealed class SqlBacklogS2Tests
     [InlineData("DATETIME(2024,1,1,0,0,0,0)", 1230)]
     public void DateTimeInvalidArguments_ReportVfpNumber(string expression, int number)
     {
-        var parsed = VfpExpression.Parse(expression);
-        Assert.Equal(number, Assert.Throws<ExpressionException>(() => parsed.Evaluate(TestRow.Empty)).VfpErrorNumber);
-        Assert.Equal(number, Assert.Throws<ExpressionException>(() => parsed.Compile()(TestRow.Empty)).VfpErrorNumber);
+        // VFP9 rejects excess arguments while compiling; component/count errors can also occur at runtime.
+        Assert.Equal(number, Assert.Throws<ExpressionException>(() => VfpExpression.Parse(expression).Evaluate(TestRow.Empty)).VfpErrorNumber);
+        Assert.Equal(number, Assert.Throws<ExpressionException>(() => VfpExpression.Parse(expression).Compile()(TestRow.Empty)).VfpErrorNumber);
         using var session = new VfpSession();
         using var interpreter = new VfpInterpreter(session);
         interpreter.Execute($"TRY\nvalue={expression}\nCATCH TO err\nnumber=err.ErrorNo\nENDTRY");

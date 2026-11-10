@@ -533,7 +533,20 @@ public sealed partial class VfpInterpreter
                 foreach (string text in new[] { index.KeyExpr, index.ForExpr })
                 {
                     if (string.IsNullOrWhiteSpace(text)) continue;
-                    var expression = VfpExpression.Parse(text);
+                    VfpExpression expression;
+                    try { expression = VfpExpression.Parse(text); }
+                    catch (ExpressionException ex) when (ex.VfpErrorNumber is not null)
+                    {
+                        // A corrupt stored expression is an invalid index, not a new source call.
+                        // VFP9 refuses USE and leaves a structural-index table closed (oracle pinned).
+                        if (index.Structural)
+                        {
+                            Session.CloseArea(area);
+                            _meta.Remove(area);
+                        }
+                        else Meta(area).ExtraIndexes?.Remove(index.FilePath);
+                        throw new MicroVfpRuntimeException("Index does not match the table. Delete the index file and re-create the index.", 114);
+                    }
                     // VFP resolves a UDF while opening the index, even without a write or controlling order.
                     // Use the host so a loaded procedure is distinguished from a missing program (error 1).
                     if (!expression.ContainsFunction((name, _) => !VfpFunctionNames.IsBuiltin(name)
