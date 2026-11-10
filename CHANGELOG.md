@@ -12,8 +12,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   unary minus, `ROUND`, `INT`, `ABS`, `MOD`, mixed `MAX`/`MIN`, `NTOM`/`MTON` and currency literals.
   Negative currency displays as `$-...`; SQL cursor descriptors retain currency where VFP9 does.
 
-- Numeric expressions retain VFP9 display scale through literals, arithmetic, scalar functions and
-  assignments. `TRANSFORM` preserves trailing zeroes and `STR()` keeps its default zero decimals.
+- Numeric expressions retain VFP9 display scale through literals (including exponents), arithmetic,
+  scalar functions and assignments. `TRANSFORM` preserves trailing zeroes and `STR()` keeps its default zero decimals.
   SQL computed cursor widths/scales honor operand metadata and `SET DECIMALS`.
 
 - microVFP `UPDATE ON` propagates NULL keys like VFP9, including its distinct sequential and RANDOM behavior.

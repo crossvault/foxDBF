@@ -217,6 +217,9 @@ internal sealed class ExpressionLexer
         int dot = span.IndexOf('.');
         int exponent = span.IndexOfAny('e', 'E');
         int scale = dot < 0 ? 0 : (exponent < 0 ? span.Length : exponent) - dot - 1;
+        // Moving the literal's decimal point preserves its written trailing zeroes in VFP9.
+        if (exponent >= 0 && int.TryParse(span[(exponent + 1)..], NumberStyles.AllowLeadingSign, Inv, out int power))
+            scale = (int)Math.Clamp((long)scale - power, 0, 19);
         return new(TokenType.Number, start, span.ToString(), val.WithDisplayDecimals(scale));
     }
 

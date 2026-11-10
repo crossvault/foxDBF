@@ -125,6 +125,7 @@ internal static partial class VfpRuntime
     {
         if (left.Type != VfpType.Currency)
             return VfpValue.Number(Modulo(left.AsDouble, right.AsDouble)).WithDisplayDecimals(left.DisplayDecimals);
+        // VFP9 MOD/% keep the left type but do not quantize a numeric divisor first.
         decimal divisor = right.AsNumber;
         decimal remainder = divisor == 0 ? 0 : left.AsNumber - divisor * decimal.Floor(left.AsNumber / divisor);
         return VfpValue.Currency(Math.Round(remainder, 4, MidpointRounding.AwayFromZero));

@@ -157,6 +157,7 @@ internal sealed partial class FunctionNode
                 int decimals = _args.Length > 1 && _args[1].TryConstInt(out int d) ? Math.Max(0, d) : number.Decimals;
                 return new(VfpType.Numeric, Math.Min(20, number.Length + 1 + Math.Max(0, decimals - number.Decimals)), decimals);
             case "MOD":
+                // The divisor does not widen MOD's scale or promote its result to currency.
                 return arg.Type == VfpType.Currency ? arg
                     : new(VfpType.Numeric, Math.Min(20, number.Length + 1), number.Decimals);
             case "IIF":
