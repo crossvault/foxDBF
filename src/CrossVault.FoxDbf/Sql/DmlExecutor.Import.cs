@@ -195,25 +195,30 @@ internal sealed partial class DmlExecutor
 
     private sealed class ImportRow(IReadOnlyList<DbfColumn> columns, Dictionary<string, object?> values, int recno = 0) : IRowContext, IVfpValueRow
     {
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<DbfColumn>, Dictionary<string, DbfColumn>> ColumnIndexes = new();
+        private readonly Dictionary<string, DbfColumn> _columns = ColumnIndexes.GetValue(columns,
+            static source => source.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase));
+
         public int RecNo => recno;
         public int RecCount => recno;
         public bool Deleted => false;
         public VfpValue GetValue(string name)
         {
             string field = name[(name.LastIndexOf('.') + 1)..];
-            var column = columns.FirstOrDefault(c => c.Name.Equals(field, StringComparison.OrdinalIgnoreCase));
-            return column is null ? VfpValue.FromClr(GetField(name))
-                : VfpValue.FromField(GetField(name), column.Type, column.Decimal);
+            _columns.TryGetValue(field, out var column);
+            object? value = values.TryGetValue(field, out var stored) ? stored : EmptyValue(column);
+            return column is null ? VfpValue.FromClr(value) : VfpValue.FromField(value, column.Type, column.Decimal);
         }
         public object? GetField(string name)
         {
             name = name[(name.LastIndexOf('.') + 1)..];
             if (values.TryGetValue(name, out var value)) return value;
-            var column = columns.FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-            return column?.Type switch
-            {
-                'C' or 'V' or 'M' => "", 'L' => false, 'D' => default(DateOnly), 'T' => default(DateTime), _ => 0m,
-            };
+            _columns.TryGetValue(name, out var column);
+            return EmptyValue(column);
         }
+        private static object EmptyValue(DbfColumn? column) => column?.Type switch
+        {
+            'C' or 'V' or 'M' => "", 'L' => false, 'D' => default(DateOnly), 'T' => default(DateTime), _ => 0m,
+        };
     }
 }
