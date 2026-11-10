@@ -4,7 +4,7 @@ using System.Linq.Expressions;
 
 namespace CrossVault.FoxDbf.Expressions;
 
-// Only runtime-invalid counts use this node. Normal function calls keep their existing hot path.
+// Runtime-invalid calls use this node. Normal function calls keep their existing hot path.
 // VFP9 compiles these calls even inside an unselected IIF/ICASE branch.
 internal sealed class FunctionArityErrorNode(
     FunctionNode function, AstNode[] args, int error, bool propagateNull, int position) : AstNode

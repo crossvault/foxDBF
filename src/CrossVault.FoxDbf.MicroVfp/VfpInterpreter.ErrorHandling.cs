@@ -119,7 +119,7 @@ public sealed partial class VfpInterpreter
     /// parses but is not the expected statement). Typed as returning a statement so it composes with <c>??</c>.</summary>
     private static SqlStatement ThrowSqlParseError(string sql)
     {
-        try { SqlParser.Parse(sql.Trim()); }
+        try { MicroVfpExprRewrite.ParseSql(sql.Trim()); }
         catch (FoxDbfSqlException ex)
         {
             throw new MicroVfpRuntimeException(ex.Message, ex.VfpErrorNumber ?? 10) { Statement = sql.Trim() };

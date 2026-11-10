@@ -2031,7 +2031,7 @@ public static class PrgParser
 
         private static SqlStatement? TrySql(string sql)
         {
-            try { return SqlParser.Parse(sql.Trim()); }
+            try { return MicroVfpExprRewrite.ParseSql(sql.Trim()); }
             catch (Exception) { return null; }
         }
 

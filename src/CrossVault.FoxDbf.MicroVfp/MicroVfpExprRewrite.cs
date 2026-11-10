@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using CrossVault.FoxDbf.Expressions;
+using CrossVault.FoxDbf.Sql;
 
 namespace CrossVault.FoxDbf.MicroVfp;
 
@@ -26,13 +27,17 @@ namespace CrossVault.FoxDbf.MicroVfp;
 //
 //  Both passes are STRING-LITERAL aware (`'…'`, `"…"`, and an already-recognised `[…]`
 //  literal are copied verbatim). The rewrite is confined to microVFP .prg expression
-//  fragments — it never touches the SQL parser.
+//  fragments and embedded SQL — the standalone SQL parser remains unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>Source-text normalisation that lets the shared expression engine evaluate microVFP memory
 /// arrays (bracket subscripts → parens; ALEN/AERROR array-name argument → quoted name).</summary>
 internal static class MicroVfpExprRewrite
 {
+    // Normalize before SQL tokenization: array brackets otherwise look like string literals.
+    // Keeping the resulting SQL AST preserves ISBLANK and infix semantics without per-row reparsing.
+    internal static SqlStatement ParseSql(string sql) => SqlParser.Parse(Normalize(sql));
+
     private static bool IsIdentChar(char c) => VfpIdentifier.IsPart(c);
 
     /// <summary>The identifier <paramref name="ident"/> calls <paramref name="fn"/>: its name or VFP9's
@@ -114,9 +119,9 @@ internal static class MicroVfpExprRewrite
         while (i < s.Length)
         {
             char c = s[i];
-            if (c == '\'' || c == '"')                        // copy quoted string verbatim.
+            if (c is '\'' or '"' or '[')                     // subscripts were already converted.
             {
-                char q = c; sb.Append(c); i++;
+                char q = c == '[' ? ']' : c; sb.Append(c); i++;
                 while (i < s.Length) { sb.Append(s[i]); if (s[i] == q) break; i++; }
                 i++;
                 continue;
@@ -149,9 +154,9 @@ internal static class MicroVfpExprRewrite
         while (i < s.Length)
         {
             char c = s[i];
-            if (c == '\'' || c == '"')                        // copy quoted string verbatim.
+            if (c is '\'' or '"' or '[')                     // subscripts were already converted.
             {
-                char q = c; sb.Append(c); i++;
+                char q = c == '[' ? ']' : c; sb.Append(c); i++;
                 while (i < s.Length) { sb.Append(s[i]); if (s[i] == q) break; i++; }
                 i++;
                 continue;
@@ -227,9 +232,9 @@ internal static class MicroVfpExprRewrite
         while (i < s.Length)
         {
             char c = s[i];
-            if (c == '\'' || c == '"')
+            if (c is '\'' or '"' or '[')
             {
-                char q = c; sb.Append(c); i++;
+                char q = c == '[' ? ']' : c; sb.Append(c); i++;
                 while (i < s.Length) { sb.Append(s[i]); if (s[i] == q) break; i++; }
                 i++;
                 continue;

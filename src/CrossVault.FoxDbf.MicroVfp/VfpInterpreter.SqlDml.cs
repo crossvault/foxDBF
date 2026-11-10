@@ -55,16 +55,12 @@ public sealed partial class VfpInterpreter
                     int column = ColumnIndex(wa.Table, field);
                     if (column < 0)
                         throw new MicroVfpRuntimeException($"SQL: Column '{field}' is not found.", 1806);
-                    assignments.Add((wa.Table.Columns[column].Name,
-                        assignment.Value.ContainsFunction(static (name, _) => name == "ISBLANK")
-                            ? PrgExpr.FromSql(assignment.Value) : PrgExpr.Parse(assignment.Value.Text)));
+                    assignments.Add((wa.Table.Columns[column].Name, PrgExpr.FromSql(assignment.Value)));
                 }
             }
 
             _requireDmlNames = true;
-            var predicate = where is null ? null
-                : where.HasSqlInfix || where.ContainsFunction(static (name, _) => name == "ISBLANK")
-                    ? PrgExpr.FromSql(where) : PrgExpr.Parse(where.Text);
+            var predicate = where is null ? null : PrgExpr.FromSql(where);
             // SQL predicates use ANSI even inside a program whose xBase expressions use EXACT.
             var predicateContext = where?.HasSqlInfix == true ? Session.SqlContext() : _ctx;
             if (where?.HasSqlInfix == true)

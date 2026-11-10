@@ -6,6 +6,13 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Fixed
+
+- Embedded microVFP SQL now normalizes array references and subscripts before SQL parsing,
+  including UPDATE assignments and ISBLANK/IN/BETWEEN/LIKE predicates in UPDATE, DELETE and SELECT.
+  Bracket string literals remain unchanged. SELECT INTO CURSOR/TABLE sets `_TALLY`, including zero rows.
+  SQL `LOOKUP` raises VFP9 error 11 when evaluated; unselected conditional branches remain legal.
+
 ### Changed
 
 - BREAKING: Engine and microVFP built-in calls with an invalid argument count now raise VFP9 errors 1229/1230

@@ -94,6 +94,8 @@ internal static class VfpFunctionArity
         // the BIT functions even propagate NULL before reporting their runtime count error.
         int runtimeError = canonical switch
         {
+            // VFP9 cannot pass field references to LOOKUP from a SQL expression, even with a tag.
+            "LOOKUP" when sql => 11,
             "DATE" or "DATETIME" when count is 1 or 2 => 1229,
             "BITSET" or "BITCLEAR" when count == 1 => 1229,
             "BITSET" or "BITCLEAR" when count == 3 => 1230,
@@ -111,6 +113,7 @@ internal static class VfpFunctionArity
 
     internal static ExpressionException Error(int number, int position = -1) => new(number switch
     {
+        11 => "Function argument value, type, or count is invalid.",
         1229 => "Too few arguments.",
         1230 => "Too many arguments.",
         152 => "Expression is invalid. A valid expression is required.",
