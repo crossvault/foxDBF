@@ -228,13 +228,12 @@ public sealed class SqlSelectExecutorTests : IDisposable
     }
 
     [Fact]
-    public void ScalarMaxWithTwoArguments_RemainsRowwise()
+    public void ScalarMaxWithTwoArguments_ReportsVfp9Error1300()
     {
-        var rows = SqlTestSupport.Materialize(
-            _session.Execute("SELECT MAX(amount, 100) + 1 AS adjusted FROM person ORDER BY id")!);
-
-        Assert.Equal(new[] { 101m, 201m, 301m, 151m, 251m, 251m, 301m, 101m, 401m },
-            rows.Select(r => Assert.IsType<decimal>(r[0])));
+        // P9_AggregateSyntax pins VFP9's SELECT-list restriction; WHERE remains scalar.
+        var error = Assert.Throws<FoxDbfSqlException>(() =>
+            _session.Execute("SELECT MAX(amount, 100) + 1 AS adjusted FROM person ORDER BY id"));
+        Assert.Equal(1300, error.VfpErrorNumber);
     }
 
     // ---- GROUP BY + HAVING ----------------------------------------------------------------

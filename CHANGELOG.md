@@ -9,7 +9,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ### Changed
 
 - BREAKING: SQL aggregates reject missing or extra arguments with VFP9 errors 152/1300;
-  only COUNT/CNT accept `*`. SQL CNT is recognized as COUNT; scalar MIN/MAX outside SQL remain variadic.
+  only COUNT/CNT accept `*`. SQL CNT is recognized as COUNT; scalar MIN/MAX in WHERE and outside SQL remain variadic.
 
 - microVFP implements SET FIXED and SET("FIXED") for numeric TRANSFORM and ?/?? output.
   STR keeps its explicit/default precision. Screen output can be captured through Output or SET ALTERNATE.
@@ -28,6 +28,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 - Currency conversion retains the scaled 64-bit precision of double operands; `ROUND` preserves
   currency digits and `MTON` leaves non-currency numeric payloads intact, including very large numbers.
+  Y-field writes use the same conversion; currency text retains VFP9's 16-significant-digit display limit.
 
 - BREAKING: Currency overflow now reports VFP9 errors (1988 for expressions, 39 for Y-field writes)
   instead of clamping, writing zero or leaking a .NET overflow. Currency MOD avoids intermediate overflow;

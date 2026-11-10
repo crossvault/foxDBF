@@ -351,13 +351,18 @@ public static class FieldEncoder
 
     private static long ToCurrencyScaled(object value)
     {
-        // VFP9 rejects a Y-field overflow with error 39; it neither clamps nor writes zero.
-        if (value is double d && (!double.IsFinite(d) || d < -922337203685477.5808 || d >= 922337203685477.5808))
+        // Use the same 64-bit conversion for expressions and field writes, with the field error code.
+        var number = value switch
+        {
+            double d => VfpValue.Number(d),
+            float f => VfpValue.Number((double)f),
+            _ => VfpValue.Number(SafeDecimal(value)),
+        };
+        try { return (long)(number.ToCurrencyNumber() * 10000m); }
+        catch (ExpressionException ex) when (ex.VfpErrorNumber == 1988)
+        {
             throw new DbfWriteException("Numeric overflow. Data was lost.", 39);
-        decimal m = decimal.Round(SafeDecimal(value), 4, MidpointRounding.AwayFromZero);
-        if (m < -922337203685477.5808m || m > 922337203685477.5807m)
-            throw new DbfWriteException("Numeric overflow. Data was lost.", 39);
-        return (long)(m * 10000m);
+        }
     }
 
     // ---- double (B) ------------------------------------------------------------

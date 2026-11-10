@@ -27,5 +27,8 @@ public sealed class MicroVfpNumericScaleReviewP1Tests
     [Theory]
     [MemberData(nameof(Cases))]
     public void MatchesVfp9(string name, string script, string expected)
-        => Assert.Equal(expected, MicroVfpNumericScaleReviewSupport.Run(script));
+    {
+        string actual = MicroVfpNumericScaleReviewSupport.Run(script);
+        Assert.True(expected == actual, $"{name}: expected [{expected}], actual [{actual}]");
+    }
 }

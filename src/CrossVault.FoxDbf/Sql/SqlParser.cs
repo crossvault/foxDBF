@@ -162,11 +162,11 @@ public static class SqlParser
             return _src.Substring(from, to - from).Trim();
         }
 
-        private VfpExpression BuildExpr(string text, int srcStart)
+        private VfpExpression BuildExpr(string text, int srcStart, bool aggregates = false)
         {
             try
             {
-                return VfpExpression.ParseSql(text);
+                return VfpExpression.ParseSql(text, aggregates);
             }
             catch (ExpressionException ex)
             {
@@ -595,7 +595,8 @@ public static class SqlParser
             }
             // FUNC(*) aggregate (the expression engine cannot represent a bare '*' arg)
             if (Current.Kind == TokKind.Word && Peek(1).Kind == TokKind.LParen &&
-                Peek(2).Kind == TokKind.Star && Peek(3).Kind == TokKind.RParen)
+                Peek(2).Kind == TokKind.Star && Peek(3).Kind == TokKind.RParen
+                && (IsItemBoundary(Peek(4)) || Peek(4).Kind == TokKind.Word))
             {
                 string fn = Current.Text.ToUpperInvariant();
                 if (fn is "MIN" or "MAX" or "SUM" or "AVG")
@@ -615,14 +616,14 @@ public static class SqlParser
             {
                 Advance();
                 string alias = ExpectWord("an alias name");
-                return new SelectItem(false, null, BuildExpr(text, _t[s].Start), alias);
+                return new SelectItem(false, null, BuildExpr(text, _t[s].Start, aggregates: true), alias);
             }
 
             // no AS: maybe an implicit trailing alias (expr alias). Try whole text first;
             // only if it fails to parse, retry stripping a trailing identifier as alias.
             try
             {
-                return new SelectItem(false, null, VfpExpression.ParseSql(text), null);
+                return new SelectItem(false, null, VfpExpression.ParseSql(text, aggregates: true), null);
             }
             catch (ExpressionException whole)
             {
@@ -632,7 +633,7 @@ public static class SqlParser
                     string exprText = RangeText(s, e - 1);
                     try
                     {
-                        return new SelectItem(false, null, VfpExpression.ParseSql(exprText), aliasText);
+                        return new SelectItem(false, null, VfpExpression.ParseSql(exprText, aggregates: true), aliasText);
                     }
                     catch (ExpressionException) { /* fall through to report the original error */ }
                 }

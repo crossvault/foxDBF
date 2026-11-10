@@ -27,6 +27,12 @@ public sealed class MicroVfpNumericScaleReviewP9Tests
         ("aggregate_CNT_c", "CREATE TABLE t FREE (c Y,n N(8,2))\nINSERT INTO t VALUES ($2,1)\nSELECT CNT(c) AS x FROM t INTO CURSOR zz\nresult=TRANSFORM(x)", "1"),
         ("aggregate_CNT_c,n", "CREATE TABLE t FREE (c Y,n N(8,2))\nINSERT INTO t VALUES ($2,1)\nSELECT CNT(c,n) AS x FROM t INTO CURSOR zz\nresult=TRANSFORM(x)", "ERR:1300"),
         ("aggregate_CNT_*", "CREATE TABLE t FREE (c Y,n N(8,2))\nINSERT INTO t VALUES ($2,1)\nSELECT CNT(*) AS x FROM t INTO CURSOR zz\nresult=TRANSFORM(x)", "1"),
+        ("syntax_SELECT MAX(c,n) FROM t INTO CURSOR zz", "CREATE TABLE t FREE (c Y,n N(8,2))\nINSERT INTO t VALUES ($2,1)\nSELECT MAX(c,n) FROM t INTO CURSOR zz\n=AFIELDS(aa)\nresult=TRANSFORM(EVALUATE(aa[1,1]))", "ERR:1300"),
+        ("syntax_SELECT MAX(c,n) x FROM t INTO CURSOR zz", "CREATE TABLE t FREE (c Y,n N(8,2))\nINSERT INTO t VALUES ($2,1)\nSELECT MAX(c,n) x FROM t INTO CURSOR zz\n=AFIELDS(aa)\nresult=TRANSFORM(EVALUATE(aa[1,1]))", "ERR:1300"),
+        ("syntax_SELECT MAX(c,n)+1 AS x FROM t INTO CURSOR zz", "CREATE TABLE t FREE (c Y,n N(8,2))\nINSERT INTO t VALUES ($2,1)\nSELECT MAX(c,n)+1 AS x FROM t INTO CURSOR zz\n=AFIELDS(aa)\nresult=TRANSFORM(EVALUATE(aa[1,1]))", "ERR:1300"),
+        ("syntax_SELECT c FROM t WHERE MAX(c,n)>0 INTO CURSOR zz", "CREATE TABLE t FREE (c Y,n N(8,2))\nINSERT INTO t VALUES ($2,1)\nSELECT c FROM t WHERE MAX(c,n)>0 INTO CURSOR zz\n=AFIELDS(aa)\nresult=TRANSFORM(EVALUATE(aa[1,1]))", "$2.0000"),
+        ("syntax_SELECT CNT(c) FROM t INTO CURSOR zz", "CREATE TABLE t FREE (c Y,n N(8,2))\nINSERT INTO t VALUES ($2,1)\nSELECT CNT(c) FROM t INTO CURSOR zz\n=AFIELDS(aa)\nresult=TRANSFORM(EVALUATE(aa[1,1]))", "1"),
+        ("syntax_SELECT CNT(*)+1 AS x FROM t INTO CURSOR zz", "CREATE TABLE t FREE (c Y,n N(8,2))\nINSERT INTO t VALUES ($2,1)\nSELECT CNT(*)+1 AS x FROM t INTO CURSOR zz\n=AFIELDS(aa)\nresult=TRANSFORM(EVALUATE(aa[1,1]))", "2"),
     ];
     public static IEnumerable<object[]> Cases => Evidence.Select(c => new object[] { c.Name, c.Script, c.Expected });
     [Theory]

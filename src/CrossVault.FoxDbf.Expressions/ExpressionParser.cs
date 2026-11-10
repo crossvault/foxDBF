@@ -21,6 +21,7 @@ internal sealed class ExpressionParser
     private int _pos;
     private int _depth;
     private string? _sql;
+    private bool _sqlAggregates;
     private readonly List<(int Start, int End, string Text)> _nullTests = new();
 
     /// <summary>Recursion-depth cap so a deeply-nested expression (e.g. thousands of parentheses) throws
@@ -29,9 +30,9 @@ internal sealed class ExpressionParser
 
     private ExpressionParser(List<Token> tokens) => _tokens = tokens;
 
-    internal static (AstNode Root, string Text) ParseSql(string text)
+    internal static (AstNode Root, string Text) ParseSql(string text, bool aggregates = false)
     {
-        var parser = new ExpressionParser(new ExpressionLexer(text).Tokenize()) { _sql = text };
+        var parser = new ExpressionParser(new ExpressionLexer(text).Tokenize()) { _sql = text, _sqlAggregates = aggregates };
         var root = parser.ParseExpr(0);
         if (parser.Peek.Type != TokenType.Eof)
             throw new ExpressionException("Unexpected trailing input.", parser.Peek.Pos);
@@ -170,14 +171,15 @@ internal sealed class ExpressionParser
         {
             Next(); // '('
             string name = id.Text;
-            bool aggregate = _sql is not null && name.ToUpperInvariant() is "MIN" or "MAX" or "SUM" or "AVG" or "COUNT" or "CNT";
+            bool aggregate = _sqlAggregates && name.ToUpperInvariant() is "MIN" or "MAX" or "SUM" or "AVG" or "COUNT" or "CNT";
             if (aggregate && name.Equals("CNT", StringComparison.OrdinalIgnoreCase))
             {
                 name = "COUNT";
                 _nullTests.Add((id.Pos, id.Pos + id.Text.Length, name));
             }
             var args = new List<AstNode>();
-            if (aggregate && Peek.Type == TokenType.Star)
+            if (_sql is not null && name.Equals("COUNT", StringComparison.OrdinalIgnoreCase) && Peek.Type == TokenType.Star
+                || aggregate && Peek.Type == TokenType.Star)
             {
                 if (!name.Equals("COUNT", StringComparison.OrdinalIgnoreCase))
                     throw new ExpressionException("Expression is invalid. A valid expression is required.", id.Pos) { VfpErrorNumber = 152 };

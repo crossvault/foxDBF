@@ -727,6 +727,12 @@ internal static partial class VfpRuntime
         double n = Arg(a, 0).AsDouble;
         int len = a.Length > 1 ? IntArg(a, 1) : 10;
         int dec = a.Length > 2 ? IntArg(a, 2) : 0;
+        if (Arg(a, 0).Type == VfpType.Currency)
+        {
+            int scale = NumericStorageDecimals(n, Math.Max(0, len), Math.Clamp(dec, 0, 28));
+            string text = Math.Round(Arg(a, 0).AsDisplayNumber, scale, MidpointRounding.AwayFromZero).ToString("F" + scale, Inv);
+            return VfpValue.Character(text.Length > len ? new string('*', Math.Max(0, len)) : text.PadLeft(len));
+        }
         return VfpValue.Character(StrCore(n, len, dec));
     }
 

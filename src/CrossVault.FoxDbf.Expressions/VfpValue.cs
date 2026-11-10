@@ -191,6 +191,12 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     {
         get
         {
+            if (_type == VfpType.Currency)
+            {
+                decimal magnitude = Math.Abs(_dec);
+                int digits = magnitude < 1 ? 1 : (int)Math.Floor(Math.Log10((double)magnitude)) + 1;
+                return Math.Round(_dec, Math.Clamp(16 - digits, 0, 4), MidpointRounding.AwayFromZero);
+            }
             if (_isExact || !double.IsFinite(_num) || Math.Abs(_num) >= (double)decimal.MaxValue) return AsNumber;
             Span<char> text = stackalloc char[32];
             _num.TryFormat(text, out int length, "G16", System.Globalization.CultureInfo.InvariantCulture);
