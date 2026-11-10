@@ -191,20 +191,14 @@ public sealed class FieldEncoderTests
     }
 
     [Fact]
-    public void Y_OutOfRange_Saturates_NeverThrows()
+    public void Y_OutOfRange_ReportsVfp9Error39()
     {
-        // decimal.MaxValue * 10000 overflows decimal AND the int64 narrowing — both must
-        // saturate, not throw (never-throw §A10 contract for 'Y', MUST-FIX). A positive
-        // out-of-range currency clamps to long.MaxValue, a negative to long.MinValue.
-        byte[] pos = null!, neg = null!;
-        var ex = Record.Exception(() =>
+        // P1_CurrencyOverflow pins VFP9's field-write error before changing this expectation.
+        foreach (var value in new[] { decimal.MaxValue, decimal.MinValue })
         {
-            pos = Encode(Col('Y', 8), decimal.MaxValue, 8);
-            neg = Encode(Col('Y', 8), decimal.MinValue, 8);
-        });
-        Assert.Null(ex);
-        Assert.Equal(BitConverter.GetBytes(long.MaxValue), pos);
-        Assert.Equal(BitConverter.GetBytes(long.MinValue), neg);
+            var error = Assert.Throws<DbfWriteException>(() => Encode(Col('Y', 8), value, 8));
+            Assert.Equal(39, error.VfpErrorNumber);
+        }
     }
 
     // ---- B (IEEE-754 double LE) -------------------------------------------------

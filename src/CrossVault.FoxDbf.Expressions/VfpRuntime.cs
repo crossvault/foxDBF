@@ -108,17 +108,24 @@ internal static partial class VfpRuntime
     // Its fixed-point multiply/divide then round an exact midpoint to the even digit.
     private static VfpValue CurrencyArithmetic(BinOp op, in VfpValue l, in VfpValue r)
     {
-        decimal left = Math.Round(l.AsNumber, 4, MidpointRounding.AwayFromZero);
-        decimal right = Math.Round(r.AsNumber, 4, MidpointRounding.AwayFromZero);
+        decimal left = VfpValue.Currency(Math.Round(l.AsNumber, 4, MidpointRounding.AwayFromZero)).AsNumber;
+        decimal right = VfpValue.Currency(Math.Round(r.AsNumber, 4, MidpointRounding.AwayFromZero)).AsNumber;
         if (op == BinOp.Div && right == 0) return VfpValue.Null;
-        decimal value = op switch
+        try
         {
-            BinOp.Add => left + right,
-            BinOp.Sub => left - right,
-            BinOp.Mul => left * right,
-            _ => left / right,
-        };
-        return VfpValue.Currency(Math.Round(value, 4, MidpointRounding.ToEven));
+            decimal value = op switch
+            {
+                BinOp.Add => left + right,
+                BinOp.Sub => left - right,
+                BinOp.Mul => left * right,
+                _ => left / right,
+            };
+            return VfpValue.Currency(Math.Round(value, 4, MidpointRounding.ToEven));
+        }
+        catch (OverflowException)
+        {
+            throw new ExpressionException("Currency value is out of range.") { VfpErrorNumber = 1988 };
+        }
     }
 
     private static VfpValue Remainder(in VfpValue left, in VfpValue right)
@@ -127,7 +134,9 @@ internal static partial class VfpRuntime
             return VfpValue.Number(Modulo(left.AsDouble, right.AsDouble)).WithDisplayDecimals(left.DisplayDecimals);
         // VFP9 MOD/% keep the left type but do not quantize a numeric divisor first.
         decimal divisor = right.AsNumber;
-        decimal remainder = divisor == 0 ? 0 : left.AsNumber - divisor * decimal.Floor(left.AsNumber / divisor);
+        // Remainder avoids overflowing an intermediate quotient for tiny divisors.
+        decimal remainder = divisor == 0 ? 0 : left.AsNumber % divisor;
+        if (remainder != 0 && Math.Sign(remainder) != Math.Sign(divisor)) remainder += divisor;
         return VfpValue.Currency(Math.Round(remainder, 4, MidpointRounding.AwayFromZero));
     }
 

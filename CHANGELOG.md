@@ -8,6 +8,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- BREAKING: Currency overflow now reports VFP9 errors (1988 for expressions, 39 for Y-field writes)
+  instead of clamping, writing zero or leaking a .NET overflow. Currency MOD avoids intermediate overflow;
+  exponent notation in currency literals raises VFP9 syntax error 10.
+
 - Currency arithmetic preserves VFP9 type Y, operand conversion and four-place rounding, including
   unary minus, `ROUND`, `INT`, `ABS`, `MOD`, mixed `MAX`/`MIN`, `NTOM`/`MTON` and currency literals.
   Negative currency displays as `$-...`; SQL cursor descriptors retain currency where VFP9 does.

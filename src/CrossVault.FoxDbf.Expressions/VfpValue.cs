@@ -102,8 +102,13 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         new(VfpType.Numeric, value, 0m, false, null, false, default,
             displayDecimalsPlusOne: (byte)(Math.Clamp(decimals, -1, 19) + 1));
 
-    public static VfpValue Currency(decimal d) =>
-        new(VfpType.Currency, (double)d, d, true, null, false, default, displayDecimalsPlusOne: 5);
+    public static VfpValue Currency(decimal d)
+    {
+        // VFP9 currency is a signed 64-bit integer scaled by 10,000.
+        if (d < -922337203685477.5808m || d > 922337203685477.5807m)
+            throw new ExpressionException("Currency value is out of range.") { VfpErrorNumber = 1988 };
+        return new(VfpType.Currency, (double)d, d, true, null, false, default, displayDecimalsPlusOne: 5);
+    }
 
     public static VfpValue Integer(int i) =>
         new(VfpType.Integer, i, i, true, null, false, default);

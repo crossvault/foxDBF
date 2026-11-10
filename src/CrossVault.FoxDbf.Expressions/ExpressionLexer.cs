@@ -68,6 +68,9 @@ internal sealed class ExpressionLexer
                     {
                         i++;
                         Token number = ReadNumber(s, ref i);
+                        // Unlike numeric literals, VFP9 currency literals do not accept exponents.
+                        if (number.Text.Contains('e', StringComparison.OrdinalIgnoreCase))
+                            throw new ExpressionException("Syntax error.", start) { VfpErrorNumber = 10 };
                         tokens.Add(new(TokenType.Number, start, "$" + number.Text,
                             VfpValue.Currency(Math.Round(number.Value.AsNumber, 4, MidpointRounding.AwayFromZero))));
                         continue;
