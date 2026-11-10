@@ -30,6 +30,14 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
+- BREAKING: Numeric domain errors now match VFP9 (`SQRT`: 61, `LOG`: 58, `LOG10`: 292,
+  `ACOS`/`ASIN`: 293/291, fractional powers of a negative base: 78, `MOD`/`%` by zero: 1307).
+  Numeric division by zero returns VFP9's overflow value; currency division by zero raises 1988.
+  Overflow display, `SIGN`, `INT` and extreme `ROUND` arguments follow VFP9. These built-ins no longer
+  leak CLR arithmetic exceptions into the aggregate metadata pass, including unselected conditional branches.
+- Built-ins validate string lengths, binary conversion widths, date/week boundaries and numeric argument
+  conversions before using CLR APIs. Large substring lengths, numeric pictures, memo offsets and array
+  arguments now return VFP9's values or catchable VFP errors instead of CLR range/overflow exceptions.
 - Invalid microVFP `CALCULATE` items raise VFP9's catchable errors when executed, with VFP9's syntax,
   missing-expression and unrecognized-phrase messages. An unexecuted invalid line no longer prevents a
   program from loading.

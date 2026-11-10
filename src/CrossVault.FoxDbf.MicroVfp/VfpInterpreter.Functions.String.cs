@@ -142,7 +142,8 @@ public sealed partial class VfpInterpreter
         string decPat = dot < 0 ? string.Empty : picture[(dot + 1)..];
         int decCount = decPat.Count(ch => ch is '9' or '#');
 
-        decimal absRounded = Math.Round(Math.Abs(value), decCount, MidpointRounding.AwayFromZero);
+        // VFP9 accepts pictures wider than decimal's precision; extra slots are zero-filled.
+        decimal absRounded = Math.Round(Math.Abs(value), Math.Min(decCount, 28), MidpointRounding.AwayFromZero);
         bool neg = value < 0;
         string fixedStr = absRounded.ToString("F" + decCount, CultureInfo.InvariantCulture);
         int fdot = fixedStr.IndexOf('.');
@@ -210,9 +211,9 @@ public sealed partial class VfpInterpreter
         string searched = a[0].AsString;
         string begin = a[1].AsString;
         string end = a.Length > 2 ? a[2].AsString : string.Empty;
-        int occ = a.Length > 3 ? (int)a[3].AsNumber : 1;
-        int flags = a.Length > 4 ? (int)a[4].AsNumber : 0;
-        if (occ < 1) occ = 1;
+        int occ = a.Length > 3 ? a[3].TruncatedInt32 : 1;
+        int flags = a.Length > 4 ? a[4].TruncatedInt32 : 0;
+        if (occ < 1) return string.Empty;
         var cmp = (flags & 1) != 0 ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         bool remainderIfNoEnd = (flags & 2) != 0;
 
@@ -264,7 +265,7 @@ public sealed partial class VfpInterpreter
         if (a.Length < 2) return string.Empty;
         string delims = a.Length > 2 && a[2].Type == VfpType.Character && a[2].AsString.Length > 0 ? a[2].AsString : DefaultWordDelims;
         var words = GetWords(a[0].AsString, delims);
-        int n = (int)a[1].AsNumber;
+        int n = a[1].TruncatedInt32;
         return n >= 1 && n <= words.Count ? words[n - 1] : string.Empty;
     }
 
@@ -328,7 +329,9 @@ public sealed partial class VfpInterpreter
     {
         if (a.Length < 2) return a.Length > 0 ? a[0].AsString : string.Empty;
         string s = a[0].AsString;
-        int mode = (int)a[1].AsNumber;
+        int mode = a[1].TruncatedInt32;
+        if (a[1].AsDouble > int.MaxValue || a[1].AsDouble < int.MinValue)
+            throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
         var l1 = Encoding.Latin1;
         var cp = _ctx.Encoding ?? ConnectionEncoding();
         byte[] bytes = (a[0].IsBinary ? l1 : cp).GetBytes(s);
@@ -380,7 +383,7 @@ public sealed partial class VfpInterpreter
     private string FnCpConvert(VfpValue[] a)
     {
         if (a.Length < 3) return a.Length > 2 ? a[2].AsString : string.Empty;
-        int from = (int)a[0].AsNumber, to = (int)a[1].AsNumber;
+        int from = a[0].TruncatedInt32, to = a[1].TruncatedInt32;
         string s = a[2].AsString;
         if (from == to) return s;
         try
@@ -399,7 +402,9 @@ public sealed partial class VfpInterpreter
     /// underlying OEM/DOS code page.</summary>
     private int FnCpCurrent(VfpValue[] a)
     {
-        bool oem = a.Length > 0 && IsNumeric(a[0]) && (int)a[0].AsNumber == 2;
+        if (a.Length > 0 && (a[0].AsDouble > int.MaxValue || a[0].AsDouble < int.MinValue))
+            throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
+        bool oem = a.Length > 0 && IsNumeric(a[0]) && a[0].TruncatedInt32 == 2;
         var ti = CultureInfo.CurrentCulture.TextInfo;
         return oem ? ti.OEMCodePage : SessionCodePage;
     }
@@ -463,7 +468,8 @@ public sealed partial class VfpInterpreter
             if (p.Type == VfpType.Logical) { trim = p.AsLogical; parseFrom = 3; }
             else if (p.Type is VfpType.Numeric or VfpType.Integer or VfpType.Currency)
             {
-                int flags = (int)p.AsNumber;
+                int flags = p.TruncatedInt32;
+                if (flags < 0) throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
                 trim = (flags & 1) != 0;
                 includeTrailingEmpty = (flags & 2) != 0;
                 skipEmpty = (flags & 4) != 0;
@@ -625,12 +631,13 @@ public sealed partial class VfpInterpreter
     private VfpValue FnSys10(VfpValue[] a)
     {
         if (a.Length < 2) return VfpValue.Character(string.Empty);
-        var d = FromJulianDay((int)a[1].AsNumber);
-        return VfpValue.Character(d.ToString("MM/dd/yyyy", CultureInfo.InvariantCulture));
+        int day = a[1].TruncatedInt32;
+        if (day < 1721425 || day > 5373484) return VfpValue.Character(TransformEmptyDate());
+        return VfpValue.Character(FromJulianDay(day));
     }
 
     /// <summary>The inverse of <see cref="JulianDay"/> (Fliegel–Van Flandern).</summary>
-    private static DateOnly FromJulianDay(int jd)
+    private static string FromJulianDay(int jd)
     {
         int a = jd + 32044;
         int b = (4 * a + 3) / 146097;
@@ -641,7 +648,8 @@ public sealed partial class VfpInterpreter
         int day = e - (153 * m + 2) / 5 + 1;
         int month = m + 3 - 12 * (m / 10);
         int year = 100 * b + d - 4800 + m / 10;
-        return new DateOnly(year, month, day);
+        // SYS(10) can format year zero, which DateOnly cannot represent (Round5 oracle).
+        return FormattableString.Invariant($"{month:00}/{day:00}/{year:0000}");
     }
 
     private static int FnOccurs(VfpValue[] a)
@@ -659,7 +667,9 @@ public sealed partial class VfpInterpreter
         if (a.Length < 2) return 0;
         string needle = a[0].AsString, hay = a[1].AsString;
         if (needle.Length == 0) return 0;
-        int occ = a.Length > 2 ? Math.Max(1, (int)a[2].AsNumber) : 1;
+        int occ = a.Length > 2 ? a[2].TruncatedInt32 : 1;
+        if (occ < 1 || a.Length > 2 && a[2].AsDouble > int.MaxValue)
+            throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
         int i = -1;
         for (int k = 0; k < occ; k++)
         {

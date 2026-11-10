@@ -19,23 +19,36 @@ internal static partial class VfpRuntime
             case "RAND": return VfpValue.Number(ctx.Random.Next(args.Length == 0 ? null : x)).WithDisplayDecimals(ctx.NumericDecimals);
             case "FLOAT": case "FIXED": return VfpValue.Number(x).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
             case "TIME": return VfpValue.Character(DateTime.Now.ToString(args.Length > 0 && x == 1 ? "HH:mm:ss.ff" : "HH:mm:ss", Inv));
-            case "CEILING": return VfpValue.Number(Math.Ceiling(x)).WithDisplayDecimals(0);
-            case "FLOOR": return VfpValue.Number(Math.Floor(x)).WithDisplayDecimals(0);
-            case "ACOS": return VfpValue.Number(Math.Acos(x)).WithDisplayDecimals(ctx.NumericDecimals);
-            case "ASIN": return VfpValue.Number(Math.Asin(x)).WithDisplayDecimals(ctx.NumericDecimals);
-            case "ATAN": return VfpValue.Number(Math.Atan(x)).WithDisplayDecimals(ctx.NumericDecimals);
-            case "ATN2": return VfpValue.Number(Math.Atan2(x, y)).WithDisplayDecimals(ctx.NumericDecimals);
-            case "COS": return VfpValue.Number(Math.Cos(x)).WithDisplayDecimals(ctx.NumericDecimals);
-            case "SIN": return VfpValue.Number(Math.Sin(x)).WithDisplayDecimals(ctx.NumericDecimals);
-            case "TAN": return VfpValue.Number(Math.Tan(x)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "CEILING": return VfpValue.Number(Math.Ceiling(x)).WithDisplayDecimals(0).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "FLOOR": return VfpValue.Number(Math.Floor(x)).WithDisplayDecimals(0).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "ACOS":
+                if (x < -1 || x > 1) throw new ExpressionException("Expression used with ACOS() is out of range.") { VfpErrorNumber = 293 };
+                return VfpValue.Number(Math.Acos(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "ASIN":
+                if (x < -1 || x > 1) throw new ExpressionException("Expression used with ASIN() is out of range.") { VfpErrorNumber = 291 };
+                return VfpValue.Number(Math.Asin(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "ATAN": return VfpValue.Number(Math.Atan(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "ATN2": return VfpValue.Number(Math.Atan2(x, y)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "COS": return VfpValue.Number(Math.Cos(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "SIN": return VfpValue.Number(Math.Sin(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "TAN": return VfpValue.Number(Math.Tan(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
             case "DTOR": return VfpValue.Number(x * (Math.PI / 180)).WithDisplayDecimals(ctx.NumericDecimals);
             case "RTOD": return VfpValue.Number(x * (180 / Math.PI)).WithDisplayDecimals(ctx.NumericDecimals);
             case "PI": return VfpValue.Number(Math.PI).WithDisplayDecimals(ctx.NumericDecimals);
-            case "EXP": return VfpValue.Number(Math.Exp(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals));
-            case "LOG": return VfpValue.Number(Math.Log(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals));
-            case "LOG10": return VfpValue.Number(Math.Log10(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals));
-            case "SQRT": return VfpValue.Number(Math.Sqrt(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals));
-            case "SIGN": return VfpValue.Number((double)Math.Sign(x)).WithDisplayDecimals(0);
+            case "EXP": return VfpValue.Number(Math.Exp(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals))
+                .WithOverflowDisplayWidth(double.IsNaN(x) ? Arg(args, 0).OverflowDisplayWidth : NumericOverflowWidth(ctx.NumericDecimals));
+            case "LOG":
+                if (x <= 0) throw new ExpressionException("LOG(): Zero or negative used as argument.") { VfpErrorNumber = 58 };
+                return VfpValue.Number(Math.Log(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals)).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "LOG10":
+                if (x <= 0) throw new ExpressionException("Cannot use 0 or negative as the argument for LOG10().") { VfpErrorNumber = 292 };
+                return VfpValue.Number(Math.Log10(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals)).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "SQRT":
+                if (x < 0) throw new ExpressionException("SQRT() argument cannot be negative.") { VfpErrorNumber = 61 };
+                return VfpValue.Number(Math.Sqrt(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals))
+                    .WithOverflowDisplayWidth(Arg(args, 0).OverflowDisplayWidth);
+            // Round5 oracle: SIGN of an indeterminate overflow is -1, not a CLR ArithmeticException.
+            case "SIGN": return VfpValue.Number(double.IsNaN(x) ? -1d : Math.Sign(x)).WithDisplayDecimals(0);
             case "FV": case "PV": case "PAYMENT":
             {
                 // VFP9 uses the rounded absolute period count and powers the reciprocal for PV/PAYMENT.
@@ -77,6 +90,7 @@ internal static partial class VfpRuntime
             {
                 var rule = args.Length > 1 ? (int)y : 1;
                 var day = args.Length > 2 ? IntArg(args, 2) : 1;
+                if (rule is < 0 or > 3 || day is < 0 or > 7) throw InvalidFunctionArgument();
                 return VfpValue.Number(Arg(args, 0).IsEmptyDate ? 0d : Inv.Calendar.GetWeekOfYear(Arg(args, 0).AsDateTime,
                     rule == 2 ? CalendarWeekRule.FirstFourDayWeek : rule == 3 ? CalendarWeekRule.FirstFullWeek : CalendarWeekRule.FirstDay,
                     (DayOfWeek)(Math.Max(1, day) - 1))).WithDisplayDecimals(0);
@@ -177,7 +191,9 @@ internal static partial class VfpRuntime
     {
         byte[] bytes = EncodeByteString(Arg(args, 0), ctx);
         string flags = BinaryFlags(args, bytes.Length == 8 ? "B" : bytes.Length.ToString(Inv));
-        if (bytes.Length is not (1 or 2 or 4 or 8)) return VfpValue.Null;
+        if (bytes.Length is not (1 or 2 or 4 or 8)
+            || (flags.Contains('N') || flags == "8") && bytes.Length is not (4 or 8)
+            || flags.Contains('Y') && bytes.Length != 8) throw InvalidFunctionArgument();
         if (flags.Contains('R')) Array.Reverse(bytes);
         if (flags.Contains('N') || flags == "8")
         {

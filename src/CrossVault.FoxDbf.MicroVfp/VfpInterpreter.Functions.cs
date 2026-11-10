@@ -34,8 +34,11 @@ public sealed partial class VfpInterpreter
         // array variable. A visible array binding takes precedence (VFP resolves the subscript, not a UDF).
         if (Memory.FindArray(name) is { } arr)
         {
-            int s1 = a.Length > 0 ? (int)a[0].AsNumber : 1;
-            int? s2 = a.Length > 1 ? (int)a[1].AsNumber : (int?)null;
+            foreach (var subscript in a)
+                if (!double.IsFinite(subscript.AsDouble) || subscript.AsDouble > int.MaxValue || subscript.AsDouble < int.MinValue)
+                    throw new MicroVfpRuntimeException("Invalid subscript reference.", 31);
+            int s1 = a.Length > 0 ? a[0].TruncatedInt32 : 1;
+            int? s2 = a.Length > 1 ? a[1].TruncatedInt32 : (int?)null;
             r = arr.Get(s1, s2);
             return true;
         }
@@ -118,7 +121,7 @@ public sealed partial class VfpInterpreter
             case "ALEN": r = VfpValue.Integer(FnAlen(a)); return true;
             case "AERROR": r = FnAerror(a); return true;
             case "ERROR": r = VfpValue.Integer(_errNo); return true;
-            case "MESSAGE": r = VfpValue.Character(a.Length > 0 && IsNumeric(a[0]) && (int)a[0].AsNumber == 1 ? string.Empty : _errMsg); return true;
+            case "MESSAGE": r = VfpValue.Character(a.Length > 0 && IsNumeric(a[0]) && a[0].AsDouble != 0 ? string.Empty : _errMsg); return true;
             case "LINENO": r = VfpValue.Integer(_errLine); return true;
             case "ON": r = VfpValue.Character(string.Equals(a.Length > 0 ? a[0].AsString : string.Empty, "ERROR", StringComparison.OrdinalIgnoreCase) ? (Runtime.OnError ?? string.Empty) : string.Empty); return true;
             case "ISDIGIT": r = VfpValue.Logical(a.Length > 0 && a[0].AsString.Length > 0 && char.IsDigit(a[0].AsString[0])); return true;
@@ -229,7 +232,7 @@ public sealed partial class VfpInterpreter
             if (f.Type == VfpType.Logical) additive = f.AsLogical;
             else
             {
-                int flag = (int)f.AsNumber;
+                int flag = f.TruncatedInt32;
                 switch (flag)
                 {
                     case 0: break;                                       // overwrite, no BOM.
@@ -341,7 +344,7 @@ public sealed partial class VfpInterpreter
     {
         if (a.Length == 0 || !IsNumeric(a[0]))
             return VfpValue.Character(CurrentCall.Name);
-        int n = (int)a[0].AsNumber;
+        int n = a[0].TruncatedInt32;
         if (n == 0) return VfpValue.Character(CurrentCall.Name);
         if (n < 0) return VfpValue.Integer(_callStack.Count - 1);
         int idx = _callStack.Count - 1 - n;
@@ -354,7 +357,7 @@ public sealed partial class VfpInterpreter
         var v = a[0];
         if (v.Type == VfpType.Character)
             return VfpValue.Integer(Session.FindAreaByAlias(v.AsString)?.Area ?? 0);
-        int n = (int)v.AsNumber;
+        int n = v.TruncatedInt32;
         return n switch
         {
             0 => VfpValue.Integer(Session.CurrentArea),
@@ -426,6 +429,11 @@ public sealed partial class VfpInterpreter
     private VfpValue FnSet(VfpValue[] a)
     {
         if (a.Length == 0) return VfpValue.Character(string.Empty);
+        if (a[0].AsString.Equals("FIELDS", StringComparison.OrdinalIgnoreCase) && a.Length > 1
+            && a[1].AsDouble > int.MaxValue) return VfpValue.Character(string.Empty);
+        if (a[0].AsString.Equals("TEXTMERGE", StringComparison.OrdinalIgnoreCase) && a.Length > 1
+            && (a[1].AsDouble > int.MaxValue || a[1].AsDouble < int.MinValue))
+            throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
         return a[0].AsString.ToUpperInvariant() switch
         {
             "DECIMALS" => VfpValue.Integer(_ctx.NumericDecimals),
@@ -447,7 +455,7 @@ public sealed partial class VfpInterpreter
             // count SYS(2012) reports (hackfox s4g089). NUMERIC. TEXTMERGE reads back ON/OFF; SET("TEXTMERGE",1)
             // is the concatenated begin+end delimiters (default "<<>>").
             "BLOCKSIZE" => VfpValue.Number((decimal)_blockSize).WithDisplayDecimals(0),
-            "TEXTMERGE" => a.Length > 1 && IsNumeric(a[1]) && (int)a[1].AsNumber == 1
+            "TEXTMERGE" => a.Length > 1 && IsNumeric(a[1]) && a[1].TruncatedInt32 == 1
                 ? VfpValue.Character(_tmDelimBegin + _tmDelimEnd)
                 : VfpValue.Character(_textMerge ? "ON" : "OFF"),
             "RELATION" => VfpValue.Character(RelationSetString(Session.CurrentArea)),  // reproduces the SET RELATION args.
@@ -459,7 +467,7 @@ public sealed partial class VfpInterpreter
             // alias) — matches FLDLIST()'s list but without the alias qualifier — EXCEPT after SET FIELDS TO
             // ALL, when it is the literal "ALL" while FLDLIST() still enumerates every field (oracle-pinned
             // vs the VFP9 runtime, incl. that "ALL" survives SET FIELDS ON/OFF; hackfox s4g091).
-            "FIELDS" => a.Length > 1 && IsNumeric(a[1]) && (int)a[1].AsNumber == 1
+            "FIELDS" => a.Length > 1 && IsNumeric(a[1]) && a[1].TruncatedInt32 == 1
                 ? VfpValue.Character(_setFieldsAll ? "ALL" : string.Join(", ", _setFields.Select(f => f.ToUpperInvariant())))
                 : VfpValue.Character(_setFieldsOn ? "ON" : "OFF"),
             "TALK" => VfpValue.Character("OFF"),
@@ -514,7 +522,7 @@ public sealed partial class VfpInterpreter
 
     private VfpValue FnSys(VfpValue[] a)
     {
-        int n = a.Length > 0 ? (int)a[0].AsNumber : 0;
+        int n = a.Length > 0 ? a[0].TruncatedInt32 : 0;
         switch (n)
         {
             // SYS(0) = "<machine> # <station/user>" (network-dependent — see MICROVFP_SEMANTICS.md Nachtrag:
@@ -627,7 +635,8 @@ public sealed partial class VfpInterpreter
         if (a.Length == 0) return 0;
         var arr = Memory.FindArray(a[0].AsString);
         if (arr is null) return 0;
-        int dim = a.Length > 1 && IsNumeric(a[1]) ? (int)a[1].AsNumber : 0;
+        int dim = a.Length > 1 && IsNumeric(a[1]) ? a[1].TruncatedInt32 : 0;
+        if (dim is < 0 or > 2) throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
         return arr.ALen(dim);
     }
 
@@ -642,6 +651,9 @@ public sealed partial class VfpInterpreter
         int flags = args.Length > 5 ? args[5].AsInteger : 0;
         if (column > Math.Max(1, array.Cols)) throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
         int length = column > 0 ? array.Rows : array.Length;
+        if (start > length || args.Length > 2 && args[2].AsDouble > int.MaxValue
+            || count > length - start + 1)
+            throw new MicroVfpRuntimeException("Subscript is outside defined range.", 1234);
         int end = count < 0 ? length : Math.Min(length, start + count - 1);
         var context = new EvaluationContext { Collation = _ctx.Collation, Exact = (flags & 4) == 0 ? _ctx.Exact : (flags & 2) != 0 };
         for (int position = start; position <= end; position++)
@@ -703,11 +715,15 @@ public sealed partial class VfpInterpreter
         if (src is null) return 0;
         int srcLen = src.Length;
 
-        int start = a.Length > 2 && IsNumeric(a[2]) ? (int)a[2].AsNumber : 1;
+        if (a.Length > 2 && (a[2].AsDouble > int.MaxValue || a[2].AsDouble < int.MinValue)
+            || a.Length > 4 && (a[4].AsDouble > int.MaxValue || a[4].AsDouble < int.MinValue))
+            throw new MicroVfpRuntimeException("Subscript is outside defined range.", 1234);
+
+        int start = a.Length > 2 && IsNumeric(a[2]) ? a[2].TruncatedInt32 : 1;
         if (start < 1) start = 1;
-        int count = a.Length > 3 && IsNumeric(a[3]) ? (int)a[3].AsNumber : srcLen - start + 1;
+        int count = a.Length > 3 && IsNumeric(a[3]) ? a[3].TruncatedInt32 : srcLen - start + 1;
         if (count < 0) count = srcLen - start + 1;
-        int destStart = a.Length > 4 && IsNumeric(a[4]) ? (int)a[4].AsNumber : 1;
+        int destStart = a.Length > 4 && IsNumeric(a[4]) ? a[4].TruncatedInt32 : 1;
         if (destStart < 1) destStart = 1;
 
         string destName = a[1].AsString;
@@ -739,9 +755,13 @@ public sealed partial class VfpInterpreter
     private int FnADel(VfpValue[] a)
     {
         if (a.Length < 2) return 0;
+        if (a.Length > 2 && a[2].AsDouble > int.MaxValue)
+            throw new MicroVfpRuntimeException("Too many arguments.", 1230);
         var arr = Memory.FindArray(a[0].AsString);
         if (arr is null) return 0;
-        int idx = (int)a[1].AsNumber;
+        int idx = a[1].TruncatedInt32;
+        if (idx < 1 || a[1].AsDouble > int.MaxValue)
+            throw new MicroVfpRuntimeException("Subscript is outside defined range.", 1234);
         if (IsColumnMode(arr, a))
         {
             if (idx < 1 || idx > arr.Cols) throw new MicroVfpRuntimeException("Subscript is outside defined range.");
@@ -761,9 +781,13 @@ public sealed partial class VfpInterpreter
     private int FnAIns(VfpValue[] a)
     {
         if (a.Length < 2) return 0;
+        if (a.Length > 2 && a[2].AsDouble > int.MaxValue)
+            throw new MicroVfpRuntimeException("Too many arguments.", 1230);
         var arr = Memory.FindArray(a[0].AsString);
         if (arr is null) return 0;
-        int idx = (int)a[1].AsNumber;
+        int idx = a[1].TruncatedInt32;
+        if (idx < 1 || a[1].AsDouble > int.MaxValue)
+            throw new MicroVfpRuntimeException("Subscript is outside defined range.", 1234);
         if (IsColumnMode(arr, a))
         {
             if (idx < 1 || idx > arr.Cols) throw new MicroVfpRuntimeException("Subscript is outside defined range.");
@@ -780,7 +804,7 @@ public sealed partial class VfpInterpreter
     // ADEL/AINS 3rd parameter: column mode only for a 2-D array and a value > 1 (s4g211: "a number less
     // than or equal to 1 is identical to omitting the parameter"; 2 is the only documented column trigger).
     private static bool IsColumnMode(VfpArray arr, VfpValue[] a)
-        => arr.Is2D && a.Length > 2 && IsNumeric(a[2]) && (int)a[2].AsNumber > 1;
+        => arr.Is2D && a.Length > 2 && IsNumeric(a[2]) && a[2].TruncatedInt32 > 1;
 
     /// <summary>AELEMENT(ArrayName, nRow [, nCol]) — the LINEAR (row-major) element number for the given
     /// subscripts. With BOTH subscripts on a 2-D array it is (nRow-1)*Cols+nCol. With a SINGLE subscript on
@@ -792,12 +816,14 @@ public sealed partial class VfpInterpreter
         if (a.Length < 2) return 0;
         var arr = Memory.FindArray(a[0].AsString);
         if (arr is null) return 0;
-        int r = (int)a[1].AsNumber;
+        int r = a[1].TruncatedInt32;
+        if (r < 1 || a[1].AsDouble > int.MaxValue)
+            throw new MicroVfpRuntimeException("Subscript is outside defined range.", 1234);
         if (arr.Is2D)
         {
             if (a.Length > 2 && IsNumeric(a[2]))
             {
-                int c = (int)a[2].AsNumber;
+                int c = a[2].TruncatedInt32;
                 if (r < 1 || r > arr.Rows || c < 1 || c > arr.Cols) return 0;
                 return (r - 1) * arr.Cols + c;
             }
@@ -817,17 +843,12 @@ public sealed partial class VfpInterpreter
         if (a.Length < 3) throw new MicroVfpRuntimeException("ASUBSCRIPT() requires three arguments.");
         var arr = Memory.FindArray(a[0].AsString)
                   ?? throw new MicroVfpRuntimeException("ASUBSCRIPT(): the variable is not an array.");
-        int n = (int)a[1].AsNumber;
-        int sub = (int)a[2].AsNumber;
-        if (n < 1 || n > arr.Length)
-            throw new MicroVfpRuntimeException("ASUBSCRIPT(): element number is out of range.");
+        int n = a[1].TruncatedInt32;
+        int sub = a[2].TruncatedInt32;
+        if (n < 1 || n > arr.Length || sub is < 1 or > 2)
+            throw new MicroVfpRuntimeException("Subscript is outside defined range.", 1234);
         if (arr.Is2D)
-            return sub switch
-            {
-                1 => (n - 1) / arr.Cols + 1,
-                2 => (n - 1) % arr.Cols + 1,
-                _ => throw new MicroVfpRuntimeException("ASUBSCRIPT(): invalid subscript selector."),
-            };
+            return sub == 1 ? (n - 1) / arr.Cols + 1 : (n - 1) % arr.Cols + 1;
         if (sub == 1) return n;
         throw new MicroVfpRuntimeException("ASUBSCRIPT(): a 1-D array has no column subscript.");
     }
@@ -845,7 +866,7 @@ public sealed partial class VfpInterpreter
             var v = a[1];
             wa = v.Type == VfpType.Character
                 ? Session.FindAreaByAlias(v.AsString)
-                : Session.AreaAt((int)v.AsNumber);
+                : Session.AreaAt(AreaNumber(v));
         }
         else wa = Session.AreaAt(Session.CurrentArea);
         if (wa is null) return 0;
@@ -881,11 +902,12 @@ public sealed partial class VfpInterpreter
         var arr = Memory.FindArray(a[0].AsString);
         if (arr is null) return 0;
 
-        int startEl = a.Length > 1 && IsNumeric(a[1]) ? (int)a[1].AsNumber : 1;
-        if (startEl < 1) startEl = 1;
-        int numSorted = a.Length > 2 && IsNumeric(a[2]) ? (int)a[2].AsNumber : -1;
-        bool desc = a.Length > 3 && IsNumeric(a[3]) && (int)a[3].AsNumber != 0; // VFP: ANY nonzero ⇒ descending.
-        bool ci = a.Length > 4 && IsNumeric(a[4]) && ((int)a[4].AsNumber & 1) != 0;
+        int startEl = a.Length > 1 && IsNumeric(a[1]) ? a[1].TruncatedInt32 : 1;
+        if (startEl < 1 || startEl > arr.Length || a.Length > 1 && a[1].AsDouble > int.MaxValue)
+            throw new MicroVfpRuntimeException("Subscript is outside defined range.", 1234);
+        int numSorted = a.Length > 2 && IsNumeric(a[2]) ? a[2].TruncatedInt32 : -1;
+        bool desc = a.Length > 3 && IsNumeric(a[3]) && a[3].TruncatedInt32 != 0; // VFP: ANY nonzero ⇒ descending.
+        bool ci = a.Length > 4 && IsNumeric(a[4]) && (a[4].TruncatedInt32 & 1) != 0;
 
         if (arr.Is2D)
         {
@@ -893,12 +915,12 @@ public sealed partial class VfpInterpreter
             int keyCol = (startEl - 1) % cols + 1;
             int startRow = (startEl - 1) / cols + 1;
             int rowCount = numSorted < 0 ? arr.Rows - startRow + 1 : numSorted;
-            SortRowRange(arr, startRow, rowCount, keyCol, desc, ci);
+            SortRowRange(arr, startRow, Math.Min(rowCount, arr.Rows - startRow + 1), keyCol, desc, ci);
         }
         else
         {
             int count = numSorted < 0 ? arr.Length - startEl + 1 : numSorted;
-            SortElementRange(arr, startEl, count, desc, ci);
+            SortElementRange(arr, startEl, Math.Min(count, arr.Length - startEl + 1), desc, ci);
         }
         return 1;
     }
@@ -907,7 +929,11 @@ public sealed partial class VfpInterpreter
     {
         if (count <= 1) return;
         var items = new VfpValue[count];
-        for (int i = 0; i < count; i++) items[i] = arr.GetLinear(start + i);
+        for (int i = 0; i < count; i++)
+        {
+            items[i] = arr.GetLinear(start + i);
+            ValidateSortType(items[0], items[i]);
+        }
         Array.Sort(items, (x, y) => (desc ? -1 : 1) * SortCompare(x, y, ci));
         for (int i = 0; i < count; i++) arr.SetLinear(start + i, items[i]);
     }
@@ -921,20 +947,25 @@ public sealed partial class VfpInterpreter
         {
             rows[r] = new VfpValue[cols];
             for (int c = 1; c <= cols; c++) rows[r][c - 1] = arr.Get(startRow + r, c);
+            ValidateSortType(rows[0][keyCol - 1], rows[r][keyCol - 1]);
         }
         Array.Sort(rows, (x, y) => (desc ? -1 : 1) * SortCompare(x[keyCol - 1], y[keyCol - 1], ci));
         for (int r = 0; r < rowCount; r++)
             for (int c = 1; c <= cols; c++) arr.Set(startRow + r, c, rows[r][c - 1]);
     }
 
-    // Type-homogeneous compare using the session collation (reused from the expression engine's decision:
-    // MACHINE/GENERAL). Mixed data types are a VFP error 9/11 (backlog C.1) — reproduced as a runtime error.
+    private static void ValidateSortType(VfpValue first, VfpValue value)
+    {
+        // Array.Sort wraps comparer errors in InvalidOperationException. Validate first so
+        // VFP error 9 remains catchable by the aggregate metadata walk (Round5 ASORT oracle).
+        if (SortClass(first) != SortClass(value))
+            throw new MicroVfpRuntimeException("Data type mismatch.", 9);
+    }
+
+    // Type-homogeneous compare using the session collation (MACHINE/GENERAL).
     private int SortCompare(VfpValue x, VfpValue y, bool ci)
     {
-        int cx = SortClass(x), cy = SortClass(y);
-        if (cx != cy)
-            throw new MicroVfpRuntimeException("ASORT(): array elements are not the same data type.", 9); // VFP err 9 "Data type mismatch." (oracle-pinned).
-        return cx switch
+        return SortClass(x) switch
         {
             0 => ci
                 ? _ctx.Collation.Compare(x.AsString.ToUpperInvariant().AsSpan(), y.AsString.ToUpperInvariant().AsSpan())
@@ -975,7 +1006,9 @@ public sealed partial class VfpInterpreter
     private int FnAUsed(VfpValue[] a)
     {
         if (a.Length == 0) return 0;
-        int sid = a.Length >= 2 && IsNumeric(a[1]) ? (int)a[1].AsNumber : Session.CurrentDataSessionId;
+        if (a.Length > 1 && (a[1].AsDouble > int.MaxValue || a[1].AsDouble < int.MinValue))
+            throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
+        int sid = a.Length >= 2 && IsNumeric(a[1]) ? a[1].TruncatedInt32 : Session.CurrentDataSessionId;
         var areas = new List<VfpSession.WorkArea>(Session.OpenAreasOf(sid));
         if (areas.Count == 0) return 0;
         areas.Sort((x, y) => x.Area.CompareTo(y.Area));

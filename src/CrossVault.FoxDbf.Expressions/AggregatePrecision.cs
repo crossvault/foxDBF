@@ -71,7 +71,8 @@ internal sealed partial class FunctionNode
             "RAND" => context.NumericDecimals,
             "ABS" when samples.Length == 1 => samples[0].Decimals,
             "SQRT" when samples.Length == 1 => Math.Max(context.NumericDecimals, samples[0].Decimals ?? 0),
-            "ROUND" when samples.Length == 2 => Math.Max(0, samples[1].Value.AsInteger),
+            // Round5: metadata uses the same argument conversion and 18-place cap as ROUND.
+            "ROUND" when samples.Length == 2 => Math.Clamp(VfpRuntime.RoundDigits(samples[1].Value), 0, 18),
             _ => VfpRuntime.IsNumeric(value) ? LiteralNode.Precision(value) : null
         };
         return (value, scale);

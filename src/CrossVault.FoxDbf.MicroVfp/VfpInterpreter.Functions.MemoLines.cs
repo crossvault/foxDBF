@@ -111,8 +111,8 @@ public sealed partial class VfpInterpreter
     {
         if (a.Length < 2) return string.Empty;
         string memo = a[0].AsString;
-        int nLine = (int)a[1].AsNumber;
-        int off = a.Length > 2 ? (int)a[2].AsNumber : 0;
+        int nLine = a[1].TruncatedInt32;
+        int off = a.Length > 2 ? a[2].TruncatedInt32 : 0;
         int n = memo.Length;
         if (off < 0) off = 0;
         if (nLine < 1) return string.Empty;

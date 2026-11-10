@@ -1468,7 +1468,12 @@ public sealed partial class VfpInterpreter
     }
 
     private int AreaNumber(VfpValue v)
-        => IsNumeric(v) ? (int)v.AsNumber : (Session.FindAreaByAlias(v.AsString)?.Area ?? 0);
+    {
+        if (!IsNumeric(v)) return Session.FindAreaByAlias(v.AsString)?.Area ?? 0;
+        if (!double.IsFinite(v.AsDouble) || v.AsDouble < int.MinValue || v.AsDouble > int.MaxValue)
+            throw new MicroVfpRuntimeException("Table number is invalid.", 17);
+        return v.TruncatedInt32;
+    }
 
     private int ResolveAreaRef(NameRef nr)
     {

@@ -36,6 +36,9 @@ internal static partial class VfpRuntime
 {
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
+    private static ExpressionException InvalidFunctionArgument() =>
+        new("Function argument value, type, or count is invalid.") { VfpErrorNumber = 11 };
+
     internal static bool IsNumeric(in VfpValue v) =>
         v.Type is VfpType.Numeric or VfpType.Currency or VfpType.Integer;
 
@@ -57,7 +60,8 @@ internal static partial class VfpRuntime
             case UnOp.Neg:
                 if (v.IsNull) return VfpValue.Null;
                 return v.Type == VfpType.Currency ? VfpValue.Currency(-v.AsNumber)
-                    : VfpValue.Number(-v.AsDouble).WithDisplayDecimals(v.DisplayDecimals);
+                    : VfpValue.Number(-v.AsDouble).WithDisplayDecimals(v.DisplayDecimals)
+                        .WithOverflowDisplayWidth(double.IsNaN(v.AsDouble) ? v.OverflowDisplayWidth : 11);
             case UnOp.Not:
                 if (v.IsNull) return VfpValue.Null;
                 return VfpValue.Logical(!v.AsLogical);
@@ -85,10 +89,12 @@ internal static partial class VfpRuntime
             case BinOp.Sub: return Sub(l, r, ctx, constant);
             case BinOp.Mul: return NumericResult(l.AsDouble * r.AsDouble, l, r, op, ctx, constant);
             case BinOp.Div:
-                return r.AsDouble == 0d ? VfpValue.Null
-                                        : NumericResult(l.AsDouble / r.AsDouble, l, r, op, ctx, constant);
+                return NumericResult(l.AsDouble / r.AsDouble, l, r, op, ctx, constant);
             case BinOp.Mod: return Remainder(l, r);
-            case BinOp.Pow: return NumericResult(Math.Pow(l.AsDouble, r.AsDouble), l, r, op, ctx, constant);
+            case BinOp.Pow:
+                if (l.AsDouble < 0 && r.AsDouble != Math.Truncate(r.AsDouble))
+                    throw new ExpressionException("** or ^ domain error.") { VfpErrorNumber = 78 };
+                return NumericResult(Math.Pow(l.AsDouble, r.AsDouble), l, r, op, ctx, constant);
 
             case BinOp.Eq: return VfpValue.Logical(ValueEquals(l, r, ctx, exact: false));
             case BinOp.ExactEq: return VfpValue.Logical(ValueEquals(l, r, ctx, exact: true));
@@ -110,7 +116,8 @@ internal static partial class VfpRuntime
     {
         decimal left = l.ToCurrencyNumber();
         decimal right = r.ToCurrencyNumber();
-        if (op == BinOp.Div && right == 0) return VfpValue.Null;
+        if (op == BinOp.Div && right == 0)
+            throw new ExpressionException("Currency value is out of range.") { VfpErrorNumber = 1988 };
         try
         {
             decimal value = op switch
@@ -130,6 +137,11 @@ internal static partial class VfpRuntime
 
     private static VfpValue Remainder(in VfpValue left, in VfpValue right)
     {
+        if (right.AsDouble == 0)
+            throw new ExpressionException("Cannot divide by 0.") { VfpErrorNumber = 1307 };
+        // VFP9 MOD/% return zero for non-finite operands, including currency dividends.
+        if (!double.IsFinite(left.AsDouble) || !double.IsFinite(right.AsDouble))
+            return left.Type == VfpType.Currency ? VfpValue.Currency(0) : VfpValue.Number(0d, left.DisplayDecimals);
         if (left.Type != VfpType.Currency)
             return VfpValue.Number(Modulo(left.AsDouble, right.AsDouble)).WithDisplayDecimals(left.DisplayDecimals);
         // VFP9 MOD/% keep the left type but do not quantize a numeric divisor first.
@@ -151,8 +163,18 @@ internal static partial class VfpRuntime
         int scale = op == BinOp.Mul ? left + right : Math.Max(left, right);
         if (op == BinOp.Div) scale = Math.Max(scale, ctx.NumericDecimals + (constant ? 0 : 2));
         else if (constant || op == BinOp.Pow) scale = Math.Max(scale, ctx.NumericDecimals);
-        return VfpValue.Number(value, scale);
+        var result = VfpValue.Number(value, scale);
+        if (double.IsFinite(value)) return result;
+        return result.WithOverflowDisplayWidth(op switch
+        {
+            BinOp.Pow => NumericOverflowWidth(scale),
+            BinOp.Div => NumericOverflowWidth(Math.Min(18, ctx.NumericDecimals + 2)),
+            BinOp.Add or BinOp.Sub => Math.Max(NumericOverflowWidth(scale) + 1, Math.Max(l.OverflowDisplayWidth, r.OverflowDisplayWidth)),
+            _ => Math.Max(NumericOverflowWidth(scale) + 2, Math.Max(l.OverflowDisplayWidth, r.OverflowDisplayWidth)),
+        });
     }
+
+    private static int NumericOverflowWidth(int decimals) => 10 + (decimals > 0 ? 1 + decimals : 0);
 
     /// <summary>True when the LEFT operand alone decides an AND (a logical .F.) or an OR (a logical .T.), so the
     /// right operand must not be evaluated. Only a genuine Logical decides — .NULL. or a non-logical does not.</summary>
@@ -482,7 +504,7 @@ internal static partial class VfpRuntime
             case "CHRTRAN": return Chrtran(args);
             case "STRTRAN": return Strtran(args);
             case "REPLICATE": return Replicate(args);
-            case "SPACE": return VfpValue.Character(new string(' ', Math.Max(0, IntArg(args, 0))));
+            case "SPACE": return VfpValue.Character(new string(' ', CheckedStringLength(Math.Max(0, IntArg(args, 0)))));
             case "LEN": return VfpValue.Integer(Arg(args, 0).AsString.Length);
             case "CHR":
             {
@@ -542,12 +564,24 @@ internal static partial class VfpRuntime
             case "GOMONTH": return Gomonth(args);
 
             // ---- numeric ----
+            // Round5's OverflowPrecision oracle pins NaN's retained integer width:
+            // INT removes nine columns; ROUND removes eight, subject to the requested scale.
             case "INT": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(decimal.Truncate(Arg(args, 0).AsNumber))
-                : VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble), 0);
-            case "ROUND": return Arg(args, 0).Type == VfpType.Currency ? RoundCurrency(Arg(args, 0).AsNumber, IntArg(args, 1))
-                : VfpValue.Number(Round(Arg(args, 0).AsDouble, IntArg(args, 1))).WithDisplayDecimals(IntArg(args, 1));
+                : VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble), 0)
+                    .WithOverflowDisplayWidth(double.IsNaN(Arg(args, 0).AsDouble)
+                        ? Math.Max(10, Arg(args, 0).OverflowDisplayWidth - 9) : Arg(args, 0).OverflowDisplayWidth);
+            case "ROUND":
+            {
+                int digits = RoundDigits(Arg(args, 1));
+                return Arg(args, 0).Type == VfpType.Currency ? RoundCurrency(Arg(args, 0).AsNumber, digits)
+                    : VfpValue.Number(Round(Arg(args, 0).AsDouble, digits)).WithDisplayDecimals(Math.Clamp(digits, 0, 18))
+                        .WithOverflowDisplayWidth(double.IsInfinity(Arg(args, 0).AsDouble)
+                            ? Math.Max(Arg(args, 0).OverflowDisplayWidth + 1, NumericOverflowWidth(Math.Clamp(digits, 0, 18)))
+                            : Math.Max(NumericOverflowWidth(Math.Clamp(digits, 0, 18)), Arg(args, 0).OverflowDisplayWidth - 8));
+            }
             case "ABS": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(Math.Abs(Arg(args, 0).AsNumber))
-                : VfpValue.Number(Math.Abs(Arg(args, 0).AsDouble)).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
+                : VfpValue.Number(Math.Abs(Arg(args, 0).AsDouble)).WithDisplayDecimals(Arg(args, 0).DisplayDecimals)
+                    .WithOverflowDisplayWidth(Arg(args, 0).OverflowDisplayWidth);
             case "MOD": return Remainder(Arg(args, 0), Arg(args, 1));
             case "MAX": return MaxMin(args, ctx, max: true);
             case "MIN": return MaxMin(args, ctx, max: false);
@@ -718,7 +752,7 @@ internal static partial class VfpRuntime
         if (i >= s.Length) return StringResult(Arg(a, 0), string.Empty);
         int len = a.Length > 2 ? IntArg(a, 2) : s.Length - i;
         if (len < 0) len = 0;
-        if (i + len > s.Length) len = s.Length - i;
+        if (len > s.Length - i) len = s.Length - i;
         return StringResult(Arg(a, 0), s.Substring(i, len));
     }
 
@@ -726,6 +760,7 @@ internal static partial class VfpRuntime
     {
         var value = Arg(a, 0);
         int len = Math.Max(0, a.Length > 1 ? IntArg(a, 1) : 10);
+        if (len > 237) throw new ExpressionException("Width or decimal place argument is invalid.") { VfpErrorNumber = 1908 };
         int dec = Math.Clamp(a.Length > 2 ? IntArg(a, 2) : 0, 0, 28);
         if (!double.IsFinite(value.AsDouble) || Math.Abs(value.AsDouble) >= (double)decimal.MaxValue)
             return VfpValue.Character(StrCore(value.AsDouble, len, dec));
@@ -779,6 +814,7 @@ internal static partial class VfpRuntime
     {
         string s = Arg(a, 0).AsString;
         int len = IntArg(a, 1);
+        if (len > 16777184) throw InvalidFunctionArgument();
         if (len < 0) len = 0;
         char pad = ' ';
         if (a.Length > 2)
@@ -842,7 +878,7 @@ internal static partial class VfpRuntime
         if (i < 0) i = 0;
         if (i > s.Length) i = s.Length;
         if (len < 0) len = 0;
-        if (i + len > s.Length) len = s.Length - i;
+        if (len > s.Length - i) len = s.Length - i;
         return VfpValue.Character(string.Concat(s.AsSpan(0, i), repl, s.AsSpan(i + len)));
     }
 
@@ -898,9 +934,18 @@ internal static partial class VfpRuntime
         string s = Arg(a, 0).AsString;
         int n = Math.Max(0, IntArg(a, 1));
         if (n == 0 || s.Length == 0) return VfpValue.Character(string.Empty);
+        // Check in a wider type before allocating: VFP9 reports error 1903 for oversized strings.
+        CheckedStringLength((long)s.Length * n);
         var sb = new StringBuilder(s.Length * n);
         for (int k = 0; k < n; k++) sb.Append(s);
         return VfpValue.Character(sb.ToString());
+    }
+
+    private static int CheckedStringLength(long length)
+    {
+        if (length > 16777184)
+            throw new ExpressionException("String is too long to fit.") { VfpErrorNumber = 1903 };
+        return (int)length;
     }
 
     private static double Val(string s)
@@ -954,7 +999,7 @@ internal static partial class VfpRuntime
             try { return VfpValue.Date(d.AsDate.AddMonths(m), empty: false); }
             catch (ArgumentOutOfRangeException) { return VfpValue.Date(default); }
         }
-        return VfpValue.Date(d.AsDate.AddMonths(m), empty: false);
+        throw InvalidFunctionArgument();
     }
 
     private static VfpValue RoundCurrency(decimal value, int decimals)
@@ -1016,8 +1061,15 @@ internal static partial class VfpRuntime
     {
         if (dec >= 0)
             return Math.Round(n, Math.Min(dec, 15), MidpointRounding.AwayFromZero);
+        if (dec < -308) return double.IsFinite(n) ? 0 : n;
         double factor = Math.Pow(10, -dec);
         return Math.Round(n / factor, 0, MidpointRounding.AwayFromZero) * factor;
+    }
+
+    internal static int RoundDigits(VfpValue value)
+    {
+        int digits = value.TruncatedInt32;
+        return digits == int.MinValue ? 0 : digits;
     }
 
     private static VfpValue MaxMin(VfpValue[] a, EvaluationContext ctx, bool max)

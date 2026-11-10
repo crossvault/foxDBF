@@ -21,4 +21,30 @@ public sealed class AggregateProbeExceptionTests
         public bool Deleted => false;
         public int RecCount => 1;
     }
+
+    [Theory]
+    [InlineData("IIF(.T.,1,broken())")]
+    [InlineData("IIF(.T.,1,SIGN(broken()))")]
+    public void MetadataProbe_DoesNotSuppressFunctionHostFailure(string source)
+    {
+        var error = new InvalidOperationException("Host callback failed");
+        var caught = Record.Exception(() => VfpExpression.Parse(source)
+            .ProbeAggregate<CrossVault.FoxDbf.MicroVfp.MicroVfpRuntimeException>(
+                new TestSchema(), new FailingHost(error), EvaluationContext.Default));
+        Assert.Same(error, caught);
+    }
+
+    private sealed class FailingHost(Exception error) : IRowContext, IVfpFunctionHost
+    {
+        public object? GetField(string name) => null;
+        public int RecNo => 1;
+        public bool Deleted => false;
+        public int RecCount => 1;
+        public bool TryInvoke(string upperName, VfpValue[] args, EvaluationContext ctx, out VfpValue result)
+        {
+            result = default;
+            if (upperName == "BROKEN") throw error;
+            return false;
+        }
+    }
 }

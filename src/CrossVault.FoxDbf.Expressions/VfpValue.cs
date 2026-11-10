@@ -250,6 +250,19 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         }
     }
 
+    // VFP9 argument conversion keeps the low 32 bits of a truncated 64-bit integer;
+    // values outside Int64 become zero. Round5 pins ROUND, MLINE, STREXTRACT and ALEN.
+    // Keep the public saturating AsInteger API separate; built-ins validate their own ranges.
+    internal int TruncatedInt32
+    {
+        get
+        {
+            double value = Math.Truncate(AsDouble);
+            return !double.IsFinite(value) || value < long.MinValue || value >= 9223372036854775808d
+                ? 0 : unchecked((int)(long)value);
+        }
+    }
+
     /// <summary>Logical payload.</summary>
     public bool AsLogical => _bool;
 

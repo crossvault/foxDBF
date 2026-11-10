@@ -34,6 +34,9 @@ internal static class VfpExpressionText
     /// literals retain their contents (unlike FOR(), which uppercases the entire stored text).</summary>
     public static string Normalize(string text)
     {
+        // VFP9 decompiles an overflowing numeric literal as a 20-column marker.
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double literal)
+            && !double.IsFinite(literal)) return new string('*', 20);
         string canonical = Canonicalize(text);
         var result = new StringBuilder(canonical.Length);
         for (int i = 0; i < canonical.Length; i++)
@@ -243,12 +246,16 @@ internal static class VfpExpressionText
         // Decimals = digits after the point, shifted by an exponent (1.25e1 → 12.5, 1.5e-10 → 0.00000000015).
         int e = source.IndexOfAny(['e', 'E']);
         string mantissa = e < 0 ? source : source[..e];
-        int exponent = e < 0 ? 0 : int.Parse(source.AsSpan(e + 1), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
+        int exponent = 0;
+        if (e >= 0 && !int.TryParse(source.AsSpan(e + 1), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out exponent))
+            throw new NotCanonical();
         int point = mantissa.IndexOf('.');
         int fraction = point < 0 ? 0 : mantissa.Length - point - 1;
         if (!decimal.TryParse(source, NumberStyles.Float, CultureInfo.InvariantCulture, out decimal value))
             throw new NotCanonical();
-        return new Num(value, Math.Max(0, fraction - exponent));
+        long decimals = Math.Max(0, (long)fraction - exponent);
+        if (decimals > 18) throw new NotCanonical();
+        return new Num(value, (int)decimals);
     }
 
     private static string StringLiteral(string content)
