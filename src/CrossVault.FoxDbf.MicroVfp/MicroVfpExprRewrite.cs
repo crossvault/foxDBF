@@ -47,6 +47,11 @@ internal static class MicroVfpExprRewrite
            || (ident.Length >= 4 && ident.Length < fn.Length && fn.StartsWith(ident, StringComparison.OrdinalIgnoreCase)
                && VfpFunctionAbbreviations.TryExpand(ident.ToUpperInvariant(), out var full) && full == fn);
 
+    // VFP function abbreviations start at four characters. If even that prefix is absent,
+    // this pass cannot rewrite anything; avoid rebuilding ordinary SQL with parentheses.
+    private static bool ContainsFunctionPrefix(string s, string fn)
+        => s.AsSpan().IndexOf(fn.AsSpan(0, 4), StringComparison.OrdinalIgnoreCase) >= 0;
+
     /// <summary>Apply both array rewrites to <paramref name="s"/>; a no-op for text with neither a
     /// subscript bracket nor an ALEN/AERROR call.</summary>
     public static string Normalize(string s)
@@ -54,7 +59,7 @@ internal static class MicroVfpExprRewrite
         if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
         // Every rewrite needs a subscript bracket or a function call. Literals and
         // simple field/arithmetic expressions cannot contain a reference argument.
-        if (s.IndexOfAny(['[', '(']) < 0) return s;
+        if (s.AsSpan().IndexOfAny('[', '(') < 0) return s;
         s = ConvertSubscripts(s);
         s = QuoteArrayFnArg(s, "ALEN");
         s = QuoteArrayFnArg(s, "AERROR");
@@ -113,7 +118,7 @@ internal static class MicroVfpExprRewrite
     /// quotes, so the host receives the array NAME. String-literal aware.</summary>
     private static string QuoteArrayFnArg(string s, string fn)
     {
-        if (s.Length == 0) return s;
+        if (!ContainsFunctionPrefix(s, fn)) return s;
         var sb = new StringBuilder(s.Length + 8);
         int i = 0;
         while (i < s.Length)
@@ -148,7 +153,7 @@ internal static class MicroVfpExprRewrite
     /// both array names by reference. String-literal aware.</summary>
     private static string QuoteArrayFn2Args(string s, string fn)
     {
-        if (s.Length == 0) return s;
+        if (!ContainsFunctionPrefix(s, fn)) return s;
         var sb = new StringBuilder(s.Length + 8);
         int i = 0;
         while (i < s.Length)
