@@ -15,6 +15,149 @@ public sealed class FunctionArityTests
         .Select(e => new object[] { e.Name, e.Min, e.Max, e.Few, e.Many });
 
     [Fact]
+    public void MicroVfp_HostFunctionRejectsMissingArgument()
+    {
+        using var session = new VfpSession();
+        using var interpreter = new VfpInterpreter(session);
+        interpreter.Execute("number=0\nTRY\nx=EVALUATE()\nCATCH TO err\nnumber=err.ErrorNo\nENDTRY");
+        Assert.Equal(1229, interpreter.Memory.Get("number").AsInteger);
+    }
+
+    [Fact]
+    public void MicroVfp_HostArityPreservesTimingAndUdfResolution()
+    {
+        using var session = new VfpSession();
+        using var interpreter = new VfpInterpreter(session);
+        interpreter.Execute("""
+            FUNCTION customfn(a,b)
+            RETURN PCOUNT()
+            ENDFUNC
+            FUNCTION evaluate(a,b)
+            direct=PCOUNT()
+            RETURN 99
+            ENDFUNC
+            FUNCTION eval(a,b)
+            RETURN 99
+            ENDFUNC
+            FUNCTION on(a,b)
+            RETURN 99
+            ENDFUNC
+            FUNCTION cocreateguid(a,b)
+            RETURN PCOUNT()
+            ENDFUNC
+            IF .F.
+                x=EVALUATE()
+                x=ISBLANK(1,2)
+            ENDIF
+            PROCEDURE unused
+                x=TRANSFORM()
+            ENDPROC
+            x=customfn()
+            y=customfn(1)
+            z=EVALUATE('7')
+            w=EVAL('8')
+            extension=COCREATEGUID()
+            handler=ON('ERROR')
+            direct=-1
+            DO evaluate WITH 1
+            """);
+        Assert.Equal(0, interpreter.Memory.Get("x").AsInteger);
+        Assert.Equal(1, interpreter.Memory.Get("y").AsInteger);
+        Assert.Equal(7, interpreter.Memory.Get("z").AsInteger);
+        Assert.Equal(8, interpreter.Memory.Get("w").AsInteger);
+        Assert.Equal(0, interpreter.Memory.Get("extension").AsInteger);
+        Assert.Equal(1, interpreter.Memory.Get("direct").AsInteger);
+        Assert.Equal(VfpType.Character, interpreter.Memory.Get("handler").Type);
+        Assert.Equal(string.Empty, interpreter.Memory.Get("handler").AsString);
+    }
+
+    [Theory]
+    [InlineData("EVALUATE()", 1229)]
+    [InlineData("EVAL()", 1229)]
+    [InlineData("TRANSFORM()", 1229)]
+    [InlineData("TRANSFORM(1,2,3)", 1230)]
+    [InlineData("IIF(.T.,1,EVALUATE())", 1229)]
+    [InlineData("ISBLANK(1,2)", 1230)]
+    public void MicroVfp_HostArityIsCheckedBeforeEvaluation(string expression, int error)
+    {
+        using var session = new VfpSession();
+        using var interpreter = new VfpInterpreter(session);
+        interpreter.Execute($"number=0\nreached=1\nTRY\nx={expression}\nreached=2\nCATCH TO err\nnumber=err.ErrorNo\nENDTRY\nafter=3");
+        Assert.Equal(error, interpreter.Memory.Get("number").AsInteger);
+        Assert.Equal(1, interpreter.Memory.Get("reached").AsInteger);
+        Assert.Equal(3, interpreter.Memory.Get("after").AsInteger);
+    }
+
+    public static IEnumerable<object[]> HostFunctions => HostFunctionArityData.Entries
+        .Select(e => new object[] { e.Name, e.Min, e.Max, e.Few, e.Many });
+
+    [Theory]
+    [MemberData(nameof(HostFunctions))]
+    public void EveryHostFunction_UsesVfp9Arity(string name, int min, int max, int few, int many)
+    {
+        using var session = new VfpSession();
+        using var interpreter = new VfpInterpreter(session);
+        for (int count = 0; count <= max + 1; count++)
+        {
+            string expression = Call(name, count);
+            int error = count < min ? few : count > max ? many : 0;
+            if (error == 0)
+            {
+                VfpExpression.Parse(expression);
+                // Valid counts bind without invoking functions that need files, arrays or UI.
+                Assert.Equal(1, interpreter.EvalExpression($"IIF(.T.,1,{expression})").AsInteger);
+            }
+            else
+            {
+                Assert.Equal(error, Assert.Throws<ExpressionException>(() => VfpExpression.Parse(expression)).VfpErrorNumber);
+                interpreter.Execute($"number=0\nTRY\nx={expression}\nCATCH TO err\nnumber=err.ErrorNo\nENDTRY");
+                Assert.Equal(error, interpreter.Memory.Get("number").AsInteger);
+            }
+        }
+    }
+
+    [Fact]
+    public void HostAbbreviations_UseCanonicalArity()
+    {
+        var entries = HostFunctionArityData.Entries.ToDictionary(e => e.Name);
+        using var session = new VfpSession();
+        using var interpreter = new VfpInterpreter(session);
+        foreach (var (abbreviation, name) in VfpFunctionAbbreviations.All)
+        {
+            if (!entries.TryGetValue(name, out var entry)) continue;
+            string expression = Call(abbreviation.ToLowerInvariant(), entry.Max + 1);
+            Assert.Equal(entry.Many, Assert.Throws<ExpressionException>(() => VfpExpression.Parse(expression)).VfpErrorNumber);
+            interpreter.Execute($"number=0\nTRY\nx={expression}\nCATCH TO err\nnumber=err.ErrorNo\nENDTRY");
+            Assert.Equal(entry.Many, interpreter.Memory.Get("number").AsInteger);
+        }
+    }
+
+    [Theory]
+    [InlineData("ISBLANK(n)", true)]
+    [InlineData("ISBLANK((n))", false)]
+    [InlineData("ISBLANK(n+0)", false)]
+    [InlineData("ISBLANK(+n)", true)]
+    [InlineData("ISBLANK(probe.n)", true)]
+    [InlineData("ISBLANK('n')", false)]
+    public void MicroVfp_IsBlankBindingPreservesFieldVersusValue(string expression, bool expected)
+    {
+        using var dir = new MicroVfpTestSupport.TempDir("arity_isblank");
+        using var session = new VfpSession();
+        session.OpenDirectory(dir.Path);
+        using var interpreter = new VfpInterpreter(session);
+        session.Execute("CREATE TABLE probe (n N(3))");
+        interpreter.Execute("USE probe\nAPPEND BLANK\nBLANK");
+        Assert.Equal(expected, interpreter.EvalExpression(expression).AsLogical);
+    }
+
+    [Theory]
+    [InlineData("ISBLANK(n)")]
+    [InlineData("ISBLANK(+n)")]
+    [InlineData("ISBLANK((n))")]
+    public void IsBlankBinding_PreservesReferencedFields(string expression)
+        => Assert.Equal(new[] { "n" }, VfpExpression.Parse(expression).ReferencedFields());
+
+    [Fact]
     public void Table_CoversEveryEngineFunction()
         => Assert.Equal(VfpRuntime.EngineFunctionNames.OrderBy(n => n), FunctionArityData.Entries.Select(e => e.Name).OrderBy(n => n));
 
@@ -104,12 +247,12 @@ public sealed class FunctionArityTests
     }
 
     [Fact]
-    public void UnknownAndHostOnlyFunctions_AreOutsideEngineArityTable()
+    public void UnknownFunctions_AreOutsideBuiltinArityTable()
     {
         VfpExpression.Parse("customfn()");
         VfpExpression.Parse(Call("customfn", 28));
-        VfpExpression.Parse("TRANSFORM()");
-        VfpExpression.Parse("EVALUATE()");
+        Assert.Equal(1229, Assert.Throws<ExpressionException>(() => VfpExpression.Parse("TRANSFORM()")).VfpErrorNumber);
+        Assert.Equal(1229, Assert.Throws<ExpressionException>(() => VfpExpression.Parse("EVALUATE()")).VfpErrorNumber);
     }
 
     [Theory]

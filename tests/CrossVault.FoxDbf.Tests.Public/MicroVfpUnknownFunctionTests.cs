@@ -232,7 +232,13 @@ public sealed class MicroVfpUnknownFunctionTests : IDisposable
     [InlineData("x = FILE(123)", 11)]
     [InlineData("x = FILE()", 1229)]
     public void File_BadArguments_Raise(string source, int error)
-        => Assert.Equal(error, Raises(source).VfpErrorNumber);
+    {
+        // VFP9 rejects the missing argument while binding, before FILE's runtime type checks.
+        if (error == 1229)
+            Assert.Equal(error, Assert.Throws<ExpressionException>(() => _i.Execute(source)).VfpErrorNumber);
+        else
+            Assert.Equal(error, Raises(source).VfpErrorNumber);
+    }
 
     // ─────────────────────────── the engine without a microVFP host is unchanged ───────────────────────────
 

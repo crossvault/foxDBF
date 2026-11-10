@@ -219,7 +219,9 @@ internal sealed class ExpressionParser
                 Next();
                 var inner = ParseExpr(0);
                 Expect(TokenType.RParen, "Expected ')'.");
-                return inner;
+                // VFP9 ISBLANK((field)) inspects the value; ISBLANK(field) and ISBLANK(+field)
+                // inspect the raw field bytes. Keep parentheses distinct despite their identical value.
+                return inner is FieldNode field ? new FieldNode(field.Name, isValueExpression: true) : inner;
             }
 
             case TokenType.Identifier:

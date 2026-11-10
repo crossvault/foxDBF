@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 namespace CrossVault.FoxDbf.Expressions;
 
-/// <summary>VFP9's engine-function limits, measured by FunctionArityVfp9OracleTests.
+/// <summary>VFP9's engine and microVFP host-function limits, measured by the arity oracle tests.
 /// Consulted only while parsing: valid calls incur no per-record arity lookup.</summary>
 internal static class VfpFunctionArity
 {
@@ -46,6 +46,35 @@ internal static class VfpFunctionArity
         Add(new(0, 27), "STRZERO");
         Add(new(4, 4), "STUFF STUFFC");
         Add(new(1, 4), "TXTWIDTH");
+
+        // microVFP host functions, measured by MicroVfpHostFunctionArityVfp9OracleTests.
+        Add(new(0, 0), "DBC ERROR FERROR PARAMETERS PCOUNT SECONDS TXNLEVEL");
+        Add(new(0, 1),
+            "ALIAS BOF CPCURRENT CPDBF DBF EOF FILTER FLDLIST FLOCK FOUND HEADER ISFLOCKED ISREADONLY LINENO LUPDATE " +
+            "MESSAGE PROGRAM SELECT USED");
+        Add(new(0, 2), "ISEXCLUSIVE ISRLOCKED LOCK ORDER RLOCK TABLEREVERT TAGCOUNT");
+        Add(new(0, 3), "CANDIDATE DESCENDING FOR KEY PRIMARY TAG TAGNO UNIQUE");
+        Add(new(0, 4), "TABLEUPDATE");
+        // COCREATEGUID is a host extension, parsed as a UDF (0..27) by VFP9.
+        Add(new(0, 27), "COCREATEGUID");
+        Add(new(1, 1),
+            "ADATABASES AERROR ASESSIONS DBUSED EVALUATE FCLOSE FEOF FILETOSTR ISALPHA ISBLANK ISDIGIT ISLOWER " +
+            "ISUPPER MEMLINES PROPER SOUNDEX");
+        Add(new(1, 2),
+            "AFIELDS ALEN CURSORGETPROP CURVAL FCREATE FFLUSH FILE FOPEN GETFLDSTATE GETWORDCOUNT MDX NDX OLDVAL ON " +
+            "RELATION SET TARGET TRANSFORM TYPE VARTYPE");
+        Add(new(1, 3), "ATAGINFO AUSED CURSORSETPROP FGETS GETNEXTMODIFIED IDXCOLLATE SEEK");
+        Add(new(1, 4), "ADIR AFONT INDEXSEEK KEYMATCH MESSAGEBOX TEXTMERGE");
+        Add(new(1, 5), "ASORT");
+        Add(new(1, 26), "SYS");
+        Add(new(2, 2), "ATCLINE ATLINE DIFFERENCE FCHSIZE FREAD INDBC OCCURS RATLINE");
+        Add(new(2, 3), "ADEL AELEMENT AINS FSEEK FWRITE GETWORDNUM MLINE SETFLDSTATE STRTOFILE");
+        Add(new(2, 4), "FPUTS STRCONV");
+        Add(new(2, 5), "ACOPY STREXTRACT");
+        Add(new(2, 6), "ASCAN");
+        Add(new(2, 26), "ALINES");
+        Add(new(3, 3), "ASUBSCRIPT CPCONVERT");
+        Add(new(3, 4), "LOOKUP");
         return table.ToFrozenDictionary(StringComparer.Ordinal);
     }
 
@@ -69,6 +98,10 @@ internal static class VfpFunctionArity
             "BITNOT" when count is 2 or 3 => 1230,
             _ => 0,
         };
+        // ISBLANK needs the field's raw bytes, not its decoded value. Lower its private field marker
+        // only AFTER validating the source call's single argument; user-written second args stay illegal.
+        if (canonical == "ISBLANK" && args[0] is FieldNode { IsValueExpression: false } field)
+            args = new AstNode[] { new FieldReferenceNameNode(field.Name), new LiteralNode(VfpValue.Logical(true)) };
         var function = new FunctionNode(name, args);
         return runtimeError == 0 ? function : new FunctionArityErrorNode(function, args, runtimeError,
             canonical is "BITSET" or "BITCLEAR" or "BITNOT", position);

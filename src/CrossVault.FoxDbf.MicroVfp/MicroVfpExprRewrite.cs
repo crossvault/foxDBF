@@ -71,61 +71,7 @@ internal static class MicroVfpExprRewrite
         // ACOPY takes TWO array names by reference (source AND destination).
         s = QuoteArrayFn2Args(s, "ACOPY");    // ACOPY(aSource, aDest [, nStart [, nCount [, nDestStart]]])
         s = QuoteLookupArgs(s);               // LOOKUP(rReturn, eSearch, rSearched [, cTag]) — field names by reference.
-        s = QuoteIsBlankFieldArg(s);          // ISBLANK(field) — a bare field ref needs RAW-byte inspection.
         return s;
-    }
-
-    /// <summary>ISBLANK's single argument is USUALLY a field whose BLANK state is a RAW-byte property (a
-    /// blanked numeric reads as 0 but is byte-distinct from a written 0). When that argument is a bare field
-    /// reference (an identifier, optionally <c>alias.field</c>) rewrite <c>ISBLANK(f)</c> to
-    /// <c>ISBLANK('f', .T.)</c> so the host receives the NAME (+ a field-ref marker) and can inspect the
-    /// record bytes; a literal / computed / quoted argument is left untouched (evaluated by VALUE). The host
-    /// falls back to value-based blankness when the name is not actually a field (e.g. a memvar).</summary>
-    private static string QuoteIsBlankFieldArg(string s)
-    {
-        if (s.IndexOf("ISBL", StringComparison.OrdinalIgnoreCase) < 0) return s;   // ISBLANK or its abbreviation.
-        var sb = new StringBuilder(s.Length + 8);
-        int i = 0;
-        while (i < s.Length)
-        {
-            char c = s[i];
-            if (c == '\'' || c == '"')                        // copy quoted string verbatim.
-            {
-                char q = c; sb.Append(c); i++;
-                while (i < s.Length) { sb.Append(s[i]); if (s[i] == q) break; i++; }
-                i++;
-                continue;
-            }
-            if (VfpIdentifier.IsStart(c))
-            {
-                int start = i; i++;
-                while (i < s.Length && IsIdentChar(s[i])) i++;
-                string ident = s.Substring(start, i - start);
-                int p = i;
-                while (p < s.Length && char.IsWhiteSpace(s[p])) p++;
-                if (Names(ident, "ISBLANK") && p < s.Length && s[p] == '(')
-                {
-                    int close = MatchParen(s, p);
-                    if (close > p)
-                    {
-                        string inner = s.Substring(p + 1, close - p - 1);
-                        var parts = new List<string>(SplitTopLevelCommas(inner));
-                        // Only the single-argument bare-field form is a field reference.
-                        if (parts.Count == 1 && QuoteIfBareField(parts[0]) is { } q && q != parts[0])
-                        {
-                            sb.Append(ident).Append('(').Append(q).Append(", .T.)");
-                            i = close + 1;
-                            continue;
-                        }
-                    }
-                }
-                sb.Append(ident);
-                continue;
-            }
-            sb.Append(c);
-            i++;
-        }
-        return sb.ToString();
     }
 
     /// <summary>Convert array-subscript brackets <c>name[…]</c> to <c>name(…)</c>, leaving value-position
