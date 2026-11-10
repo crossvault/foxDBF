@@ -8,6 +8,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- Nullable CDX tags and legacy/compact IDX headers now set VFP9's NULL-marker option bit,
+  matching native headers byte for byte while preserving nonnullable headers.
 - Nullable CDX and IDX expression keys (including qualified fields, Varbinary, `UPPER`, concatenation
   and character `IIF`) retain VFP9 NULL markers through reads, seeks and updates. NULL seeks no longer
   match zero-filled nonnullable keys, and blank numeric fields index as zero. Index creation validates

@@ -352,6 +352,8 @@ internal static class CdxIndexBuilder
             entries = DropDuplicateKeys(entries);
 
         byte options = standalone ? (byte)0x20 : (byte)0x60; // [compound |] compact
+        // VFP9 advertises the leading NULL discriminator in the tag header as well as the key width.
+        if (computer.NullableKey) options |= 0x02;
         if (def.Unique) options |= 0x01;
         if (def.Candidate) options |= 0x04;
         if (hasFor) options |= 0x08;

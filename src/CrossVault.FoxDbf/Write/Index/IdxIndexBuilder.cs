@@ -110,6 +110,8 @@ internal static class IdxIndexBuilder
             entries = DropDuplicateKeys(entries);
 
         byte options = 0x00;
+        // Legacy IDX uses the same NULL-discriminator option as compact tags.
+        if (nullableKey) options |= 0x02;
         if (unique) options |= 0x01;
         if (forFn is not null) options |= 0x08;
 
