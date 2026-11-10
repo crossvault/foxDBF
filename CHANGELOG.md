@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- microVFP implements SET FIXED and SET("FIXED") for numeric TRANSFORM and ?/?? output.
+  STR keeps its explicit/default precision. Screen output can be captured through Output or SET ALTERNATE.
+
 - INDEX ON resolves field metadata once per read while preserving stored text, empty dates and currency scale.
 
 - SQL computed numeric columns cap their scale at 18. Numeric storage reduces fractional digits

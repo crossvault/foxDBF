@@ -573,6 +573,7 @@ public sealed partial class VfpInterpreter
             case CountStmt cnt: ExecCount(cnt); break;
             case DoCall dca: ExecDoCall(dca); break;
             case ExprStatement es: Eval(es.Expression); break;
+            case PrintStmt print: ExecPrint(print); break;
             case UseStmt us: ExecUse(us); break;
             case XbaseUpdateStmt update: ExecXbaseUpdate(update); break;
             case SelectAreaStmt sa: ExecSelectArea(sa); break;
@@ -976,6 +977,8 @@ public sealed partial class VfpInterpreter
         string arg = set.Arguments.Trim();
         switch (set.Setting)
         {
+            case "FIXED": _ctx.FixedNumeric = OnOff(arg); break;
+            case "ALTERNATE": SetAlternate(arg); break;
             case "DECIMALS":
                 int decimals = EvalTextLoud(arg.StartsWith("TO ", StringComparison.OrdinalIgnoreCase) ? arg[3..] : arg).AsInteger;
                 if (decimals is < 0 or > 18) throw new MicroVfpRuntimeException("Syntax error.", 10);

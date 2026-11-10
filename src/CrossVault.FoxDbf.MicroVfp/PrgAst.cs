@@ -166,6 +166,7 @@ internal sealed record DoCall(string Name, IReadOnlyList<PrgExpr> Args, NameRef?
 
 /// <summary>A bare expression-statement: <c>=Func(args)</c>.</summary>
 internal sealed record ExprStatement(PrgExpr Expression) : PrgStatement;
+internal sealed record PrintStmt(bool NewLine, IReadOnlyList<PrgExpr> Expressions) : PrgStatement;
 
 // ── data / work-area ─────────────────────────────────────────────────────────
 

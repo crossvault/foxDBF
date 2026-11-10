@@ -442,6 +442,14 @@ public static class PrgParser
         private PrgStatement ParseStatementCore()
         {
             var ll = Peek;
+            if (ll.Text.StartsWith('?'))
+            {
+                Next();
+                bool newLine = !ll.Text.StartsWith("??", StringComparison.Ordinal);
+                string body = ll.Text[(newLine ? 1 : 2)..].Trim();
+                return new PrintStmt(newLine, PrgScan.SplitTopCommas(body).Where(p => p.Length > 0)
+                    .Select(PrgExpr.Parse).ToArray()) { Line = ll.LineNo };
+            }
             string kw = PrgScan.FirstWord(ll.Text);
             switch (kw)
             {

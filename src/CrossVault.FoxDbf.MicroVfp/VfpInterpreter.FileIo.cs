@@ -60,6 +60,7 @@ public sealed partial class VfpInterpreter : IDisposable
     /// or its session.</summary>
     private void CloseAllLowLevelHandles()
     {
+        CloseAlternate();
         if (_llFiles.Count == 0) return;
         foreach (var fs in _llFiles.Values)
         {
