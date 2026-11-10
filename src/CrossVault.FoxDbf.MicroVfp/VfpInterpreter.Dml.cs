@@ -1249,6 +1249,21 @@ public sealed partial class VfpInterpreter
         if (start < 0) start = order.Count;
         int remaining = kind == LocScope.Next ? count : kind == LocScope.Record ? 1 : int.MaxValue;
         bool stopped = remaining <= 0;
+        bool sumTypesChecked = sum.CalculateFunctions is not null;
+        void CheckSumTypes()
+        {
+            if (sumTypesChecked) return;
+            // VFP9 probes dynamic SUM/AVERAGE expressions once at the first matching row,
+            // or at the final pointer when nothing matches, even on an empty table.
+            for (int k = 0; k < n; k++)
+            {
+                var type = types[k].Type;
+                if (type == VfpType.Unknown) type = Eval(sum.Expressions[k]).Type;
+                if (type is not (VfpType.Numeric or VfpType.Integer or VfpType.Currency))
+                    throw new MicroVfpRuntimeException("Expression is not numeric.", 27);
+            }
+            sumTypesChecked = true;
+        }
         Span<int> precisionBits = stackalloc int[4];
         for (int i = start; !stopped && i < order.Count; i++)
         {
@@ -1258,12 +1273,13 @@ public sealed partial class VfpInterpreter
             if (sum.While is not null && !Truth(Eval(sum.While))) { stopped = true; break; }
             if (sum.For is null || Truth(Eval(sum.For)))
             {
+                CheckSumTypes();
                 for (int k = 0; k < n; k++)
                 {
                     var v = Eval(sum.Expressions[k]);
                     if (v.IsNull) { sawNull[k] = true; continue; }
                     string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
-                    if (sum.CalculateFunctions is not null && function is not ("MIN" or "MAX") && !IsNumeric(v))
+                    if (function is not ("MIN" or "MAX") && !IsNumeric(v))
                         throw new MicroVfpRuntimeException("Expression is not numeric.", 27);
                     if (function is "MIN" or "MAX")
                     {
@@ -1300,6 +1316,7 @@ public sealed partial class VfpInterpreter
             if (m.Ordered is not null) m.OrderPos = m.Ordered.Count;
         }
         RepositionChildren(area);
+        CheckSumTypes();
         for (int k = 0; k < sum.To.Count && k < n; k++)
         {
             string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");

@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- BREAKING: microVFP `SUM`/`AVERAGE` reject nonnumeric expressions with VFP9 error 27,
+  including empty tables and FOR selections without matches. Dynamic expressions receive VFP9's
+  initial type probe at the first matching record or the final record pointer.
 - Nullable CDX tags and legacy/compact IDX headers now set VFP9's NULL-marker option bit,
   matching native headers byte for byte while preserving nonnullable headers.
 - Nullable CDX and IDX expression keys (including qualified fields, Varbinary, `UPPER`, concatenation
