@@ -1480,9 +1480,25 @@ public static class PrgParser
             return (scope, forE, whileE, inArea, error);
         }
 
+        // A CALCULATE item is one of VFP9's aggregate calls (AVG/CNT/MAX/MIN/STD/SUM/VAR) around an
+        // expression; MIN/MAX there take one operand, unlike the scalar functions of the same name, so the
+        // scalar arity check must not judge them (VFP9: `CALCULATE NEXT 2 ... MIN(n),MAX(n)` is valid).
+        private static bool IsSumItem(string item, bool calculate)
+        {
+            if (!calculate) return PrgExpr.Parse(item).IsParsed;
+            string expression = item.Trim();
+            int open = expression.IndexOf('(');
+            if (open < 0 || !expression.EndsWith(')')) return PrgExpr.Parse(item).IsParsed;
+            string name = expression[..open].Trim().ToUpperInvariant();
+            if (name is not ("AVG" or "SUM" or "STD" or "VAR" or "CNT" or "MIN" or "MAX")) return PrgExpr.Parse(item).IsParsed;
+            string argument = expression[(open + 1)..^1].Trim();
+            return name == "CNT" && argument.Length == 0 || PrgExpr.Parse(argument).IsParsed;
+        }
+
         private static SumStmt BuildSum(string text)
         {
             string rest = PrgScan.AfterFirstWord(text);
+            bool calculate = PrgScan.FirstWord(text) == "CALCULATE";
             var (head, segs) = Carve(rest, "FOR", "WHILE", "TO");
             var exprs = PrgScan.SplitTopCommas(head).Where(p => p.Length > 0).Select(PrgExpr.Parse).ToList();
             string? scope = null;
@@ -1507,7 +1523,7 @@ public static class PrgParser
                         string count = tail[..split].TrimEnd();
                         if (!PrgExpr.Parse(count).IsParsed) continue;
                         string expressions = tail[split..].TrimStart();
-                        if (expressions.Length == 0 || PrgScan.SplitTopCommas(expressions).Any(p => !PrgExpr.Parse(p).IsParsed)) continue;
+                        if (expressions.Length == 0 || PrgScan.SplitTopCommas(expressions).Any(p => !IsSumItem(p, calculate))) continue;
                         scope = first + " " + count;
                         head = expressions;
                         break;
@@ -1515,7 +1531,7 @@ public static class PrgParser
                 }
                 exprs = PrgScan.SplitTopCommas(head).Where(p => p.Length > 0).Select(PrgExpr.Parse).ToList();
             }
-            if (exprs.Any(e => !e.IsParsed))
+            if (exprs.Any(e => !IsSumItem(e.Text, calculate)))
             {
                 scope ??= PeelTrailingScope(ref head);
                 exprs = PrgScan.SplitTopCommas(head).Where(p => p.Length > 0).Select(PrgExpr.Parse).ToList();
