@@ -39,8 +39,9 @@ internal static partial class VfpRuntime
             case "FV": return VfpValue.Number(y == 0 ? 0 : x * (Math.Pow(1 + y, Arg(args, 2).AsDouble) - 1) / y);
             case "PV": return VfpValue.Number(y == 0 ? x * Arg(args, 2).AsDouble : x * (1 - Math.Pow(1 + y, -Arg(args, 2).AsDouble)) / y);
             case "PAYMENT": return VfpValue.Number(y == 0 ? x / Arg(args, 2).AsDouble : x * y / (1 - Math.Pow(1 + y, -Arg(args, 2).AsDouble)));
-            case "MTON": return VfpValue.Number(Arg(args, 0).AsNumber).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
-            case "NTOM": return VfpValue.Currency(Math.Round(Arg(args, 0).AsNumber, 4, MidpointRounding.AwayFromZero));
+            case "MTON": return Arg(args, 0).Type == VfpType.Currency
+                ? VfpValue.Number(Arg(args, 0).AsNumber).WithDisplayDecimals(4) : Arg(args, 0);
+            case "NTOM": return VfpValue.Currency(Arg(args, 0).ToCurrencyNumber());
             case "BITAND": case "BITOR": case "BITXOR":
             {
                 int bits = unchecked((int)(long)x);

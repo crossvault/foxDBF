@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- Currency conversion retains the scaled 64-bit precision of double operands; `ROUND` preserves
+  currency digits and `MTON` leaves non-currency numeric payloads intact, including very large numbers.
+
 - BREAKING: Currency overflow now reports VFP9 errors (1988 for expressions, 39 for Y-field writes)
   instead of clamping, writing zero or leaking a .NET overflow. Currency MOD avoids intermediate overflow;
   exponent notation in currency literals raises VFP9 syntax error 10.

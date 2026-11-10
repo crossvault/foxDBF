@@ -110,6 +110,17 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         return new(VfpType.Currency, (double)d, d, true, null, false, default, displayDecimalsPlusOne: 5);
     }
 
+    internal decimal ToCurrencyNumber()
+    {
+        if (_isExact) return Currency(Math.Round(_dec, 4, MidpointRounding.AwayFromZero)).AsNumber;
+        // Cast the scaled integer, not the double itself: decimal(double) discards digits
+        // after the fifteenth significant digit, unlike VFP9's fixed-point conversion.
+        double scaled = Math.Round(_num * 10000d, MidpointRounding.AwayFromZero);
+        if (!double.IsFinite(scaled) || scaled < long.MinValue || scaled >= 9223372036854775808d)
+            throw new ExpressionException("Currency value is out of range.") { VfpErrorNumber = 1988 };
+        return (long)scaled / 10000m;
+    }
+
     public static VfpValue Integer(int i) =>
         new(VfpType.Integer, i, i, true, null, false, default);
 

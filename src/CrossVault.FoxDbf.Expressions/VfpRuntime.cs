@@ -108,8 +108,8 @@ internal static partial class VfpRuntime
     // Its fixed-point multiply/divide then round an exact midpoint to the even digit.
     private static VfpValue CurrencyArithmetic(BinOp op, in VfpValue l, in VfpValue r)
     {
-        decimal left = VfpValue.Currency(Math.Round(l.AsNumber, 4, MidpointRounding.AwayFromZero)).AsNumber;
-        decimal right = VfpValue.Currency(Math.Round(r.AsNumber, 4, MidpointRounding.AwayFromZero)).AsNumber;
+        decimal left = l.ToCurrencyNumber();
+        decimal right = r.ToCurrencyNumber();
         if (op == BinOp.Div && right == 0) return VfpValue.Null;
         try
         {
@@ -544,7 +544,7 @@ internal static partial class VfpRuntime
             // ---- numeric ----
             case "INT": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(decimal.Truncate(Arg(args, 0).AsNumber))
                 : VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble));
-            case "ROUND": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency((decimal)Round(Arg(args, 0).AsDouble, IntArg(args, 1)))
+            case "ROUND": return Arg(args, 0).Type == VfpType.Currency ? RoundCurrency(Arg(args, 0).AsNumber, IntArg(args, 1))
                 : VfpValue.Number(Round(Arg(args, 0).AsDouble, IntArg(args, 1))).WithDisplayDecimals(IntArg(args, 1));
             case "ABS": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(Math.Abs(Arg(args, 0).AsNumber))
                 : VfpValue.Number(Math.Abs(Arg(args, 0).AsDouble)).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
@@ -952,6 +952,14 @@ internal static partial class VfpRuntime
             catch (ArgumentOutOfRangeException) { return VfpValue.Date(default); }
         }
         return VfpValue.Date(d.AsDate.AddMonths(m), empty: false);
+    }
+
+    private static VfpValue RoundCurrency(decimal value, int decimals)
+    {
+        if (decimals >= 0) return VfpValue.Currency(Math.Round(value, Math.Min(decimals, 4), MidpointRounding.AwayFromZero));
+        if (decimals < -15) return VfpValue.Currency(0);
+        decimal factor = (decimal)Math.Pow(10, -decimals);
+        return VfpValue.Currency(Math.Round(value / factor, 0, MidpointRounding.AwayFromZero) * factor);
     }
 
     internal static double Round(double n, int dec)
