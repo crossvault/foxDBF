@@ -35,4 +35,18 @@ public sealed class MicroVfpEmptyAggregateTests
             scenario += MicroVfpSqlDmlTests.Catch($"{command} {expression} FOR .F. TO x") + "\n";
         Assert.Equal("ERR:27|ERR:27|", MicroVfpXbaseUpdateTests.Run("CREATE TABLE t (n I)", scenario));
     }
+
+    [Theory]
+    [InlineData("SUM IIF(.F.,.NULL.,n) TO x", "3")]
+    [InlineData("SUM IIF(.F.,'abc',n) TO x", "3")]
+    [InlineData("SUM EVL('',n) TO x", "3")]
+    [InlineData("SUM IIF(n=1,n,{}) TO x", "1")]
+    [InlineData("AVERAGE IIF(n=1,n,{}) TO x", "0.50")]
+    public void SumAverage_CheckEvaluatedTypeOnceAndSkipLaterNonNumericValues(string command, string expected)
+    {
+        // VFP9 (oracle SumAverageEvaluatedBranchProbe_MatchesVfp9): the type probe uses the evaluated branch; later non-numeric rows are ignored.
+        string scenario = "USE t\n" + MicroVfpSqlDmlTests.Catch(command + "\nresult=TRANSFORM(x)");
+        Assert.Equal(expected, MicroVfpXbaseUpdateTests.Run(
+            "CREATE TABLE t (n I)\nINSERT INTO t VALUES (1)\nINSERT INTO t VALUES (2)", scenario));
+    }
 }

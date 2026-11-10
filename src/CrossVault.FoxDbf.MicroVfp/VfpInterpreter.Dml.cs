@@ -1258,7 +1258,12 @@ public sealed partial class VfpInterpreter
             for (int k = 0; k < n; k++)
             {
                 var type = types[k].Type;
-                if (type == VfpType.Unknown) type = Eval(sum.Expressions[k]).Type;
+                if (type is not (VfpType.Numeric or VfpType.Integer or VfpType.Currency))
+                {
+                    // Inference describes one IIF/ICASE/EVL branch; VFP9 checks the evaluated result.
+                    var probe = Eval(sum.Expressions[k]);
+                    if (!probe.IsNull || type == VfpType.Unknown) type = probe.Type;
+                }
                 if (type is not (VfpType.Numeric or VfpType.Integer or VfpType.Currency))
                     throw new MicroVfpRuntimeException("Expression is not numeric.", 27);
             }
@@ -1279,7 +1284,8 @@ public sealed partial class VfpInterpreter
                     var v = Eval(sum.Expressions[k]);
                     if (v.IsNull) { sawNull[k] = true; continue; }
                     string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
-                    if (function is not ("MIN" or "MAX") && !IsNumeric(v))
+                    // SUM/AVERAGE check eligibility once (CheckSumTypes); later non-numeric values are skipped.
+                    if (sum.CalculateFunctions is not null && function is not ("MIN" or "MAX") && !IsNumeric(v))
                         throw new MicroVfpRuntimeException("Expression is not numeric.", 27);
                     if (function is "MIN" or "MAX")
                     {
