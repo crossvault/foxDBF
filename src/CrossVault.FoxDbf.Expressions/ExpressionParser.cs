@@ -23,6 +23,7 @@ internal sealed class ExpressionParser
     private string? _sql;
     private bool _sqlAggregates;
     private bool _sqlPredicates;
+    private bool _allowSqlLookup;
     private bool _hasSqlInfix;
     private HashSet<string>? _infixFields;
     private readonly List<(int Start, int End, string Text)> _nullTests = new();
@@ -33,9 +34,15 @@ internal sealed class ExpressionParser
 
     private ExpressionParser(List<Token> tokens) => _tokens = tokens;
 
-    internal static (AstNode Root, string Text, bool HasSqlInfix, IReadOnlyCollection<string> InfixFields) ParseSql(string text, bool aggregates = false, bool predicates = false)
+    internal static (AstNode Root, string Text, bool HasSqlInfix, IReadOnlyCollection<string> InfixFields) ParseSql(string text, bool aggregates = false, bool predicates = false, bool allowLookup = false)
     {
-        var parser = new ExpressionParser(new ExpressionLexer(text).Tokenize()) { _sql = text, _sqlAggregates = aggregates, _sqlPredicates = predicates };
+        var parser = new ExpressionParser(new ExpressionLexer(text).Tokenize())
+        {
+            _sql = text,
+            _sqlAggregates = aggregates,
+            _sqlPredicates = predicates,
+            _allowSqlLookup = allowLookup,
+        };
         var root = parser.ParseExpr(0);
         if (parser.Peek.Type != TokenType.Eof)
             throw new ExpressionException("Unexpected trailing input.", parser.Peek.Pos);
@@ -282,7 +289,7 @@ internal sealed class ExpressionParser
             if (distinct) args[0] = new SqlDistinctNode(args[0]);
             // SQL MIN/MAX aggregates take one operand; scalar MIN/MAX use VFP's 2..26 limits.
             return aggregate ? new FunctionNode(name, args.ToArray())
-                : VfpFunctionArity.Bind(name, args.ToArray(), id.Pos, sql: _sql is not null);
+                : VfpFunctionArity.Bind(name, args.ToArray(), id.Pos, sql: _sql is not null, allowLookup: _allowSqlLookup);
         }
         return new FieldNode(id.Text);
     }

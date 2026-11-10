@@ -8,10 +8,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Fixed
 
-- Embedded microVFP SQL now normalizes array references and subscripts before SQL parsing,
+- Embedded microVFP SQL now normalizes array references within expression fragments and supports subscripts,
   including UPDATE assignments and ISBLANK/IN/BETWEEN/LIKE predicates in UPDATE, DELETE and SELECT.
-  Bracket string literals remain unchanged. SELECT INTO CURSOR/TABLE sets `_TALLY`, including zero rows.
-  SQL `LOOKUP` raises VFP9 error 11 when evaluated; unselected conditional branches remain legal.
+  Bracket string literals and table, alias and column names remain unchanged, including names like `ALEN` and `LOOKUP`.
+  SELECT INTO CURSOR/TABLE sets `_TALLY`, including zero rows. `LOOKUP` works in INSERT VALUES;
+  SELECT (including INSERT SELECT), WHERE, HAVING, JOIN ON and UPDATE SET raise VFP9 error 11
+  when it is evaluated; unselected conditional branches remain legal.
 
 ### Changed
 

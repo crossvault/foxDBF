@@ -13,11 +13,15 @@ namespace CrossVault.FoxDbf.Sql;
 public static class SqlParser
 {
     /// <summary>Parses a single statement. Throws <see cref="FoxDbfSqlException"/> on bad input.</summary>
-    public static SqlStatement Parse(string sql)
+    public static SqlStatement Parse(string sql) => Parse(sql, normalizeExpression: null);
+
+    // microVFP supplies its reference-name rewrite here, after the SQL skeleton has
+    // identified expressions. Table names, aliases and column lists are never calls.
+    internal static SqlStatement Parse(string sql, Func<string, string>? normalizeExpression)
     {
         if (sql is null) throw new FoxDbfSqlException("SQL text is null.");
         sql = SqlLexer.NormalizeArrowQualifiers(sql);
-        var p = new State(sql, SqlLexer.Tokenize(sql));
+        var p = new State(sql, SqlLexer.Tokenize(sql), normalizeExpression);
         var stmt = p.ParseStatement();
         p.SkipSemicolons();
         if (!p.AtEnd)
@@ -50,9 +54,15 @@ public static class SqlParser
     {
         private readonly string _src;
         private readonly List<Token> _t;
+        private readonly Func<string, string>? _normalizeExpression;
         private int _pos;
 
-        public State(string src, List<Token> tokens) { _src = src; _t = tokens; }
+        public State(string src, List<Token> tokens, Func<string, string>? normalizeExpression = null)
+        {
+            _src = src;
+            _t = tokens;
+            _normalizeExpression = normalizeExpression;
+        }
 
         // ---- token cursor ------------------------------------------------
         public Token Current => _t[_pos];
@@ -162,11 +172,12 @@ public static class SqlParser
             return _src.Substring(from, to - from).Trim();
         }
 
-        private VfpExpression BuildExpr(string text, int srcStart, bool aggregates = false, bool predicates = false)
+        private VfpExpression BuildExpr(string text, int srcStart, bool aggregates = false, bool predicates = false, bool allowLookup = false)
         {
             try
             {
-                return VfpExpression.ParseSql(text, aggregates, predicates);
+                if (_normalizeExpression is not null) text = _normalizeExpression(text);
+                return VfpExpression.ParseSql(text, aggregates, predicates, allowLookup);
             }
             catch (ExpressionException ex)
             {
@@ -177,11 +188,11 @@ public static class SqlParser
         }
 
         // Parses an expression fragment terminated per stopWords/stopAtComma.
-        private VfpExpression ParseExprFragment(HashSet<string>? stopWords, bool stopAtComma, bool aggregates = false, bool predicates = false)
+        private VfpExpression ParseExprFragment(HashSet<string>? stopWords, bool stopAtComma, bool aggregates = false, bool predicates = false, bool allowLookup = false)
         {
             var (s, e) = ScanRange(stopWords, stopAtComma);
             if (e <= s) throw Err("Expected an expression.");
-            return BuildExpr(RangeText(s, e), _t[s].Start, aggregates: aggregates, predicates: predicates);
+            return BuildExpr(RangeText(s, e), _t[s].Start, aggregates: aggregates, predicates: predicates, allowLookup: allowLookup);
         }
 
         // =================================================================
@@ -886,7 +897,8 @@ public static class SqlParser
             if (Current.Kind != TokKind.LParen) throw Err("Expected '(' after VALUES.");
             Advance();
             var values = new List<VfpExpression>();
-            do { values.Add(ParseExprFragment(null, stopAtComma: true)); }
+            // VFP9 accepts LOOKUP's field references in VALUES, unlike SELECT and SQL DML clauses.
+            do { values.Add(ParseExprFragment(null, stopAtComma: true, allowLookup: true)); }
             while (TryComma());
             if (Current.Kind != TokKind.RParen) throw Err("Expected ')' to close VALUES.");
             Advance();
