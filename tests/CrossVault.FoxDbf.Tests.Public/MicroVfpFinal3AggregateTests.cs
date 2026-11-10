@@ -8,6 +8,10 @@ public sealed class MicroVfpFinal3AggregateTests
     [InlineData("m.y", "1.234567")]
     [InlineData("n/2", "0.625000")]
     [InlineData("1.234567", "1.234567")]
+    [InlineData("1.25*2", "2.50")]
+    [InlineData("n*1.5", "1.8750000")]
+    [InlineData("1/3", "0.33")]
+    [InlineData("n/3", "0.416667")]
     public void SumAndAverage_KeepExpressionPrecision(string expression, string expected)
         => Assert.Equal(expected + "|" + expected, MicroVfpXbaseUpdateTests.Run(
             "CREATE TABLE t (n N(12,6))\nINSERT INTO t VALUES (1.25)",
@@ -51,4 +55,12 @@ public sealed class MicroVfpFinal3AggregateTests
         => Assert.Equal("            1000000000001.0000|            1000000000001.0000", MicroVfpXbaseUpdateTests.Run(
             "CREATE TABLE t (n Y)\nFOR i=1 TO 10000\nINSERT INTO t VALUES (100000000.0001)\nENDFOR",
             "USE t\nSUM n TO x\nresult=STR(x,30,4)\nCALCULATE SUM(n) TO x\nresult=result+'|'+STR(x,30,4)"));
+
+    [Theory]
+    [InlineData("m.y")]
+    [InlineData("$1.2345")]
+    public void CurrencyExpressions_RetainAggregateType(string expression)
+        => Assert.Equal("Y|2.4690|Y|2.4690", MicroVfpXbaseUpdateTests.Run(
+            "CREATE TABLE t (n I)\nINSERT INTO t VALUES (1)\nINSERT INTO t VALUES (2)",
+            $"USE t\nm.y=$1.2345\nSUM {expression} TO x\nresult=VARTYPE(x)+'|'+ALLTRIM(STR(x,30,4))\nCALCULATE SUM({expression}) TO x\nresult=result+'|'+VARTYPE(x)+'|'+ALLTRIM(STR(x,30,4))"));
 }

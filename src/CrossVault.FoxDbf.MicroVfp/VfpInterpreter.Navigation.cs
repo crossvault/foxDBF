@@ -702,7 +702,11 @@ public sealed partial class VfpInterpreter
     /// code-page bytes, GENERAL: collation weights).</summary>
     private static byte[] NaturalCharacterKey(OrderSource src, VfpValue value)
     {
-        if (value.IsBinary) return System.Text.Encoding.Latin1.GetBytes(value.AsString);
+        if (value.IsBinary)
+        {
+            var bytes = System.Text.Encoding.Latin1.GetBytes(value.AsString);
+            return src.NullableKey ? IndexKey.PrefixNonNullKey(bytes) : bytes;
+        }
         string text = value.AsString ?? string.Empty;
         if (src.Idx is not null)
         {
@@ -718,7 +722,7 @@ public sealed partial class VfpInterpreter
     /// the key equal to them plus blanks).</summary>
     private static CharacterSeekNeedle SeekCharacterNeedle(OrderSource src, VfpValue key, bool exact)
     {
-        if (key.IsBinary) return new CharacterSeekNeedle(System.Text.Encoding.Latin1.GetBytes(key.AsString), exact, src.KeyPad);
+        if (key.IsBinary) return new CharacterSeekNeedle(NaturalCharacterKey(src, key), exact, src.KeyPad);
         if (src.Idx is not null)
             return new CharacterSeekNeedle(NaturalCharacterKey(src, key), exact, src.KeyPad);
         try
@@ -1319,7 +1323,7 @@ public sealed partial class VfpInterpreter
         uint? recno = null;
         if (src.CdxTag is { } t)
         {
-            recno = key.IsNull ? t.Seek(new byte[t.KeyLength].AsSpan()) : characterNeedle is not null
+            recno = key.IsNull ? src.NullableKey ? t.Seek(new byte[t.KeyLength].AsSpan()) : null : characterNeedle is not null
                 ? t.Seek(characterNeedle)
                 : t.Seek(key.ToClr() ?? string.Empty);
         }
@@ -1422,7 +1426,7 @@ public sealed partial class VfpInterpreter
     /// run when the first hit is filtered/deleted out.</summary>
     private bool SeekEntryMatches(byte[] keyBytes, VfpValue key, OrderSource src, CharacterSeekNeedle? characterNeedle)
     {
-        if (key.IsNull) return keyBytes.AsSpan().IndexOfAnyExcept((byte)0) < 0;
+        if (key.IsNull) return src.NullableKey && keyBytes.AsSpan().IndexOfAnyExcept((byte)0) < 0;
         if (src.NullableKey && keyBytes.Length > 0 && keyBytes[0] == 0) return false;
         if (src.IsCharacterKey && key.Type == VfpType.Character)
             return (characterNeedle ?? SeekCharacterNeedle(src, key, _ctx.Exact)).Matches(keyBytes);
@@ -1438,6 +1442,7 @@ public sealed partial class VfpInterpreter
     private static uint? SeekIdx(OrderSource src, VfpValue key, CharacterSeekNeedle? characterNeedle)
     {
         if (src.Idx is null) return null;
+        if (key.IsNull && !src.NullableKey) return null;
         if (VfpRuntime.UnsupportedIndexFunction(src.Idx.Header.KeyExpression) is { } function
             && VfpFunctionNames.IsBuiltin(function))
             throw new NotSupportedException($"Index '{src.Name}': function {function}() is not supported by the index engine for SEEK.");
@@ -1515,7 +1520,7 @@ public sealed partial class VfpInterpreter
     /// key sorts after the seek value, &lt;0 before, 0 equal — in the key's own encoding.</summary>
     private int CompareStoredKeyToSeek(byte[] keyBytes, VfpValue key, OrderSource src, CharacterSeekNeedle? characterNeedle)
     {
-        if (key.IsNull) return keyBytes.AsSpan().IndexOfAnyExcept((byte)0) < 0 ? 0 : 1;
+        if (key.IsNull) return src.NullableKey && keyBytes.AsSpan().IndexOfAnyExcept((byte)0) < 0 ? 0 : 1;
         if (src.NullableKey && keyBytes.Length > 0 && keyBytes[0] == 0) return -1;
         // Character keys: the raw stored bytes against where the needle sorts (unsigned byte order; under SET EXACT
         // ON the needle plus pad, so a key the needle is only a prefix of sorts after it).

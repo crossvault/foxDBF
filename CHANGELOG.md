@@ -8,6 +8,11 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- Nullable CDX and IDX expression keys (including qualified fields, Varbinary, `UPPER`, concatenation
+  and character `IIF`) retain VFP9 NULL markers through reads, seeks and updates. NULL seeks no longer
+  match zero-filled nonnullable keys, and blank numeric fields index as zero. Index creation validates
+  the full encoded width, including the NULL byte (240 bytes compact; 100 bytes legacy IDX).
+  Nullable weighted indexes retain selective Rushmore bounds and avoid redundant key-buffer copies.
 - microVFP `SUM`/`AVERAGE` preserve fractional expression and memory-variable precision, and currency
   aggregates accumulate exactly. `CALCULATE MIN/MAX` preserve Character, Date, DateTime and Logical
   values; numeric aggregates (including `CNT(expr)`) reject nonnumeric inputs with VFP9 error 27.

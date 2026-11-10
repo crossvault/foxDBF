@@ -1210,7 +1210,9 @@ public sealed partial class VfpInterpreter
         var sawNull = new bool[n];
         var schema = new SelectExecutor.TableSchema(wa.Table, wa.Alias);
         var types = sum.Expressions.Select(e => e.Parsed?.InferType(schema) ?? default).ToArray();
+        var currencies = types.Select(t => t.Type == VfpType.Currency).ToArray();
         var scales = types.Select(t => t.Decimals).ToArray();
+        var unknownScale = new bool[n];
         for (int k = 0; k < n; k++)
         {
             string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
@@ -1228,12 +1230,15 @@ public sealed partial class VfpInterpreter
                 VfpType.Logical => VfpValue.Logical(false),
                 _ => VfpValue.Number(0d)
             };
-            // Aggregate precision is independent of SQL cursor sizing. Preserve declared field
-            // precision in expressions, and fill unknown literal/memvar precision from their values.
             if (sum.CalculateFunctions is null && sum.Expressions[k].Parsed is { } expression)
-                foreach (string field in expression.ReferencedFields())
-                    if (schema.TryGetColumn(field, out _, out _, out int decimals))
-                        scales[k] = Math.Max(scales[k], decimals);
+            {
+                int? scale = null;
+                // Precision discovery must not move expression errors ahead of scope positioning.
+                try { scale = expression.InferAggregateDecimals(schema, name => VfpValue.FromClr(ResolveName(name)), _ctx.NumericDecimals); }
+                catch { }
+                unknownScale[k] = scale is null;
+                if (scale is int known) scales[k] = known;
+            }
         }
         int start = kind == LocScope.All ? 0 : CurrentIndex(order, m);
         if (kind == LocScope.Record)
@@ -1244,6 +1249,7 @@ public sealed partial class VfpInterpreter
         if (start < 0) start = order.Count;
         int remaining = kind == LocScope.Next ? count : kind == LocScope.Record ? 1 : int.MaxValue;
         bool stopped = remaining <= 0;
+        Span<int> precisionBits = stackalloc int[4];
         for (int i = start; !stopped && i < order.Count; i++)
         {
             int rec = kind != LocScope.All && i == start ? Math.Abs(order[i]) : order[i];
@@ -1259,16 +1265,21 @@ public sealed partial class VfpInterpreter
                     string function = sum.CalculateFunctions?[k] ?? (sum.Average ? "AVG" : "SUM");
                     if (sum.CalculateFunctions is not null && function is not ("MIN" or "MAX") && !IsNumeric(v))
                         throw new MicroVfpRuntimeException("Expression is not numeric.", 27);
-                    if (counts[k] == 0 || VfpRuntime.Compare(v, minima[k], _ctx) < 0) minima[k] = v;
-                    if (counts[k] == 0 || VfpRuntime.Compare(v, maxima[k], _ctx) > 0) maxima[k] = v;
+                    if (function is "MIN" or "MAX")
+                    {
+                        if (counts[k] == 0 || VfpRuntime.Compare(v, minima[k], _ctx) < 0) minima[k] = v;
+                        if (counts[k] == 0 || VfpRuntime.Compare(v, maxima[k], _ctx) > 0) maxima[k] = v;
+                    }
                     counts[k]++;
                     if (!IsNumeric(v)) continue;
                     double value = v.AsDouble;
                     acc[k] += value;
-                    if (types[k].Type == VfpType.Currency || v.Type == VfpType.Currency) currencyAcc[k] += v.AsNumber;
-                    if (sum.CalculateFunctions is null && types[k].Length == 0)
+                    currencies[k] |= v.Type == VfpType.Currency;
+                    if (currencies[k]) currencyAcc[k] += v.AsNumber;
+                    if (sum.CalculateFunctions is null && unknownScale[k])
                     {
-                        int digits = (decimal.GetBits(v.AsNumber)[3] >> 16) & 0xff;
+                        decimal.GetBits(v.AsNumber, precisionBits);
+                        int digits = (precisionBits[3] >> 16) & 0xff;
                         scales[k] = Math.Max(scales[k], Math.Max(digits, v.DisplayDecimals));
                     }
                     if (sum.CalculateFunctions is not null)
@@ -1297,7 +1308,7 @@ public sealed partial class VfpInterpreter
                 AssignTo(sum.To[k], counts[k] == 0 && sawNull[k] ? VfpValue.Null : function == "MIN" ? minima[k] : maxima[k]);
                 continue;
             }
-            bool currency = types[k].Type == VfpType.Currency && function is not ("CNT" or "STD" or "VAR");
+            bool currency = currencies[k] && function is not ("CNT" or "STD" or "VAR");
             double result = function switch
             {
                 "AVG" => counts[k] > 0 ? acc[k] / counts[k] : 0,
@@ -1314,7 +1325,7 @@ public sealed partial class VfpInterpreter
                 result = 429496.7295;
             int decimals = sum.CalculateFunctions is not null ? _ctx.NumericDecimals
                 : sum.Average ? Math.Max(_ctx.NumericDecimals, scales[k]) : scales[k];
-            decimal currencyResult = function == "SUM" ? currencyAcc[k]
+            decimal currencyResult = !currency ? 0 : function == "SUM" ? currencyAcc[k]
                 : function == "AVG" && counts[k] > 0 ? currencyAcc[k] / counts[k]
                 : function == "MIN" ? minima[k].AsNumber : function == "MAX" ? maxima[k].AsNumber : (decimal)result;
             var value = currency ? VfpValue.Currency(Math.Round(currencyResult, 4, MidpointRounding.AwayFromZero))

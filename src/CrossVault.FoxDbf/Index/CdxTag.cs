@@ -249,10 +249,8 @@ public sealed class CdxTag
             if (keyBytes[0] == 0) return new IndexKey(KeyType, keyBytes.ToArray(), null);
             payload = keyBytes[1..];
         }
-        var decoded = KeyType == IndexKeyType.Character && IndexKey.IsMachineCollation(_collation)
-            ? IndexKey.DecodeCharacter(payload, CharacterEncoding)
-            : IndexKey.Decode(payload, KeyType);
-        return NullableKey ? new IndexKey(KeyType, keyBytes.ToArray(), decoded.Value) : decoded;
+        var encoding = KeyType == IndexKeyType.Character && IndexKey.IsMachineCollation(_collation) ? CharacterEncoding : null;
+        return new IndexKey(KeyType, keyBytes.ToArray(), IndexKey.DecodeValue(payload, KeyType, encoding));
     }
 
     /// <summary>

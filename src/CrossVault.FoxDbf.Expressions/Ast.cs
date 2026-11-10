@@ -31,6 +31,11 @@ internal abstract class AstNode
 
     // SQL cursor storage has different sizing rules from index expressions.
     internal virtual VfpTypeInfo InferSql(ISchema schema) => Infer(schema);
+    internal virtual int? AggregateDecimals(ISchema schema, Func<string, VfpValue> memory, int decimals)
+    {
+        var info = Infer(schema);
+        return info.Length > 0 ? info.Decimals : null;
+    }
     internal virtual bool IsSqlConstant => false;
 
     /// <summary>Add every FIELD name this node (transitively) reads to <paramref name="into"/>. Only bare
@@ -448,7 +453,16 @@ internal sealed partial class FunctionNode : AstNode
                 return new VfpTypeInfo(VfpType.Logical, 1);
 
             case "NVL": case "EVL": return ArgInfer(schema, 0).Type is VfpType.Null or VfpType.Unknown ? ArgInfer(schema, 1) : ArgInfer(schema, 0);
-            case "IIF": return ArgInfer(schema, 1);
+            case "IIF":
+            {
+                var first = ArgInfer(schema, 1);
+                var second = ArgInfer(schema, 2);
+                // Index storage must accommodate either character branch. SQL has its own
+                // first-row/selected-branch sizing in InferSql and deliberately does not use this.
+                return first.Type == VfpType.Character && second.Type == VfpType.Character
+                    ? new VfpTypeInfo(first.Type, Math.Max(first.Length, second.Length), first.Decimals) { IsBinary = first.IsBinary }
+                    : first;
+            }
             case "ICASE": return ArgInfer(schema, 1);   // result type ≈ the first pair's value expression
             default: return new VfpTypeInfo(VfpType.Unknown);
         }
