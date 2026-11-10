@@ -221,9 +221,9 @@ internal static partial class VfpRuntime
         if (l.Type == VfpType.Character || r.Type == VfpType.Character)
             return VfpValue.Character(MinusConcat(l.AsString, r.AsString));
         if (l.Type == VfpType.Date && r.Type == VfpType.Date)
-            return VfpValue.Number((double)(l.AsDate.DayNumber - r.AsDate.DayNumber));
+            return VfpValue.Number((double)(l.AsDate.DayNumber - r.AsDate.DayNumber), 0);
         if (l.Type == VfpType.DateTime && r.Type == VfpType.DateTime)
-            return VfpValue.Number((l.AsDateTime - r.AsDateTime).TotalSeconds);
+            return VfpValue.Number((l.AsDateTime - r.AsDateTime).TotalSeconds, 0);
         if (l.Type == VfpType.Date && IsNumeric(r))
         {
             if (l.IsEmptyDate) return VfpValue.Date(default);
@@ -543,7 +543,7 @@ internal static partial class VfpRuntime
 
             // ---- numeric ----
             case "INT": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(decimal.Truncate(Arg(args, 0).AsNumber))
-                : VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble));
+                : VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble), 0);
             case "ROUND": return Arg(args, 0).Type == VfpType.Currency ? RoundCurrency(Arg(args, 0).AsNumber, IntArg(args, 1))
                 : VfpValue.Number(Round(Arg(args, 0).AsDouble, IntArg(args, 1))).WithDisplayDecimals(IntArg(args, 1));
             case "ABS": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(Math.Abs(Arg(args, 0).AsNumber))

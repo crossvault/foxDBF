@@ -99,7 +99,7 @@ public sealed partial class VfpInterpreter
             case "IDXCOLLATE": r = VfpValue.Character(ResolveSlot(a)?.Collation ?? string.Empty); return true;
             case "ATAGINFO": r = VfpValue.Integer(FnATagInfo(a)); return true;
             case "LOOKUP": r = FnLookup(a); return true;
-            case "SECONDS": r = VfpValue.Number(DateTime.Now.TimeOfDay.TotalSeconds); return true;
+            case "SECONDS": r = VfpValue.Number(DateTime.Now.TimeOfDay.TotalSeconds, 3); return true;
             // Finding 5.13: RLOCK/LOCK/FLOCK take a REAL VFP-byte-compatible byte-range lock on the area's
             // live .dbf (via the Core DbfWriter surface) so a stored proc that coordinates via RLOCK is
             // mutually exclusive with a concurrent VFP client — honouring SET REPROCESS + SET MULTILOCKS.
@@ -439,17 +439,17 @@ public sealed partial class VfpInterpreter
             "NEAR" => VfpValue.Character(_setNear ? "ON" : "OFF"),
             "NULL" => VfpValue.Character(_ctx.NullSetting ? "ON" : "OFF"),
             "AUTOSAVE" => VfpValue.Character(_setAutosave ? "ON" : "OFF"),
-            "MEMOWIDTH" => VfpValue.Number((decimal)_memoWidth), // NUMERIC (verified vs the VFP9 runtime: VARTYPE = "N").
+            "MEMOWIDTH" => VfpValue.Number((decimal)_memoWidth).WithDisplayDecimals(0), // NUMERIC (verified vs the VFP9 runtime: VARTYPE = "N").
             // SET("BLOCKSIZE") returns the RAW value that was set (1..32 = ×512, 33+ = bytes) — NOT the byte
             // count SYS(2012) reports (hackfox s4g089). NUMERIC. TEXTMERGE reads back ON/OFF; SET("TEXTMERGE",1)
             // is the concatenated begin+end delimiters (default "<<>>").
-            "BLOCKSIZE" => VfpValue.Number((decimal)_blockSize),
+            "BLOCKSIZE" => VfpValue.Number((decimal)_blockSize).WithDisplayDecimals(0),
             "TEXTMERGE" => a.Length > 1 && IsNumeric(a[1]) && (int)a[1].AsNumber == 1
                 ? VfpValue.Character(_tmDelimBegin + _tmDelimEnd)
                 : VfpValue.Character(_textMerge ? "ON" : "OFF"),
             "RELATION" => VfpValue.Character(RelationSetString(Session.CurrentArea)),  // reproduces the SET RELATION args.
             "SKIP" => VfpValue.Character(SkipSetString(Session.CurrentArea)),          // comma-list of 1:n aliases.
-            "DATASESSION" => VfpValue.Number((decimal)Session.CurrentDataSessionId),   // NUMERIC (verified vs the VFP9 runtime) — the current data-session id (5.14).
+            "DATASESSION" => VfpValue.Number((decimal)Session.CurrentDataSessionId).WithDisplayDecimals(0),   // NUMERIC (verified vs the VFP9 runtime) — the current data-session id (5.14).
             // SET("DATABASE") — the current DBC's NAME only (no drive/path/extension), "" when none current.
             "DATABASE" => VfpValue.Character(CurrentDbPath() is { Length: > 0 } p ? Path.GetFileNameWithoutExtension(p) : string.Empty),
             // SET("FIELDS") → ON/OFF; SET("FIELDS",1) → the bare field list, ", "-separated, uppercase (no

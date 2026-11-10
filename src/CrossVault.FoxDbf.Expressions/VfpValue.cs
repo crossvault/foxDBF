@@ -185,6 +185,21 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         }
     }
 
+    // VFP9 formats doubles with at most 16 significant digits and 15 fractional digits.
+    // This is a display conversion only: arithmetic keeps the original double payload.
+    internal decimal AsDisplayNumber
+    {
+        get
+        {
+            if (_isExact || !double.IsFinite(_num) || Math.Abs(_num) >= (double)decimal.MaxValue) return AsNumber;
+            Span<char> text = stackalloc char[32];
+            _num.TryFormat(text, out int length, "G16", System.Globalization.CultureInfo.InvariantCulture);
+            return decimal.TryParse(text[..length], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out decimal value)
+                ? Math.Round(value, 15, MidpointRounding.AwayFromZero) : AsNumber;
+        }
+    }
+
     /// <summary>Numeric payload as <see cref="double"/>.</summary>
     public double AsDouble => _isExact ? (double)_dec : _num;
 

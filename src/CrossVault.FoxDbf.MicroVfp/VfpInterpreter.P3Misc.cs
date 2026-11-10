@@ -265,7 +265,13 @@ public sealed partial class VfpInterpreter
         switch (v.Type)
         {
             case VfpType.Character: bw.Write((byte)'C'); bw.Write(v.AsString); break;
-            case VfpType.Numeric: bw.Write((byte)'N'); bw.Write(v.AsNumber); break;
+            case VfpType.Numeric:
+                // A new tag preserves scale and the numeric payload; legacy N records remain readable.
+                bw.Write((byte)'n'); bw.Write(v.DisplayDecimals);
+                bool exact = v.ToClr() is decimal;
+                bw.Write(exact);
+                if (exact) bw.Write(v.AsNumber); else bw.Write(v.AsDouble);
+                break;
             case VfpType.Currency: bw.Write((byte)'Y'); bw.Write(v.AsNumber); break;
             case VfpType.Integer: bw.Write((byte)'I'); bw.Write((int)v.AsNumber); break;
             case VfpType.Logical: bw.Write((byte)'L'); bw.Write(v.AsLogical); break;
@@ -275,10 +281,21 @@ public sealed partial class VfpInterpreter
         }
     }
 
+    private static VfpValue LegacySavedNumber(decimal value)
+        => VfpValue.Number(value).WithDisplayDecimals((decimal.GetBits(value)[3] >> 16) & 0xff);
+
+    private static VfpValue ReadScaledNumber(BinaryReader reader)
+    {
+        int scale = reader.ReadInt32();
+        return (reader.ReadBoolean() ? VfpValue.Number(reader.ReadDecimal()) : VfpValue.Number(reader.ReadDouble()))
+            .WithDisplayDecimals(scale);
+    }
+
     private static VfpValue ReadValue(BinaryReader br) => (char)br.ReadByte() switch
     {
         'C' => VfpValue.Character(br.ReadString()),
-        'N' => VfpValue.Number(br.ReadDecimal()),
+        'N' => LegacySavedNumber(br.ReadDecimal()),
+        'n' => ReadScaledNumber(br),
         'Y' => VfpValue.Currency(br.ReadDecimal()),
         'I' => VfpValue.Integer(br.ReadInt32()),
         'L' => VfpValue.Logical(br.ReadBoolean()),
@@ -533,7 +550,7 @@ public sealed partial class VfpInterpreter
         {
             var e = entries[i];
             arr.Set(i + 1, 1, VfpValue.Character(e.Name.ToUpperInvariant()));
-            arr.Set(i + 1, 2, VfpValue.Number((decimal)e.Size));
+            arr.Set(i + 1, 2, VfpValue.Number((decimal)e.Size).WithDisplayDecimals(0));
             arr.Set(i + 1, 3, VfpValue.Date(DateOnly.FromDateTime(e.When)));
             arr.Set(i + 1, 4, VfpValue.Character(e.When.ToString("HH:mm:ss", CultureInfo.InvariantCulture)));
             arr.Set(i + 1, 5, VfpValue.Character(e.Attr));

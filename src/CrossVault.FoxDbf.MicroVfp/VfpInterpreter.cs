@@ -726,14 +726,14 @@ public sealed partial class VfpInterpreter
         double step = f.Step is null ? 1d : Eval(f.Step).AsDouble;
         if (step == 0d) step = 1d;
         double cur = Eval(f.From).AsDouble;
-        Memory.Set(f.Variable, VfpValue.Number(cur));
+        Memory.Set(f.Variable, VfpValue.Number(cur, _ctx.NumericDecimals));
         while (step > 0 ? cur <= to : cur >= to)
         {
             try { ExecBlock(f.Body); }
             catch (ExitSignal) { break; }
             catch (LoopSignal) { /* fall through to increment */ }
             cur = Memory.Get(f.Variable).AsDouble + step;       // body may mutate the loop var.
-            Memory.Set(f.Variable, VfpValue.Number(cur));
+            Memory.Set(f.Variable, VfpValue.Number(cur, _ctx.NumericDecimals));
         }
     }
 

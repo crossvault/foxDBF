@@ -101,7 +101,7 @@ public sealed partial class VfpInterpreter
         VfpType.Currency => (v.AsNumber < 0 ? "$-" : "$")
             + Math.Round(Math.Abs(v.AsNumber), _ctx.NumericDecimals, MidpointRounding.AwayFromZero).ToString("N" + _ctx.NumericDecimals, CultureInfo.InvariantCulture),
         VfpType.Numeric when v.DisplayDecimals >= 0 && v.AsNumber != decimal.Truncate(v.AsNumber)
-            => Math.Round(v.AsNumber, v.DisplayDecimals, MidpointRounding.AwayFromZero).ToString("F" + v.DisplayDecimals, CultureInfo.InvariantCulture),
+            => Math.Round(v.AsDisplayNumber, v.DisplayDecimals, MidpointRounding.AwayFromZero).ToString("F" + v.DisplayDecimals, CultureInfo.InvariantCulture),
         VfpType.Numeric or VfpType.Integer => NumberToPlainString(v.AsNumber),
         _ => v.ToString(),
     };

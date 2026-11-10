@@ -189,7 +189,7 @@ internal sealed class ExpressionLexer
             var hex = s.Slice(start + 2, i - start - 2);
             if (hex.Length > 15 || !long.TryParse(hex, NumberStyles.AllowHexSpecifier, Inv, out long h))
                 throw new ExpressionException($"Invalid numeric literal '{s.Slice(start, i - start).ToString()}'.", start);
-            return new(TokenType.Number, start, s.Slice(start, i - start).ToString(), VfpValue.Number((decimal)h));
+            return new(TokenType.Number, start, s.Slice(start, i - start).ToString(), VfpValue.Number((decimal)h).WithDisplayDecimals(0));
         }
         while (i < s.Length && char.IsAsciiDigit(s[i])) i++;
         // `3.AND.x`: the '.' opens a dotted operator, it is not this number's decimal point.

@@ -23,7 +23,7 @@ public sealed partial class VfpInterpreter
         public void StoreQueryIntoArray(string name, int rows, int cols, IReadOnlyList<object?[]> data)
         {
             // _TALLY = row count in ALL cases (incl. zero rows).
-            _it.Memory.Set("_TALLY", VfpValue.Number((decimal)rows));
+            _it.Memory.Set("_TALLY", VfpValue.Number((decimal)rows).WithDisplayDecimals(0));
 
             // VFP: zero rows leaves the array UNCHANGED — an existing array is untouched, a new name is never
             // created. So do NOT touch the store at all when there is nothing to land.

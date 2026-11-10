@@ -16,29 +16,38 @@ internal static partial class VfpRuntime
         double y = Arg(args, 1).AsDouble;
         switch (name)
         {
-            case "RAND": return VfpValue.Number(ctx.Random.Next(args.Length == 0 ? null : x));
-            case "FLOAT": case "FIXED": return VfpValue.Number(x);
+            case "RAND": return VfpValue.Number(ctx.Random.Next(args.Length == 0 ? null : x)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "FLOAT": case "FIXED": return VfpValue.Number(x).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
             case "TIME": return VfpValue.Character(DateTime.Now.ToString(args.Length > 0 && x == 1 ? "HH:mm:ss.ff" : "HH:mm:ss", Inv));
-            case "CEILING": return VfpValue.Number(Math.Ceiling(x));
-            case "FLOOR": return VfpValue.Number(Math.Floor(x));
-            case "ACOS": return VfpValue.Number(Math.Acos(x));
-            case "ASIN": return VfpValue.Number(Math.Asin(x));
-            case "ATAN": return VfpValue.Number(Math.Atan(x));
-            case "ATN2": return VfpValue.Number(Math.Atan2(x, y));
-            case "COS": return VfpValue.Number(Math.Cos(x));
-            case "SIN": return VfpValue.Number(Math.Sin(x));
-            case "TAN": return VfpValue.Number(Math.Tan(x));
-            case "DTOR": return VfpValue.Number(x * (Math.PI / 180));
-            case "RTOD": return VfpValue.Number(x * (180 / Math.PI));
-            case "PI": return VfpValue.Number(Math.PI);
-            case "EXP": return VfpValue.Number(Math.Exp(x));
-            case "LOG": return VfpValue.Number(Math.Log(x));
-            case "LOG10": return VfpValue.Number(Math.Log10(x));
+            case "CEILING": return VfpValue.Number(Math.Ceiling(x)).WithDisplayDecimals(0);
+            case "FLOOR": return VfpValue.Number(Math.Floor(x)).WithDisplayDecimals(0);
+            case "ACOS": return VfpValue.Number(Math.Acos(x)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "ASIN": return VfpValue.Number(Math.Asin(x)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "ATAN": return VfpValue.Number(Math.Atan(x)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "ATN2": return VfpValue.Number(Math.Atan2(x, y)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "COS": return VfpValue.Number(Math.Cos(x)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "SIN": return VfpValue.Number(Math.Sin(x)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "TAN": return VfpValue.Number(Math.Tan(x)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "DTOR": return VfpValue.Number(x * (Math.PI / 180)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "RTOD": return VfpValue.Number(x * (180 / Math.PI)).WithDisplayDecimals(ctx.NumericDecimals);
+            case "PI": return VfpValue.Number(Math.PI).WithDisplayDecimals(ctx.NumericDecimals);
+            case "EXP": return VfpValue.Number(Math.Exp(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals));
+            case "LOG": return VfpValue.Number(Math.Log(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals));
+            case "LOG10": return VfpValue.Number(Math.Log10(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals));
             case "SQRT": return VfpValue.Number(Math.Sqrt(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals));
-            case "SIGN": return VfpValue.Number((double)Math.Sign(x));
-            case "FV": return VfpValue.Number(y == 0 ? 0 : x * (Math.Pow(1 + y, Arg(args, 2).AsDouble) - 1) / y);
-            case "PV": return VfpValue.Number(y == 0 ? x * Arg(args, 2).AsDouble : x * (1 - Math.Pow(1 + y, -Arg(args, 2).AsDouble)) / y);
-            case "PAYMENT": return VfpValue.Number(y == 0 ? x / Arg(args, 2).AsDouble : x * y / (1 - Math.Pow(1 + y, -Arg(args, 2).AsDouble)));
+            case "SIGN": return VfpValue.Number((double)Math.Sign(x)).WithDisplayDecimals(0);
+            case "FV": case "PV": case "PAYMENT":
+            {
+                // VFP9 uses the rounded absolute period count and powers the reciprocal for PV/PAYMENT.
+                double periods = Math.Round(Math.Abs(Arg(args, 2).AsDouble), MidpointRounding.AwayFromZero);
+                double result = periods == 0 ? 0 : name switch
+                {
+                    "FV" => y == 0 ? 0 : x * (Math.Pow(1 + y, periods) - 1) / y,
+                    "PV" => y == 0 ? x * periods : x * (1 - Math.Pow(1 / (1 + y), periods)) / y,
+                    _ => y == 0 ? x / periods : x * y / (1 - Math.Pow(1 / (1 + y), periods)),
+                };
+                return VfpValue.Number(result, ctx.NumericDecimals);
+            }
             case "MTON": return Arg(args, 0).Type == VfpType.Currency
                 ? VfpValue.Number(Arg(args, 0).AsNumber).WithDisplayDecimals(4) : Arg(args, 0);
             case "NTOM": return VfpValue.Currency(Arg(args, 0).ToCurrencyNumber());
@@ -50,27 +59,27 @@ internal static partial class VfpRuntime
                     int next = unchecked((int)(long)a.AsDouble);
                     bits = name == "BITAND" ? bits & next : name == "BITOR" ? bits | next : bits ^ next;
                 }
-                return VfpValue.Number((double)bits);
+                return VfpValue.Number((double)bits).WithDisplayDecimals(0);
             }
-            case "BITNOT": return VfpValue.Number((double)~unchecked((int)(long)x));
-            case "BITSET": return VfpValue.Number((double)(unchecked((int)(long)x) | (1 << (int)y)));
-            case "BITCLEAR": return VfpValue.Number((double)(unchecked((int)(long)x) & ~(1 << (int)y)));
+            case "BITNOT": return VfpValue.Number((double)~unchecked((int)(long)x)).WithDisplayDecimals(0);
+            case "BITSET": return VfpValue.Number((double)(unchecked((int)(long)x) | (1 << (int)y))).WithDisplayDecimals(0);
+            case "BITCLEAR": return VfpValue.Number((double)(unchecked((int)(long)x) & ~(1 << (int)y))).WithDisplayDecimals(0);
             case "BITTEST": return VfpValue.Logical((unchecked((int)(long)x) & (1 << (int)y)) != 0);
-            case "BITLSHIFT": return VfpValue.Number((double)(unchecked((int)(long)x) << (int)y));
-            case "BITRSHIFT": return VfpValue.Number((double)((uint)unchecked((int)(long)x) >> (int)y));
-            case "RGB": return VfpValue.Number(x + y * 256 + Arg(args, 2).AsDouble * 65536);
-            case "HOUR": return VfpValue.Number((double)Arg(args, 0).AsDateTime.Hour);
-            case "MINUTE": return VfpValue.Number((double)Arg(args, 0).AsDateTime.Minute);
-            case "SEC": return VfpValue.Number((double)Arg(args, 0).AsDateTime.Second);
+            case "BITLSHIFT": return VfpValue.Number((double)(unchecked((int)(long)x) << (int)y)).WithDisplayDecimals(0);
+            case "BITRSHIFT": return VfpValue.Number((double)((uint)unchecked((int)(long)x) >> (int)y)).WithDisplayDecimals(0);
+            case "RGB": return VfpValue.Number(x + y * 256 + Arg(args, 2).AsDouble * 65536).WithDisplayDecimals(0);
+            case "HOUR": return VfpValue.Number((double)Arg(args, 0).AsDateTime.Hour).WithDisplayDecimals(0);
+            case "MINUTE": return VfpValue.Number((double)Arg(args, 0).AsDateTime.Minute).WithDisplayDecimals(0);
+            case "SEC": return VfpValue.Number((double)Arg(args, 0).AsDateTime.Second).WithDisplayDecimals(0);
             case "TTOD": return VfpValue.Date(Arg(args, 0).AsDate, Arg(args, 0).IsEmptyDate);
-            case "QUARTER": return VfpValue.Number(Arg(args, 0).IsEmptyDate ? 0d : ((Arg(args, 0).AsDate.Month - (args.Length > 1 ? (int)y : 1) + 12) % 12) / 3 + 1d);
+            case "QUARTER": return VfpValue.Number(Arg(args, 0).IsEmptyDate ? 0d : ((Arg(args, 0).AsDate.Month - (args.Length > 1 ? (int)y : 1) + 12) % 12) / 3 + 1d).WithDisplayDecimals(0);
             case "WEEK":
             {
                 var rule = args.Length > 1 ? (int)y : 1;
                 var day = args.Length > 2 ? IntArg(args, 2) : 1;
                 return VfpValue.Number(Arg(args, 0).IsEmptyDate ? 0d : Inv.Calendar.GetWeekOfYear(Arg(args, 0).AsDateTime,
                     rule == 2 ? CalendarWeekRule.FirstFourDayWeek : rule == 3 ? CalendarWeekRule.FirstFullWeek : CalendarWeekRule.FirstDay,
-                    (DayOfWeek)(Math.Max(1, day) - 1)));
+                    (DayOfWeek)(Math.Max(1, day) - 1))).WithDisplayDecimals(0);
             }
             case "DMY": case "MDY": return VfpValue.Character(Arg(args, 0).IsEmptyDate ? "" : Arg(args, 0).AsDateTime.ToString(name == "DMY" ? "dd MMMM yyyy" : "MMMM dd, yyyy", Inv));
             case "CREATEBINARY": return VfpValue.Varbinary(EncodeByteString(Arg(args, 0), ctx));
@@ -174,7 +183,7 @@ internal static partial class VfpRuntime
         {
             if (!flags.Contains('S')) bytes[0] ^= 0x80;
             return VfpValue.Number(bytes.Length == 4 ? BinaryPrimitives.ReadSingleLittleEndian(bytes)
-                : BinaryPrimitives.ReadDoubleLittleEndian(bytes));
+                : BinaryPrimitives.ReadDoubleLittleEndian(bytes)).WithDisplayDecimals(18);
         }
         if (flags.Contains('Y'))
         {
@@ -186,10 +195,10 @@ internal static partial class VfpRuntime
             if ((bytes[0] & 0x80) == 0)
                 for (int i = 0; i < bytes.Length; i++) bytes[i] ^= 0xff;
             else bytes[0] ^= 0x80;
-            return VfpValue.Number(BinaryPrimitives.ReadDoubleBigEndian(bytes));
+            return VfpValue.Number(BinaryPrimitives.ReadDoubleBigEndian(bytes)).WithDisplayDecimals(18);
         }
         if (!flags.Contains('S')) bytes[0] ^= 0x80;
         return VfpValue.Number(bytes.Length == 4 ? (double)BinaryPrimitives.ReadInt32BigEndian(bytes)
-            : bytes.Length == 2 ? BinaryPrimitives.ReadInt16BigEndian(bytes) : unchecked((sbyte)bytes[0]));
+            : bytes.Length == 2 ? BinaryPrimitives.ReadInt16BigEndian(bytes) : unchecked((sbyte)bytes[0])).WithDisplayDecimals(0);
     }
 }
