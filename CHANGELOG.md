@@ -4,7 +4,7 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
-## [Unreleased]
+## [0.14.0] - 2026-11-10
 
 ### Added
 
@@ -38,18 +38,18 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   `ACOS`/`ASIN`: 293/291, fractional powers of a negative base: 78, `MOD`/`%` by zero: 1307).
   Overflow display, `SIGN`, `INT` and extreme `ROUND` arguments follow VFP9. These built-ins no longer
   leak CLR arithmetic exceptions into the aggregate metadata pass, including unselected conditional branches.
-- Invalid string lengths and widths raise catchable VFP9 errors 11/1903/1908 instead of crashes.
-  Binary conversions, date/week boundaries, memo offsets and array arguments return VFP9 values or errors.
 - BREAKING: `ASCAN(a,x,0)` raises error 1234; a count of 0 searches the rest of the array,
   and `ASCAN(a,x,start)` returns 0 when start is past the end, as in VFP9.
+- BREAKING: Date functions reject numeric, character and logical arguments with VFP9 error 11, including
+  `DTOC`/`DTOS`/`TTOC`/`TTOD`, date parts, date names and time parts. `TTOD` requires a DateTime,
+  `DTOT` requires a Date, and `QUARTER(NULL)` raises error 11. The empty DateTime literal `{/:}` is accepted.
+- Invalid string lengths and widths raise catchable VFP9 errors 11/1903/1908 instead of crashes.
+  Binary conversions, date/week boundaries, memo offsets and array arguments return VFP9 values or errors.
 - `NORMALIZE` and index `KEY()` preserve fields named `nan` and `infinity`.
 - Overflow comparisons and `SUM`/`AVERAGE`/`CALCULATE` display match VFP9.
   Direct `TRANSFORM` of division overflow uses expression widths for constant arithmetic
   (for example, `TRANSFORM((1-1)/0)` has eight asterisks with `SET DECIMALS TO 2`).
   Dynamic expressions retain their runtime overflow width; their exact VFP9 widths remain partially unsupported.
-- Date functions reject numeric, character and logical arguments with VFP9 error 11, including
-  `DTOC`/`DTOS`/`TTOC`/`TTOD`, date parts, date names and time parts. `TTOD` requires a DateTime,
-  `DTOT` requires a Date, and `QUARTER(NULL)` raises error 11. The empty DateTime literal `{/:}` is accepted.
 - Invalid microVFP `CALCULATE` items raise VFP9's catchable errors when executed, with VFP9's syntax,
   missing-expression and unrecognized-phrase messages. An unexecuted invalid line no longer prevents a
   program from loading.
