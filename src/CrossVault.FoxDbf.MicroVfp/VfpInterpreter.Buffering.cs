@@ -68,7 +68,7 @@ public sealed partial class VfpInterpreter
             var v = Eval(clause.Value);
             var col = wa.Table.Columns[idx];
             if (!normalize) CheckReplaceValueType(col, v);
-            bool integerOverflow = !normalize && col.Type == 'I' && ReplaceIntegerOverflows(v);
+            bool integerOverflow = reportNumericOverflow && !normalize && col.Type == 'I' && ReplaceIntegerOverflows(v);
             overflow |= integerOverflow;
             target[idx] = integerOverflow ? FieldEncoder.StoredIntegerOverflow
                 : normalize ? NormalizeUpdateValue(col, v, col.Type == 'Q' ? wa.Table.BinaryTextEncoding : wa.Table.Encoding)
