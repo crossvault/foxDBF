@@ -159,6 +159,7 @@ public sealed partial class VfpInterpreter
         var rows = array ? bridge.ReadArrayRows(statement.SourceName!)
             ?? throw new MicroVfpRuntimeException("Variable is not found.", 12)
             : new List<IReadOnlyList<object?>> { values };
+        bool overflow = false;
         foreach (var row in rows)
         {
             int count = Math.Min(row.Count, columns.Length);
@@ -179,10 +180,11 @@ public sealed partial class VfpInterpreter
                 if (array)
                     for (int i = 0; i < count; i++)
                         if (FieldEncoder.NumericOverflow(columns[i], row[i], wa.Table.Encoding))
-                            throw new MicroVfpRuntimeException("Numeric overflow. Data was lost.", 39);
+                            overflow = true;
             }
             finally { Session.InsertArrayRow = previousArrayRow; }
         }
+        if (overflow) throw new MicroVfpRuntimeException("Numeric overflow. Data was lost.", 39);
     }
 
     /// <summary>Buffer an INSERT (append) into the target area's buffer: the row is VISIBLE on the live

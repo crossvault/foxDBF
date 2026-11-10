@@ -4,6 +4,11 @@ public sealed class MicroVfpNumericScaleFinal5Tests
 {
     internal static IEnumerable<(string Name, string Script)> Probes()
     {
+        yield return ("numeric_narrow_zero", "result=STR(0.5,3,2)+'|'+STR(-0.123,4,2)");
+        yield return ("currency_narrow_zero", "result=STR($0.5,3,2)+'|'+STR(-$0.123,4,2)");
+        yield return ("alternate_reset", "SET ALTERNATE TO first.txt\nSET ALTERNATE ON\n? 'first'\nSET ALTERNATE TO\nSET ALTERNATE TO second.txt\n? 'second'\nSET ALTERNATE OFF\nSET ALTERNATE TO\nresult=FILETOSTR('second.txt')");
+        yield return ("array_many", "CREATE TABLE t FREE (n N(3),tail I)\nDIMENSION aa[3,2]\naa[1,1]=1\naa[1,2]=1\naa[2,1]=12345\naa[2,2]=2\naa[3,1]=3\naa[3,2]=3\nresult='OK'\nTRY\nINSERT INTO t FROM ARRAY aa\nCATCH TO failure\nresult='ERR:'+TRANSFORM(failure.ErrorNo)\nENDTRY\nGO BOTTOM\nresult=result+'|'+TRANSFORM(RECCOUNT())+'|'+TRANSFORM(tail)");
+        yield return ("array_many_buffered", "CREATE TABLE t FREE (n N(3),tail I)\nSET MULTILOCKS ON\n=CURSORSETPROP('Buffering',5,'t')\nDIMENSION aa[3,2]\naa[1,1]=1\naa[1,2]=1\naa[2,1]=12345\naa[2,2]=2\naa[3,1]=3\naa[3,2]=3\nresult='OK'\nTRY\nINSERT INTO t FROM ARRAY aa\nCATCH TO failure\nresult='ERR:'+TRANSFORM(failure.ErrorNo)\nENDTRY\nGO BOTTOM\nresult=result+'|'+TRANSFORM(RECCOUNT())+'|'+TRANSFORM(tail)");
         const string table = "CREATE TABLE t FREE (n N(3), tail I)\n";
         foreach (var (name, setup, command) in new[]
         {
@@ -42,6 +47,12 @@ public sealed class MicroVfpNumericScaleFinal5Tests
 
     internal static readonly Dictionary<string, string> Expected = new()
     {
+        ["array_many_buffered"] = "ERR:39|3|3",
+        ["numeric_narrow_zero"] = ".50|-.12",
+        ["currency_narrow_zero"] = ".50|-.12",
+        ["alternate_reset"] = "\u001a",
+        ["array_many"] = "ERR:39|3|3",
+
         ["bare_count_COUNT(*)>0"] = "0|0",
         ["bare_count_COUNT(*)=0"] = "1|3",
         ["bare_count_COUNT(*)=1"] = "0|0",

@@ -731,6 +731,8 @@ internal static partial class VfpRuntime
         {
             int scale = NumericStorageDecimals(n, Math.Max(0, len), Math.Clamp(dec, 0, 28));
             string text = Arg(a, 0).RoundForDisplay(scale).ToString("F" + scale, Inv);
+            if (text.Length > len && text.StartsWith("0.", StringComparison.Ordinal)) text = text[1..];
+            else if (text.Length > len && text.StartsWith("-0.", StringComparison.Ordinal)) text = "-" + text[2..];
             return VfpValue.Character(text.Length > len ? new string('*', Math.Max(0, len)) : text.PadLeft(len));
         }
         return VfpValue.Character(StrCore(n, len, dec));
@@ -747,6 +749,16 @@ internal static partial class VfpRuntime
         if (len < 0) len = 0;
         if (dec < 0) dec = 0;
         if (!double.IsFinite(n)) return new string('*', len);
+
+        // VFP9 keeps fractional digits by omitting the zero in a narrow sub-unit result.
+        if (Math.Abs(n) < 1 && dec > 0 && len <= dec + (n < 0 ? 2 : 1))
+        {
+            int scale = NumericStorageDecimals(n, len, Math.Min(dec, Math.Max(0, len - 1)));
+            string text = Round(n, scale).ToString("F" + scale, Inv);
+            if (text.Length > len && text.StartsWith("0.", StringComparison.Ordinal)) text = text[1..];
+            else if (text.Length > len && text.StartsWith("-0.", StringComparison.Ordinal)) text = "-" + text[2..];
+            if (text.Length <= len) return text.PadLeft(len);
+        }
 
         // Integer-digit count of the rounded-to-zero magnitude, including a sign slot.
         double absInt = Math.Floor(Math.Abs(n));

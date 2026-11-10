@@ -225,6 +225,7 @@ internal sealed partial class DmlExecutor
         var target = _session.OpenWritableTarget(st.Table);
         var columns = target.Writer.Schema.Columns;
         int count = 0;
+        bool overflow = false;
         try
         {
             foreach (var row in rows)
@@ -236,10 +237,12 @@ internal sealed partial class DmlExecutor
                 count++;
                 for (int i = 0; i < k; i++)
                     if (FieldEncoder.NumericOverflow(columns[i], row[i], target.Writer.Schema.Encoding))
-                        throw new FoxDbfSqlException("Numeric overflow. Data was lost.") { VfpErrorNumber = 39 };
+                        overflow = true;
             }
         }
         finally { target.Dispose(); }
+        // VFP9 completes all array rows before reporting N/F overflow.
+        if (overflow) throw new FoxDbfSqlException("Numeric overflow. Data was lost.") { VfpErrorNumber = 39 };
         return SqlResult.Dml(count);
     }
 

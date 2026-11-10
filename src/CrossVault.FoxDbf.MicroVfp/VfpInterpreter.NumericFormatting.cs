@@ -26,7 +26,11 @@ public sealed partial class VfpInterpreter
         bool additive = name.EndsWith(" ADDITIVE", StringComparison.OrdinalIgnoreCase);
         if (additive) name = name[..^9].TrimEnd();
         name = name.Trim('\'', '"', '[', ']');
-        if (name.Length == 0) return;
+        if (name.Length == 0)
+        {
+            _alternateOn = false;
+            return;
+        }
         string path = ResolveDataPath(Path.HasExtension(name) ? name : name + ".txt");
         var stream = new FileStream(path, additive ? FileMode.OpenOrCreate : FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
         if (additive && stream.Length > 0)
