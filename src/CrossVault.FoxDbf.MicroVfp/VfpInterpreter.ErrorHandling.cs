@@ -138,7 +138,7 @@ public sealed partial class VfpInterpreter
         string t = text.IndexOf('&') >= 0 ? ExpandMacrosInLine(text) : text;
         VfpExpression parsed;
         try { parsed = ParseExpressionCached(MicroVfpExprRewrite.Normalize(t)); }
-        catch (ExpressionException)
+        catch (ExpressionException ex) when (ex.VfpErrorNumber is null)
         {
             var pe = PrgExpr.Parse(t);
             if (!pe.IsParsed)

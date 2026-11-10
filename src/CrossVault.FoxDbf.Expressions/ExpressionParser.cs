@@ -278,7 +278,9 @@ internal sealed class ExpressionParser
                 throw new ExpressionException(args.Count == 0 ? "Expression is invalid. A valid expression is required." : "Function name is missing ( ).", id.Pos)
                     { VfpErrorNumber = args.Count == 0 ? 152 : 1300 };
             if (distinct) args[0] = new SqlDistinctNode(args[0]);
-            return new FunctionNode(name, args.ToArray());
+            // SQL MIN/MAX aggregates take one operand; scalar MIN/MAX use VFP's 2..26 limits.
+            return aggregate ? new FunctionNode(name, args.ToArray())
+                : VfpFunctionArity.Bind(name, args.ToArray(), id.Pos);
         }
         return new FieldNode(id.Text);
     }

@@ -4,6 +4,14 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Changed
+
+- BREAKING: Engine built-in calls with an invalid argument count now raise VFP9 errors 1229/1230
+  (or the function-specific VFP9 error), including abbreviated names in expressions, SQL, indexes
+  and microVFP. Runtime-only errors retain VFP9's lazy evaluation and NULL behavior.
+
 ## [0.12.0] - 2026-11-10
 
 ### Added
