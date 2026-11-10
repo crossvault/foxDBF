@@ -812,11 +812,17 @@ public sealed partial class VfpInterpreter
             throw new MicroVfpRuntimeException("No table is open in the current work area.", 52);
         var single = rp with { Scope = null, For = null, While = null };
         int tally = 0;
+        MicroVfpRuntimeException? overflow = null;
         try
         {
             ExecRecordScope(area, rp.Scope, rp.For, rp.While, () =>
             {
                 try { ExecReplace(single); }
+                catch (MicroVfpRuntimeException error) when (error.VfpErrorNumber == 39)
+                {
+                    // VFP9 finishes the scope after storing an overflowing numeric field.
+                    overflow = error;
+                }
                 catch (MicroVfpRuntimeException error) when (error.VfpErrorNumber == 1539)
                 {
                     // VFP includes the attempted row even when its update trigger rejects it.
@@ -825,6 +831,7 @@ public sealed partial class VfpInterpreter
                 }
                 tally++;
             });
+            if (overflow is not null) throw overflow;
         }
         finally { Memory.Set("_TALLY", VfpValue.Integer(tally)); }
     }

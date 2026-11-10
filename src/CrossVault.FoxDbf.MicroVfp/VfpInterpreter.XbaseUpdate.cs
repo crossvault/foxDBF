@@ -113,7 +113,7 @@ public sealed partial class VfpInterpreter
                 }
                 if (match)
                 {
-                    try { BufferReplace(statement.Replacement, target, Session.AreaAt(target)!, Meta(target), normalize: true); }
+                    try { BufferReplace(statement.Replacement, target, Session.AreaAt(target)!, Meta(target), normalize: true, reportNumericOverflow: false); }
                     catch (MicroVfpRuntimeException error) when (buffering == 1 && error.VfpErrorNumber == 9 && !error.FromFieldErrorExpression)
                     {
                         // A later type mismatch retains the preceding assignments on this row.

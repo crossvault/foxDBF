@@ -71,7 +71,8 @@ public sealed partial class VfpInterpreter
             target[idx] = normalize ? NormalizeUpdateValue(col, v, col.Type == 'Q' ? wa.Table.BinaryTextEncoding : wa.Table.Encoding)
                 : DmlExecutor.StoredFieldValue(wa.Table, col,
                     v.IsNull ? null : (col.Type is 'C' or 'M' or 'V' ? FitToField(col, v.AsString) : v.ToClr()));
-            if (reportNumericOverflow && FieldEncoder.NumericOverflow(col, v.ToClr(), wa.Table.Encoding)) overflow = true;
+            if (reportNumericOverflow && col.Type is 'N' or 'F'
+                && FieldEncoder.NumericOverflow(col, v.ToClr(), wa.Table.Encoding)) overflow = true;
             if (edit is not null)
             {
                 if (normalize && recno <= rcTable) buf.Rows[recno] = edit;

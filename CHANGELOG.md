@@ -8,6 +8,8 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- UPDATE ON retains overflowing numeric assignments without error 39; REPLACE ALL finishes
+  the selected records before reporting numeric field overflow, matching VFP9.
 - Numeric storage handles rounding carries and accepts all CLR integer types and numeric strings consistently.
   Numeric storage and STR omit leading zeroes when needed (`.50`, `-.12`). Computed SQL values round once to the stored scale.
 - Numeric overflow follows the command: SQL INSERT/UPDATE, INSERT FROM MEMVAR/SELECT and DbfWriter retain
