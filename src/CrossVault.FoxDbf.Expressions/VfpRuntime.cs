@@ -53,15 +53,17 @@ internal static partial class VfpRuntime
     //  UNARY
     // ===================================================================
 
-    public static VfpValue Unary(UnOp op, VfpValue v, EvaluationContext ctx)
+    public static VfpValue Unary(UnOp op, VfpValue v, EvaluationContext ctx, bool quotient = false)
     {
         switch (op)
         {
             case UnOp.Neg:
+                // Round5 -(10^400): 11 columns. Round6 -(1/0)/-(-1/0): add/remove the sign column.
                 if (v.IsNull) return VfpValue.Null;
                 return v.Type == VfpType.Currency ? VfpValue.Currency(-v.AsNumber)
                     : VfpValue.Number(-v.AsDouble).WithDisplayDecimals(v.DisplayDecimals)
-                        .WithOverflowDisplayWidth(double.IsNaN(v.AsDouble) ? v.OverflowDisplayWidth : 11);
+                        .WithOverflowDisplayWidth(double.IsNaN(v.AsDouble) ? v.OverflowDisplayWidth
+                            : quotient ? v.OverflowDisplayWidth + (v.AsDouble > 0 ? 1 : -1) : 11);
             case UnOp.Not:
                 if (v.IsNull) return VfpValue.Null;
                 return VfpValue.Logical(!v.AsLogical);
@@ -89,7 +91,8 @@ internal static partial class VfpRuntime
             case BinOp.Sub: return Sub(l, r, ctx, constant);
             case BinOp.Mul: return NumericResult(l.AsDouble * r.AsDouble, l, r, op, ctx, constant);
             case BinOp.Div:
-                return NumericResult(l.AsDouble / r.AsDouble, l, r, op, ctx, constant);
+                // Round6: VFP9 does not retain an IEEE negative sign on a zero divisor.
+                return NumericResult(l.AsDouble / (r.AsDouble == 0 ? 0d : r.AsDouble), l, r, op, ctx, constant);
             case BinOp.Mod: return Remainder(l, r);
             case BinOp.Pow:
                 if (l.AsDouble < 0 && r.AsDouble != Math.Truncate(r.AsDouble))
@@ -168,13 +171,16 @@ internal static partial class VfpRuntime
         return result.WithOverflowDisplayWidth(op switch
         {
             BinOp.Pow => NumericOverflowWidth(scale),
-            BinOp.Div => NumericOverflowWidth(Math.Min(18, ctx.NumericDecimals + 2)),
+            // Round6: -1/0 reserves a sign column; 1/0 and 0/0 do not.
+            BinOp.Div => NumericOverflowWidth(Math.Min(18, ctx.NumericDecimals + 2)) + (value < 0 ? 1 : 0),
+            // Round5 OverflowPrecision: EXP(1000)+1 / EXP(1000)-EXP(1000) add one column.
             BinOp.Add or BinOp.Sub => Math.Max(NumericOverflowWidth(scale) + 1, Math.Max(l.OverflowDisplayWidth, r.OverflowDisplayWidth)),
+            // Round5 OverflowPrecision: EXP(1000)*2 adds two columns.
             _ => Math.Max(NumericOverflowWidth(scale) + 2, Math.Max(l.OverflowDisplayWidth, r.OverflowDisplayWidth)),
         });
     }
 
-    private static int NumericOverflowWidth(int decimals) => 10 + (decimals > 0 ? 1 + decimals : 0);
+    internal static int NumericOverflowWidth(int decimals) => 10 + (decimals > 0 ? 1 + decimals : 0);
 
     /// <summary>True when the LEFT operand alone decides an AND (a logical .F.) or an OR (a logical .T.), so the
     /// right operand must not be evaluated. Only a genuine Logical decides — .NULL. or a non-logical does not.</summary>
@@ -281,6 +287,10 @@ internal static partial class VfpRuntime
     //  EQUALITY + ORDERING
     // ===================================================================
 
+    // Round6: indeterminate overflow compares equal to itself and to negative infinity.
+    private static double ComparisonNumber(in VfpValue value) =>
+        double.IsNaN(value.AsDouble) ? double.NegativeInfinity : value.AsDouble;
+
     private static bool ValueEquals(VfpValue l, VfpValue r, EvaluationContext ctx, bool exact)
     {
         if (l.Type == VfpType.Character && r.Type == VfpType.Character)
@@ -289,7 +299,7 @@ internal static partial class VfpRuntime
             if (exact) return StrEqExact(l.AsString, r.AsString, ctx);
             return CompareStrings(l.AsString, r.AsString, OperatorMode(ctx), ctx) == 0;
         }
-        if (IsNumeric(l) && IsNumeric(r)) return l.AsDouble == r.AsDouble;
+        if (IsNumeric(l) && IsNumeric(r)) return ComparisonNumber(l) == ComparisonNumber(r);
         if (l.Type == VfpType.Logical && r.Type == VfpType.Logical)
             return l.AsLogical == r.AsLogical;
         if ((l.Type is VfpType.Date or VfpType.DateTime) &&
@@ -425,7 +435,7 @@ internal static partial class VfpRuntime
         if (l.Type == VfpType.Character && r.Type == VfpType.Character)
             return l.IsBinary || r.IsBinary ? CompareBinaryStrings(l, r, ctx, true)
                 : ctx.Collation.Compare(l.AsString.AsSpan(), r.AsString.AsSpan());
-        if (IsNumeric(l) && IsNumeric(r)) return l.AsDouble.CompareTo(r.AsDouble);
+        if (IsNumeric(l) && IsNumeric(r)) return ComparisonNumber(l).CompareTo(ComparisonNumber(r));
         if ((l.Type is VfpType.Date or VfpType.DateTime) &&
             (r.Type is VfpType.Date or VfpType.DateTime))
             return l.IsEmptyDate != r.IsEmptyDate ? (l.IsEmptyDate ? -1 : 1) : l.AsDateTime.CompareTo(r.AsDateTime);
@@ -565,13 +575,14 @@ internal static partial class VfpRuntime
 
             // ---- numeric ----
             // Round5's OverflowPrecision oracle pins NaN's retained integer width:
-            // INT removes nine columns; ROUND removes eight, subject to the requested scale.
+            // INT(0/0) removes nine columns (Decimals=10/12/14/16/18 pins).
             case "INT": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(decimal.Truncate(Arg(args, 0).AsNumber))
                 : VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble), 0)
                     .WithOverflowDisplayWidth(double.IsNaN(Arg(args, 0).AsDouble)
                         ? Math.Max(10, Arg(args, 0).OverflowDisplayWidth - 9) : Arg(args, 0).OverflowDisplayWidth);
             case "ROUND":
             {
+                // Round5 OverflowPrecision: ROUND(EXP(1000),0) adds one; ROUND(0/0,0) removes eight.
                 int digits = RoundDigits(Arg(args, 1));
                 return Arg(args, 0).Type == VfpType.Currency ? RoundCurrency(Arg(args, 0).AsNumber, digits)
                     : VfpValue.Number(Round(Arg(args, 0).AsDouble, digits)).WithDisplayDecimals(Math.Clamp(digits, 0, 18))

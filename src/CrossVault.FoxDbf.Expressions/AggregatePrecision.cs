@@ -1,3 +1,5 @@
+using System;
+
 namespace CrossVault.FoxDbf.Expressions;
 
 internal sealed partial class LiteralNode
@@ -26,6 +28,15 @@ internal sealed partial class UnaryNode
 
 internal sealed partial class BinaryNode
 {
+    internal override int AggregateOverflowWidth(int setting, int sampled, bool calculate)
+    {
+        // Round6 aggregate matrix: SUM/AVERAGE retain quotient guard places; CALCULATE
+        // constant quotients use the sampled scale, and powers reserve at least two places.
+        if (!calculate && HasQuotient) return VfpRuntime.NumericOverflowWidth(Math.Max(setting + 2, sampled));
+        if (calculate && _op == BinOp.Pow) return VfpRuntime.NumericOverflowWidth(Math.Max(2, Math.Max(setting, sampled)));
+        return base.AggregateOverflowWidth(setting, sampled, calculate);
+    }
+
     internal override (VfpValue Value, int? Decimals) ProbeAggregate<TVfpError>(ISchema schema, IRowContext row, EvaluationContext context)
     {
         var left = _left.ProbeAggregate<TVfpError>(schema, row, context);
@@ -42,6 +53,11 @@ internal sealed partial class BinaryNode
 
 internal sealed partial class FunctionNode
 {
+    // Round6 CALCULATE SUM/AVG(EXP(1000)) pins three additional overflow columns
+    // at SET DECIMALS 0/2/4/10; ordinary SUM/AVERAGE retain the sampled scale.
+    internal override int AggregateOverflowWidth(int setting, int sampled, bool calculate)
+        => calculate && _upper == "EXP" ? VfpRuntime.NumericOverflowWidth(setting) + 3 : base.AggregateOverflowWidth(setting, sampled, calculate);
+
     internal override (VfpValue Value, int? Decimals) ProbeAggregate<TVfpError>(ISchema schema, IRowContext row, EvaluationContext context)
     {
         var samples = new (VfpValue Value, int? Decimals)[_args.Length];

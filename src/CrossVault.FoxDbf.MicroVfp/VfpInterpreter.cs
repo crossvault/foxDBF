@@ -1631,10 +1631,13 @@ public sealed partial class VfpInterpreter
 
     // ─────────────────────────── the engine row/host bridge ───────────────────────────
 
-    private sealed class Row : IRowContext, IVfpFunctionHost, IVfpValueRow
+    private sealed class Row : IRowContext, IVfpFunctionHost, IVfpValueRow, ISchema
     {
         private readonly VfpInterpreter _it;
-        public Row(VfpInterpreter it) => _it = it;
+        private readonly PrintSchema _schema;
+        public Row(VfpInterpreter it) { _it = it; _schema = new PrintSchema(it); }
+        public bool TryGetColumn(string name, out char type, out int length, out int decimals)
+            => _schema.TryGetColumn(name, out type, out length, out decimals);
 
         public object? GetField(string name) => _it.ResolveName(name);
         public VfpValue GetValue(string name) => _it.ResolveName(name);

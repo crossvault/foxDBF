@@ -5,12 +5,16 @@ namespace CrossVault.FoxDbf.Expressions;
 
 // SQL chooses an IIF branch's storage width/scale from the first source record,
 // before WHERE or ORDER BY. Keep that sampling out of index type inference.
-internal sealed class SqlInferenceSchema(ISchema schema, IRowContext? row, EvaluationContext context) : ISchema
+internal sealed class SqlInferenceSchema(ISchema? schema, IRowContext? row, EvaluationContext context, bool overflowDisplay = false) : ISchema
 {
     internal IRowContext? Row => row;
     internal EvaluationContext Context => context;
+    internal bool OverflowDisplay => overflowDisplay;
     public bool TryGetColumn(string name, out char type, out int length, out int decimals)
-        => schema.TryGetColumn(name, out type, out length, out decimals);
+    {
+        type = default; length = 0; decimals = 0;
+        return schema is not null && schema.TryGetColumn(name, out type, out length, out decimals);
+    }
 }
 
 internal sealed partial class FieldNode
@@ -46,7 +50,7 @@ internal sealed partial class UnaryNode
     {
         var info = _operand.InferSql(schema);
         if (_op == UnOp.Not) return new(VfpType.Logical, 1);
-        return new(info.Type, info.Length + (IsSqlConstant ? 1 : 0), info.Decimals);
+        return new(info.Type, info.Length + (IsSqlConstant || schema is SqlInferenceSchema { OverflowDisplay: true } ? 1 : 0), info.Decimals);
     }
 }
 
@@ -73,7 +77,7 @@ internal sealed partial class BinaryNode
         int setting = schema is SqlInferenceSchema sample ? sample.Context.NumericDecimals : 2;
         // VFP retains the literal scale for a constant quotient (1/2 is N(1,0)),
         // whereas a quotient involving a field gets at least four decimals.
-        if (IsSqlConstant && _op == BinOp.Div)
+        if (IsSqlConstant && _op == BinOp.Div && schema is not SqlInferenceSchema { OverflowDisplay: true })
         {
             decimal value = Eval(null!, EvaluationContext.Default).AsNumber;
             int width = Math.Round(value, decimals, MidpointRounding.AwayFromZero)

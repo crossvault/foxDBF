@@ -119,6 +119,9 @@ public sealed class VfpExpression
     internal (VfpValue Value, int? Decimals) ProbeAggregate<TVfpError>(ISchema schema, IRowContext row, EvaluationContext context) where TVfpError : Exception
         => _root.ProbeAggregate<TVfpError>(schema, row, context);
 
+    internal int AggregateOverflowWidth(int setting, int sampled, bool calculate)
+        => _root.AggregateOverflowWidth(setting, sampled, calculate);
+
     internal VfpTypeInfo InferSqlType(ISchema schema) => _root.InferSql(schema);
 
     internal VfpTypeInfo InferSqlType(ISchema schema, IRowContext row, EvaluationContext context)

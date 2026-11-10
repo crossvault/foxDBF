@@ -35,7 +35,11 @@ internal static class VfpExpressionText
     public static string Normalize(string text)
     {
         // VFP9 decompiles an overflowing numeric literal as a 20-column marker.
-        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double literal)
+        ReadOnlySpan<char> numeric = text.AsSpan().Trim();
+        if (!numeric.IsEmpty && numeric[0] is '+' or '-') numeric = numeric[1..];
+        // Round6: NaN and Infinity are legal identifiers, never numeric literals in VFP9.
+        if (!numeric.IsEmpty && (char.IsAsciiDigit(numeric[0]) || numeric[0] == '.')
+            && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double literal)
             && !double.IsFinite(literal)) return new string('*', 20);
         string canonical = Canonicalize(text);
         var result = new StringBuilder(canonical.Length);

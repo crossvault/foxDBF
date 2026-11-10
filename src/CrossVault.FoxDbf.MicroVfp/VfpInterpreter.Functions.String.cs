@@ -53,6 +53,14 @@ public sealed partial class VfpInterpreter
         if (a.Length == 0) return VfpValue.Character(string.Empty);
         var v = a[0];
         string fmt = a.Length > 1 && a[1].Type == VfpType.Character ? a[1].AsString : string.Empty;
+        // Round6: an explicit empty picture uses ten integer slots and SET DECIMALS.
+        // Indeterminate overflow formats as zero with a picture; infinity fills its digit slots.
+        if (v.Type == VfpType.Numeric && !double.IsFinite(v.AsDouble) && a.Length > 1)
+        {
+            if (fmt.Length == 0) fmt = new string('9', 10) + (_ctx.NumericDecimals > 0 ? "." + new string('9', _ctx.NumericDecimals) : "");
+            if (double.IsInfinity(v.AsDouble) && fmt.All(c => c is '9' or '#' or '.'))
+                return VfpValue.Character(new string(fmt.Select(c => c == '.' ? '.' : '*').ToArray()));
+        }
         if (fmt.Length == 0) return VfpValue.Character(TransformNoFormat(v));
 
         // Split "@<funcs> <picture>" — the @-run ends at the first space; the rest is the PICTURE template.

@@ -19,19 +19,19 @@ internal static partial class VfpRuntime
             case "RAND": return VfpValue.Number(ctx.Random.Next(args.Length == 0 ? null : x)).WithDisplayDecimals(ctx.NumericDecimals);
             case "FLOAT": case "FIXED": return VfpValue.Number(x).WithDisplayDecimals(Arg(args, 0).DisplayDecimals);
             case "TIME": return VfpValue.Character(DateTime.Now.ToString(args.Length > 0 && x == 1 ? "HH:mm:ss.ff" : "HH:mm:ss", Inv));
-            case "CEILING": return VfpValue.Number(Math.Ceiling(x)).WithDisplayDecimals(0).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
-            case "FLOOR": return VfpValue.Number(Math.Floor(x)).WithDisplayDecimals(0).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+            case "CEILING": return VfpValue.Number(Math.Ceiling(x)).WithDisplayDecimals(0).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
+            case "FLOOR": return VfpValue.Number(Math.Floor(x)).WithDisplayDecimals(0).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
             case "ACOS":
                 if (x < -1 || x > 1) throw new ExpressionException("Expression used with ACOS() is out of range.") { VfpErrorNumber = 293 };
-                return VfpValue.Number(Math.Acos(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+                return VfpValue.Number(Math.Acos(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
             case "ASIN":
                 if (x < -1 || x > 1) throw new ExpressionException("Expression used with ASIN() is out of range.") { VfpErrorNumber = 291 };
-                return VfpValue.Number(Math.Asin(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
-            case "ATAN": return VfpValue.Number(Math.Atan(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
-            case "ATN2": return VfpValue.Number(Math.Atan2(x, y)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
-            case "COS": return VfpValue.Number(Math.Cos(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
-            case "SIN": return VfpValue.Number(Math.Sin(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
-            case "TAN": return VfpValue.Number(Math.Tan(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+                return VfpValue.Number(Math.Asin(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
+            case "ATAN": return VfpValue.Number(Math.Atan(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
+            case "ATN2": return VfpValue.Number(Math.Atan2(x, y)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
+            case "COS": return VfpValue.Number(Math.Cos(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
+            case "SIN": return VfpValue.Number(Math.Sin(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
+            case "TAN": return VfpValue.Number(Math.Tan(x)).WithDisplayDecimals(ctx.NumericDecimals).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
             case "DTOR": return VfpValue.Number(x * (Math.PI / 180)).WithDisplayDecimals(ctx.NumericDecimals);
             case "RTOD": return VfpValue.Number(x * (180 / Math.PI)).WithDisplayDecimals(ctx.NumericDecimals);
             case "PI": return VfpValue.Number(Math.PI).WithDisplayDecimals(ctx.NumericDecimals);
@@ -39,10 +39,10 @@ internal static partial class VfpRuntime
                 .WithOverflowDisplayWidth(double.IsNaN(x) ? Arg(args, 0).OverflowDisplayWidth : NumericOverflowWidth(ctx.NumericDecimals));
             case "LOG":
                 if (x <= 0) throw new ExpressionException("LOG(): Zero or negative used as argument.") { VfpErrorNumber = 58 };
-                return VfpValue.Number(Math.Log(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals)).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+                return VfpValue.Number(Math.Log(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals)).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
             case "LOG10":
                 if (x <= 0) throw new ExpressionException("Cannot use 0 or negative as the argument for LOG10().") { VfpErrorNumber = 292 };
-                return VfpValue.Number(Math.Log10(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals)).WithOverflowDisplayWidth(Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals)));
+                return VfpValue.Number(Math.Log10(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals)).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
             case "SQRT":
                 if (x < 0) throw new ExpressionException("SQRT() argument cannot be negative.") { VfpErrorNumber = 61 };
                 return VfpValue.Number(Math.Sqrt(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals))
@@ -113,6 +113,9 @@ internal static partial class VfpRuntime
             default: return UnknownFunction(name, args, ctx, row);
         }
     }
+
+    // Round5 OverflowPrecision: LOG/trigonometric/CEILING/FLOOR overflow reserves at least 20 columns.
+    private static int ScalarOverflowWidth(EvaluationContext ctx) => Math.Max(20, NumericOverflowWidth(ctx.NumericDecimals));
 
     private static string PathScalar(string name, VfpValue[] args)
     {

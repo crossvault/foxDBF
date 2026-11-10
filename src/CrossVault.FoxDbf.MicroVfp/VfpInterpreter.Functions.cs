@@ -645,16 +645,19 @@ public sealed partial class VfpInterpreter
         if (args.Length < 2) throw new MicroVfpRuntimeException("Too few arguments.", 1229);
         var array = Memory.FindArray(args[0].AsString);
         if (array is null) throw new MicroVfpRuntimeException($"Variable '{args[0].AsString.ToUpperInvariant()}' is not found.", 12);
-        int start = args.Length > 2 ? Math.Max(1, args[2].AsInteger) : 1;
+        int suppliedStart = args.Length > 2 ? args[2].AsInteger : 1;
+        int start = Math.Max(1, suppliedStart);
         int count = args.Length > 3 ? args[3].AsInteger : -1;
         int column = args.Length > 4 ? Math.Max(0, args[4].AsInteger) : 0;
         int flags = args.Length > 5 ? args[5].AsInteger : 0;
         if (column > Math.Max(1, array.Cols)) throw new MicroVfpRuntimeException("Function argument value, type, or count is invalid.", 11);
         int length = column > 0 ? array.Rows : array.Length;
-        if (start > length || args.Length > 2 && args[2].AsDouble > int.MaxValue
-            || count > length - start + 1)
+        // Round6's 1-D/2-D boundary grid: zero start is invalid; negative starts mean 1.
+        // Nonpositive counts scan the remainder, even when start is beyond the array.
+        if (suppliedStart == 0 || args.Length > 2 && args[2].AsDouble > int.MaxValue
+            || count > 0 && count > length - start + 1)
             throw new MicroVfpRuntimeException("Subscript is outside defined range.", 1234);
-        int end = count < 0 ? length : Math.Min(length, start + count - 1);
+        int end = count <= 0 ? length : Math.Min(length, start + count - 1);
         var context = new EvaluationContext { Collation = _ctx.Collation, Exact = (flags & 4) == 0 ? _ctx.Exact : (flags & 2) != 0 };
         for (int position = start; position <= end; position++)
         {

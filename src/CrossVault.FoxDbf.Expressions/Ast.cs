@@ -21,6 +21,9 @@ internal abstract class AstNode
         IRowContext row, EvaluationContext ctx, ExpressionFunctionResolver functionResolver)
         => Eval(row, ctx);
 
+    internal virtual bool HasQuotient => false;
+    internal virtual int AggregateOverflowWidth(int setting, int sampled, bool calculate) => VfpRuntime.NumericOverflowWidth(Math.Max(setting, sampled));
+
     internal virtual bool ContainsFunction(Func<string, int, bool> predicate) => false;
 
     /// <summary>Lowers this node to a <see cref="Expression"/> of type <see cref="VfpValue"/>.</summary>
@@ -153,24 +156,25 @@ internal sealed partial class UnaryNode : AstNode
 {
     private readonly UnOp _op;
     private readonly AstNode _operand;
-    public UnaryNode(UnOp op, AstNode operand) { _op = op; _operand = operand; }
+    public UnaryNode(UnOp op, AstNode operand) { _op = op; _operand = operand; HasQuotient = operand.HasQuotient; }
+    internal override bool HasQuotient { get; }
 
     internal override bool IsSqlCandidate(IRowContext row, EvaluationContext context, bool negated = false)
         => _op != UnOp.Not || _operand.IsSqlCandidate(row, context, !negated);
 
     public override VfpValue Eval(IRowContext row, EvaluationContext ctx)
-        => VfpRuntime.Unary(_op, _operand.Eval(row, ctx), ctx);
+        => VfpRuntime.Unary(_op, _operand.Eval(row, ctx), ctx, HasQuotient);
 
     internal override VfpValue Eval(
         IRowContext row, EvaluationContext ctx, ExpressionFunctionResolver functionResolver)
-        => VfpRuntime.Unary(_op, _operand.Eval(row, ctx, functionResolver), ctx);
+        => VfpRuntime.Unary(_op, _operand.Eval(row, ctx, functionResolver), ctx, HasQuotient);
 
     internal override bool ContainsFunction(Func<string, int, bool> predicate)
         => _operand.ContainsFunction(predicate);
 
     public override Expression Build(BuildContext b)
         => Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.Unary), null,
-            Expression.Constant(_op), _operand.Build(b), b.Ctx);
+            Expression.Constant(_op), _operand.Build(b), b.Ctx, Expression.Constant(HasQuotient));
 
     public override VfpTypeInfo Infer(ISchema schema)
         => _op == UnOp.Not ? new VfpTypeInfo(VfpType.Logical, 1) : _operand.Infer(schema);
@@ -195,8 +199,13 @@ internal sealed partial class BinaryNode : AstNode
     private readonly BinOp _op;
     private readonly AstNode _left, _right;
     private readonly bool _constant;
+    internal override bool HasQuotient { get; }
     public BinaryNode(BinOp op, AstNode left, AstNode right)
-    { _op = op; _left = left; _right = right; _constant = left.IsSqlConstant && right.IsSqlConstant; }
+    {
+        _op = op; _left = left; _right = right;
+        _constant = left.IsSqlConstant && right.IsSqlConstant;
+        HasQuotient = op == BinOp.Div || op is BinOp.Add or BinOp.Sub or BinOp.Mul && (left.HasQuotient || right.HasQuotient);
+    }
 
     internal override bool IsSqlCandidate(IRowContext row, EvaluationContext context, bool negated = false)
         // NOT (a OR b) has the same candidate intersection as NOT a AND NOT b.
@@ -298,6 +307,7 @@ internal sealed partial class FunctionNode : AstNode
     // ToUpperInvariant. Both the interpreter and the compiled delegate dispatch on this.
     private readonly string _upper;
     private readonly AstNode[] _args;
+    private readonly bool _formatOverflow;
     public FunctionNode(string name, AstNode[] args)
     {
         _name = name;
@@ -306,6 +316,7 @@ internal sealed partial class FunctionNode : AstNode
         // resolved after its arguments were evaluated (VfpRuntime's unknown-function path does that for others).
         if (_upper == "ICAS") _upper = "ICASE";
         _args = args;
+        _formatOverflow = _upper == "TRANSFORM" && args.Length == 1 && args[0].HasQuotient;
     }
 
     public override VfpValue Eval(IRowContext row, EvaluationContext ctx)
@@ -322,6 +333,7 @@ internal sealed partial class FunctionNode : AstNode
                 : _args[2].Eval(row, ctx);
         var values = new VfpValue[_args.Length];
         for (int i = 0; i < _args.Length; i++) values[i] = _args[i].Eval(row, ctx);
+        PrepareOverflowFormat(values, row, ctx);
         return VfpRuntime.CallFunction(_upper, values, ctx, row);
     }
 
@@ -339,7 +351,21 @@ internal sealed partial class FunctionNode : AstNode
                 : _args[2].Eval(row, ctx, functionResolver);
         var values = new VfpValue[_args.Length];
         for (int i = 0; i < _args.Length; i++) values[i] = _args[i].Eval(row, ctx, functionResolver);
+        PrepareOverflowFormat(values, row, ctx);
         return VfpRuntime.CallFunction(_upper, values, ctx, row);
+    }
+
+    // Round6 TRANSFORM pins: a direct quotient uses its expression width, whereas a
+    // stored variable retains its assigned width. Infer only for this rare overflow path.
+    public VfpValue[] PrepareOverflowFormat(VfpValue[] values, IRowContext row, EvaluationContext ctx)
+    {
+        if (_formatOverflow && values[0].Type == VfpType.Numeric && !double.IsFinite(values[0].AsDouble))
+        {
+            // Round6's seeded RAND pin: formatting must not evaluate an IIF condition again.
+            var schema = new SqlInferenceSchema(row as ISchema, null, ctx, overflowDisplay: true);
+            values[0] = values[0].WithOverflowDisplayWidth(_args[0].InferSql(schema).Length);
+        }
+        return values;
     }
 
     internal override bool ContainsFunction(Func<string, int, bool> predicate)
@@ -383,6 +409,8 @@ internal sealed partial class FunctionNode : AstNode
         var elems = new Expression[_args.Length];
         for (int i = 0; i < _args.Length; i++) elems[i] = _args[i].Build(b);
         Expression array = Expression.NewArrayInit(typeof(VfpValue), elems);
+        if (_formatOverflow)
+            array = Expression.Call(Expression.Constant(this), nameof(PrepareOverflowFormat), null, array, b.Row, b.Ctx);
         // Pass the already-uppercased name as a constant: zero string work per record.
         return Expression.Call(typeof(VfpRuntime), nameof(VfpRuntime.CallFunction), null,
             Expression.Constant(_upper), array, b.Ctx, b.Row);

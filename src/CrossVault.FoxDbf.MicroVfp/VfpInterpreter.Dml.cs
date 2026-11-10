@@ -1414,6 +1414,13 @@ public sealed partial class VfpInterpreter
                 : function == "MIN" ? minima[k].AsNumber : function == "MAX" ? maxima[k].AsNumber : (decimal)result;
             var value = currency ? VfpValue.Currency(Math.Round(currencyResult, 4, MidpointRounding.AwayFromZero))
                 : VfpValue.Number(result).WithDisplayDecimals(decimals);
+            if (function is "SUM" or "AVG" && !currency && !double.IsFinite(result))
+            {
+                // Round6: preserve aggregate overflow precision and the negative sign column.
+                int overflowWidth = sum.Expressions[k].Parsed?.AggregateOverflowWidth(
+                    _ctx.NumericDecimals, scales[k], sum.CalculateFunctions is not null) ?? VfpRuntime.NumericOverflowWidth(decimals);
+                value = value.WithOverflowDisplayWidth(overflowWidth + (result < 0 ? 1 : 0));
+            }
             if (function == "NPV" && !double.IsFinite(result))
                 value = value.WithOverflowDisplayWidth(11 + Math.Max(2, decimals));
             if (function is "MIN" or "MAX" && counts[k] == 0 && sawNull[k]) value = VfpValue.Null;
