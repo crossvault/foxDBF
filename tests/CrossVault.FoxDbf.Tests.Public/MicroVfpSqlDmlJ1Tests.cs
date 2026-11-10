@@ -38,7 +38,7 @@ public sealed class MicroVfpSqlDmlJ1Tests
     public static IEnumerable<object[]> Cases =>
         from format in new[] { "legacy", "compact", "cdx" }
         from form in new[] { "array", "memvar", "select", "update", "delete" }
-        from finish in new[] { "commit", "rollback", "nested" }
+        from finish in new[] { "commit", "rollback", "nested", "innercommit" }
         select new object[] { format, form, finish };
 
     internal static string IndexFile(string format) => "extra." + (format == "cdx" ? "cdx" : "idx");
@@ -57,7 +57,7 @@ public sealed class MicroVfpSqlDmlJ1Tests
         """;
 
     internal static string Start(string format, string finish) => "USE t\nBEGIN TRANSACTION\n"
-        + (finish == "nested" ? "BEGIN TRANSACTION\n" : "")
+        + (finish is "nested" or "innercommit" ? "BEGIN TRANSACTION\n" : "")
         + "SET INDEX TO " + IndexFile(format) + "\nSET ORDER TO 2\n"
         + "DIMENSION aa[1,2]\naa[1,1]=2\naa[1,2]='after'\nm.id=2\nm.note='after'\n";
 
@@ -70,7 +70,7 @@ public sealed class MicroVfpSqlDmlJ1Tests
         _ => "DELETE FROM t WHERE id=1"
     };
 
-    internal static string Finish(string finish) => finish == "commit" ? "END TRANSACTION" :
+    internal static string Finish(string finish) => finish == "innercommit" ? "END TRANSACTION\nROLLBACK" : finish == "commit" ? "END TRANSACTION" :
         "ROLLBACK" + (finish == "nested" ? "\nEND TRANSACTION" : "");
 
     internal const string State = "result=TRANSFORM(RECCOUNT())+'|'\nGO 1\nresult=result+TRANSFORM(id)+'|'+ALLTRIM(note)+'|'+TRANSFORM(DELETED())";

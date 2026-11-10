@@ -50,6 +50,14 @@ public sealed partial class VfpInterpreter
                 throw new MicroVfpRuntimeException("Data type mismatch.", 9);
             if (wa.Table.Columns[keyColumn].Type is not ('C' or 'V' or 'Q' or 'N' or 'F' or 'D' or 'T'))
                 throw new MicroVfpRuntimeException("Invalid key field type.", 1145);
+            VfpValue ReadKey()
+            {
+                var value = Eval(keyExpression);
+                // UPDATE ON compares complete field-width keys even for Varchar and under
+                // EXACT OFF. RANDOM must not turn a shorter source key into a prefix seek.
+                return value.Type == VfpType.Character && !value.IsBinary
+                    ? VfpValue.Character(value.AsString.PadRight(wa.Table.Columns[keyColumn].Length)) : value;
+            }
             foreach (var clause in statement.Replacement.Clauses)
                 if (ColumnIndex(wa.Table, TargetField(NameOf(clause.Field))) < 0)
                     throw new MicroVfpRuntimeException($"Variable '{NameOf(clause.Field)}' is not found.", 12);
@@ -72,7 +80,7 @@ public sealed partial class VfpInterpreter
             while (!Meta(source.Area).Eof)
             {
                 Session.SelectArea(source.Area);
-                var key = Eval(keyExpression);
+                var key = ReadKey();
                 Session.SelectArea(target);
                 bool match;
                 if (statement.Random)
@@ -96,12 +104,12 @@ public sealed partial class VfpInterpreter
                     // VFP accepts physically ordered tables and does not diagnose unsorted inputs.
                     // VFP's merge predicate propagates NULL: a NULL source is skipped, while
                     // a NULL target stops this forward scan. Non-NULL type errors still propagate.
-                    while (!Meta(target).Eof && VfpRuntime.Binary(BinOp.Lt, Eval(keyExpression), key, _ctx).AsLogical)
+                    while (!Meta(target).Eof && VfpRuntime.Binary(BinOp.Lt, ReadKey(), key, _ctx).AsLogical)
                     {
                         FinishRow();
                         Skip(target, 1);
                     }
-                    match = !Meta(target).Eof && VfpRuntime.Binary(BinOp.ExactEq, Eval(keyExpression), key, _ctx).AsLogical;
+                    match = !Meta(target).Eof && VfpRuntime.Binary(BinOp.ExactEq, ReadKey(), key, _ctx).AsLogical;
                 }
                 if (match)
                 {

@@ -17,6 +17,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   aggregates accumulate exactly. `CALCULATE MIN/MAX` preserve Character, Date, DateTime and Logical
   values; numeric aggregates (including `CNT(expr)`) reject nonnumeric inputs with VFP9 error 27.
 - microVFP `UPDATE ON` propagates NULL keys like VFP9, including its distinct sequential and RANDOM behavior.
+  Varchar keys compare at their full declared width, including trailing blanks, even with `SET EXACT OFF`.
   NULL `SEEK`/`INDEXSEEK`/`KEYMATCH` probes use stored NULL keys and honor visibility. Nullable fields
   retain VFP9's NULL marker in CDX and legacy/compact IDX keys, including write maintenance.
 - microVFP `SUM` and `AVERAGE` retain VFP9 numeric display precision and currency results.
