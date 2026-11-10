@@ -221,6 +221,9 @@ internal sealed class SelectExecutor
     /// </summary>
     private SqlResult RunMaterializing(SelectStatement sel)
     {
+        if (sel.Into is { } destination)
+            _session.ValidateSelectInto(destination, sel.From.Concat(sel.Joins.Select(j => j.Source)));
+
         // The core query: drop PERCENT (an integer TOP is kept verbatim — only PERCENT must be applied
         // post-materialization) and drop INTO. With both stripped, Run dispatches down the normal path.
         var core = sel with
@@ -292,6 +295,8 @@ internal sealed class SelectExecutor
         if (into.Kind == IntoKind.Table)
         {
             string path = _session.ResolveIntoTablePath(into.Name);
+            // VFP9 closes an unrelated open destination before replacing its file (SET SAFETY OFF).
+            _session.CloseAreasForPath(Path.GetFullPath(path));
             using (var w = DbfWriter.Create(path, defs, _session.NewTableOptions with { Overwrite = true }))
                 w.AppendRecords(rows);
             return SqlResult.Dml(rows.Count);
@@ -778,6 +783,8 @@ internal sealed class SelectExecutor
         // Prefer the VFP-style trailing destination. Retain the historical leading destination
         // extension as a fallback, but never materialize a middle branch independently.
         IntoClause? into = selects[^1].Into ?? root.Into;
+        if (into is not null)
+            _session.ValidateSelectInto(into, selects.SelectMany(s => s.From.Concat(s.Joins.Select(j => j.Source))));
 
         // Execute every branch's core (without union-level ORDER BY / TOP / INTO) first. UNION
         // compatibility is a schema-wide decision, so no rows may be accumulated or deduplicated
@@ -1298,7 +1305,7 @@ internal sealed class SelectExecutor
     private static bool IsDrivingOnly(string text, JoinSource[] src, bool hosted)
     {
         VfpExpression expr;
-        try { expr = VfpExpression.Parse(text); }
+        try { expr = SqlParser.ParseExpression(text, xbase: true); }
         catch { return false; }      // unparseable here ⇒ let the post-join path report it
 
         // An abbreviation (RECC, DELE, EVAL, SECO …) is the function it names.
@@ -1534,7 +1541,7 @@ internal sealed class SelectExecutor
         string oa = outerSide[..dox];
         if (!outerAliases.Contains(oa)) return null;
 
-        return new EquiKey(ifield, VfpExpression.Parse(outerSide));
+        return new EquiKey(ifield, SqlParser.ParseExpression(outerSide, xbase: true));
     }
 
     // ---- projection (single table) --------------------------------------------------------
@@ -1591,6 +1598,12 @@ internal sealed class SelectExecutor
         SelectStatement sel, OrderScope scope, ISchema schema,
         Func<SelectItem, IEnumerable<string>> starFields, IEnumerable<string> sourceFields)
     {
+        // VFP9 rejects direct array references here; an alias/ordinal can still name their projection.
+        bool ReadsArray(VfpExpression expression) => expression.ContainsFunction((name, _) =>
+            VfpFunctionAbbreviations.Canonical(name) == "ALEN" || _session.MemoryBridge?.IsArray(name) == true);
+        // DISTINCT retains its existing selected-column check (error 1808) below.
+        if (sel.GroupBy.Any(ReadsArray) || (!sel.Distinct && sel.OrderBy.Any(o => o.Expression is { } key && ReadsArray(key))))
+            throw new FoxDbfSqlException("SQL: Column is not found.") { VfpErrorNumber = 1806 };
         var groups = ResolveGroupBy(sel, scope, starFields);
         if (sel.Having is null && !sel.Distinct) return groups;
         var fields = sourceFields.ToArray();
@@ -2012,7 +2025,7 @@ internal sealed class SelectExecutor
             if (it.IsStar)
             {
                 int w = scope.StarWidth(it);
-                if (col < w) return VfpExpression.Parse(starFields(it).ElementAt(col));
+                if (col < w) return SqlParser.ParseExpression(starFields(it).ElementAt(col), xbase: true);
                 col -= w;
                 continue;
             }
@@ -2390,7 +2403,7 @@ internal sealed class SelectExecutor
     };
     private static VfpTypeInfo SafeInfer(string arg, ISchema schema)
     {
-        try { return VfpExpression.Parse(arg).InferSqlType(schema); }
+        try { return SqlParser.ParseExpression(arg, xbase: true).InferSqlType(schema); }
         catch { return new VfpTypeInfo(VfpType.Numeric); }
     }
 

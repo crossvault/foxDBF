@@ -7,11 +7,21 @@ namespace CrossVault.FoxDbf.Sql;
 /// <summary>
 /// Recursive-descent parser for the VFP-SQL v1 grammar. Produces an immutable
 /// <see cref="SqlStatement"/> AST. Every scalar / predicate fragment is located by text
-/// and handed to <see cref="VfpExpression.Parse(string)"/>; this parser owns only the SQL
+/// and handed to <see cref="ParseExpression"/>; this parser owns only the SQL
 /// skeleton. Keywords are case-insensitive.
 /// </summary>
 public static class SqlParser
 {
+    // All SQL text-to-expression paths enter here. Executor fragments have already been
+    // normalized by the statement parser; derived fragments and stored DBC rules retain their xBase parser.
+    internal static VfpExpression ParseExpression(string text, Func<string, string>? normalizeExpression = null,
+        bool aggregates = false, bool predicates = false, bool allowLookup = false, bool xbase = false)
+    {
+        if (normalizeExpression is not null) text = normalizeExpression(text);
+        return xbase ? VfpExpression.Parse(text)
+            : VfpExpression.ParseSql(text, aggregates, predicates, allowLookup);
+    }
+
     /// <summary>Parses a single statement. Throws <see cref="FoxDbfSqlException"/> on bad input.</summary>
     public static SqlStatement Parse(string sql) => Parse(sql, normalizeExpression: null);
 
@@ -176,8 +186,7 @@ public static class SqlParser
         {
             try
             {
-                if (_normalizeExpression is not null) text = _normalizeExpression(text);
-                return VfpExpression.ParseSql(text, aggregates, predicates, allowLookup);
+                return ParseExpression(text, _normalizeExpression, aggregates, predicates, allowLookup);
             }
             catch (ExpressionException ex)
             {
@@ -672,9 +681,9 @@ public static class SqlParser
             // only if it fails to parse, retry stripping a trailing identifier as alias.
             try
             {
-                return new SelectItem(false, null, VfpExpression.ParseSql(text, aggregates: true), null);
+                return new SelectItem(false, null, BuildExpr(text, _t[s].Start, aggregates: true), null);
             }
-            catch (ExpressionException whole)
+            catch (FoxDbfSqlException)
             {
                 if (e - s >= 2 && _t[e - 1].Kind == TokKind.Word)
                 {
@@ -682,12 +691,11 @@ public static class SqlParser
                     string exprText = RangeText(s, e - 1);
                     try
                     {
-                        return new SelectItem(false, null, VfpExpression.ParseSql(exprText, aggregates: true), aliasText);
+                        return new SelectItem(false, null, BuildExpr(exprText, _t[s].Start, aggregates: true), aliasText);
                     }
-                    catch (ExpressionException) { /* fall through to report the original error */ }
+                    catch (FoxDbfSqlException) { /* fall through to report the original error */ }
                 }
-                int pos = whole.Position >= 0 ? _t[s].Start + whole.Position : _t[s].Start;
-                throw new FoxDbfSqlException($"Invalid expression '{text}': {whole.Message}", whole, pos) { VfpErrorNumber = whole.VfpErrorNumber };
+                throw;
             }
         }
 

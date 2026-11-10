@@ -553,6 +553,39 @@ public sealed class VfpSession : IDisposable
 
     // ---- SELECT … INTO TABLE | CURSOR materialization -------------------------------------
 
+    internal void ValidateSelectInto(IntoClause into, IEnumerable<FromSource> sources)
+    {
+        if (into.Kind == IntoKind.Array) return;
+        string? targetPath = into.Kind == IntoKind.Table ? Path.GetFullPath(ResolveIntoTablePath(into.Name)) : null;
+        if (into.Kind == IntoKind.Cursor && FindAreaByAlias(into.Name) is { } destination
+            && !_cursorPaths.Values.Contains(destination.Table.SourcePath, StringComparer.OrdinalIgnoreCase))
+            throw new FoxDbfSqlException("Alias name is already in use.") { VfpErrorNumber = 24 };
+
+        // VFP9 protects the query's physical sources even when USE gave them a different alias.
+        // A different open table's file stem is legal; an existing non-source cursor is replaceable.
+        foreach (var source in sources)
+        {
+            var area = FindAreaByAlias(source.Alias ?? source.Table) ?? FindAreaByAlias(source.Table);
+            DbfTable? owned = null;
+            CdxFile? index = null;
+            try
+            {
+                var table = area?.Table;
+                if (table is null) (table, index) = OpenNamedTable(source.Table);
+                if (area is null) owned = table;
+                string? path = table.SourcePath;
+                if (into.Kind == IntoKind.Cursor &&
+                    (string.Equals(into.Name, area?.Alias ?? source.Table, StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(into.Name, Path.GetFileNameWithoutExtension(path), StringComparison.OrdinalIgnoreCase)))
+                    throw new FoxDbfSqlException("Alias name is already in use.") { VfpErrorNumber = 24 };
+                if (targetPath is not null && path is not null
+                    && string.Equals(targetPath, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))
+                    throw new FoxDbfSqlException("Cannot overwrite a query source table.") { VfpErrorNumber = 102 };
+            }
+            finally { index?.Dispose(); owned?.Dispose(); }
+        }
+    }
+
     /// <summary>Resolves the on-disk path a <c>SELECT … INTO TABLE name</c> writes to: a free
     /// <c>&lt;name&gt;.dbf</c> in the session's data directory. Throws when no data directory is open.</summary>
     internal string ResolveIntoTablePath(string name)

@@ -15,6 +15,9 @@ namespace CrossVault.FoxDbf.Sql;
 /// </summary>
 internal interface IVfpMemoryBridge
 {
+    /// <summary>Recognize an array subscript in SQL binding without copying the array's rows.</summary>
+    bool IsArray(string name) => false;
+
     /// <summary>Publish INSERT SELECT's committed prefix, including a partial failure.</summary>
     void SetImportTally(int count) { }
 
