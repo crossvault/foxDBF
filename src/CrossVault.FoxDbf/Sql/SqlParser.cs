@@ -162,17 +162,8 @@ public static class SqlParser
             return _src.Substring(from, to - from).Trim();
         }
 
-        // The expression engine cannot represent a bare '*' function argument, so the SQL-only
-        // aggregate COUNT(*) — which may appear in HAVING (and is equivalent to COUNT(1)) — is
-        // rewritten to COUNT(1) before handing the fragment to VfpExpression.Parse. The executor
-        // reads the resulting .Text and treats COUNT(1) exactly as COUNT(*) (count of all members).
-        private static readonly System.Text.RegularExpressions.Regex CountStarRx =
-            new(@"COUNT\s*\(\s*\*\s*\)",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
         private VfpExpression BuildExpr(string text, int srcStart)
         {
-            text = CountStarRx.Replace(text, "COUNT(1)");
             try
             {
                 return VfpExpression.ParseSql(text);
@@ -181,7 +172,7 @@ public static class SqlParser
             {
                 int pos = ex.Position >= 0 ? srcStart + ex.Position : srcStart;
                 throw new FoxDbfSqlException(
-                    $"Invalid expression '{text}': {ex.Message}", ex, pos);
+                    $"Invalid expression '{text}': {ex.Message}", ex, pos) { VfpErrorNumber = ex.VfpErrorNumber };
             }
         }
 
@@ -606,7 +597,10 @@ public static class SqlParser
             if (Current.Kind == TokKind.Word && Peek(1).Kind == TokKind.LParen &&
                 Peek(2).Kind == TokKind.Star && Peek(3).Kind == TokKind.RParen)
             {
-                string fn = Current.Text;
+                string fn = Current.Text.ToUpperInvariant();
+                if (fn is "MIN" or "MAX" or "SUM" or "AVG")
+                    throw new FoxDbfSqlException("Expression is invalid. A valid expression is required.") { VfpErrorNumber = 152 };
+                if (fn == "CNT") fn = "COUNT";
                 Advance(); Advance(); Advance(); Advance();
                 string? aggAlias = TryParseAsAlias();
                 return new SelectItem(false, null, null, aggAlias, fn);
@@ -628,7 +622,7 @@ public static class SqlParser
             // only if it fails to parse, retry stripping a trailing identifier as alias.
             try
             {
-                return new SelectItem(false, null, VfpExpression.Parse(text), null);
+                return new SelectItem(false, null, VfpExpression.ParseSql(text), null);
             }
             catch (ExpressionException whole)
             {
@@ -638,12 +632,12 @@ public static class SqlParser
                     string exprText = RangeText(s, e - 1);
                     try
                     {
-                        return new SelectItem(false, null, VfpExpression.Parse(exprText), aliasText);
+                        return new SelectItem(false, null, VfpExpression.ParseSql(exprText), aliasText);
                     }
                     catch (ExpressionException) { /* fall through to report the original error */ }
                 }
                 int pos = whole.Position >= 0 ? _t[s].Start + whole.Position : _t[s].Start;
-                throw new FoxDbfSqlException($"Invalid expression '{text}': {whole.Message}", whole, pos);
+                throw new FoxDbfSqlException($"Invalid expression '{text}': {whole.Message}", whole, pos) { VfpErrorNumber = whole.VfpErrorNumber };
             }
         }
 

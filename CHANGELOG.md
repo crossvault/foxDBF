@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- BREAKING: SQL aggregates reject missing or extra arguments with VFP9 errors 152/1300;
+  only COUNT/CNT accept `*`. SQL CNT is recognized as COUNT; scalar MIN/MAX outside SQL remain variadic.
+
 - microVFP implements SET FIXED and SET("FIXED") for numeric TRANSFORM and ?/?? output.
   STR keeps its explicit/default precision. Screen output can be captured through Output or SET ALTERNATE.
 

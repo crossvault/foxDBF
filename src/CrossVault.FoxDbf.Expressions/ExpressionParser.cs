@@ -169,8 +169,23 @@ internal sealed class ExpressionParser
         if (Peek.Type == TokenType.LParen)
         {
             Next(); // '('
+            string name = id.Text;
+            bool aggregate = _sql is not null && name.ToUpperInvariant() is "MIN" or "MAX" or "SUM" or "AVG" or "COUNT" or "CNT";
+            if (aggregate && name.Equals("CNT", StringComparison.OrdinalIgnoreCase))
+            {
+                name = "COUNT";
+                _nullTests.Add((id.Pos, id.Pos + id.Text.Length, name));
+            }
             var args = new List<AstNode>();
-            if (Peek.Type != TokenType.RParen)
+            if (aggregate && Peek.Type == TokenType.Star)
+            {
+                if (!name.Equals("COUNT", StringComparison.OrdinalIgnoreCase))
+                    throw new ExpressionException("Expression is invalid. A valid expression is required.", id.Pos) { VfpErrorNumber = 152 };
+                var star = Next();
+                _nullTests.Add((star.Pos, star.Pos + 1, "1"));
+                args.Add(new LiteralNode(VfpValue.Integer(1)));
+            }
+            else if (Peek.Type != TokenType.RParen)
             {
                 args.Add(ParseExpr(0));
                 while (Peek.Type == TokenType.Comma)
@@ -180,7 +195,10 @@ internal sealed class ExpressionParser
                 }
             }
             Expect(TokenType.RParen, "Expected ')' to close function call.");
-            return new FunctionNode(id.Text, args.ToArray());
+            if (aggregate && args.Count != 1)
+                throw new ExpressionException(args.Count == 0 ? "Expression is invalid. A valid expression is required." : "Function name is missing ( ).", id.Pos)
+                    { VfpErrorNumber = args.Count == 0 ? 152 : 1300 };
+            return new FunctionNode(name, args.ToArray());
         }
         return new FieldNode(id.Text);
     }
