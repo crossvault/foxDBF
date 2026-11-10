@@ -8,36 +8,37 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Added
 
-- microVFP `CALCULATE NPV(rate, flow [, initial])` now matches VFP9 discounting, scoped and filtered
-  records, per-record rates, NULL handling and numeric result precision, including mixed aggregate lists.
+- microVFP `CALCULATE NPV(rate, flow [, initial])` matches VFP9: discounting, scopes and filters,
+  per-record rates, NULL handling, numeric result precision and mixed aggregate lists. The initial value is
+  not discounted; an explicitly NULL rate skips its record, and the rate is not evaluated when no record qualifies.
+
+### Changed
+
+- BREAKING: Unary signs bind before exponentiation, as in VFP9 (`-5^2`, `+5^2` and `-$5^2` return 25).
+  Mixed or repeated signs raise VFP9's errors (`-+5` and `- -5` are 1231; `+-5` and `++5` are 36).
+  Index key text canonicalizes `-n^2` as `-N**2` and folds `-2^2` to `4`. Rebuild (`REINDEX`) indexes that
+  older FoxDbf versions created with a sign before `^` in the key (e.g. `n*-2^2`); their keys used the old precedence.
+- BREAKING: Expressions that end early raise VFP9 error 1231 "Missing operand." instead of 10
+  (e.g. `x=(1 +`, `IF 1 +`, `UPDATE t SET n = n +`, also through SQL sessions and ADO.NET);
+  a truncated SQL projection such as `SELECT n+ FROM t` raises 1221.
+- BREAKING: `SUM`, `AVERAGE` and `CALCULATE` raise VFP9 error 12 for undefined operand names instead of
+  treating them as NULL, and keep the destination variable unchanged.
+- BREAKING: `CALCULATE` operands that call a user-defined or unresolved function raise VFP9 error 31,
+  including indirect `EVALUATE` calls. `SUM` and `AVERAGE` keep supporting UDFs.
+- BREAKING: `SUM` results display at least `SET DECIMALS` places, as in VFP9 (a N(10,2) field summed under
+  `SET DECIMALS TO 4` shows `0.3000`). SQL `SUM()` is unchanged.
 
 ### Fixed
 
-- BREAKING: Mixed or repeated unary signs now raise VFP9's errors (`-+5` is 1231;
-  `+-5` and `++5` are 36). Unary plus binds before exponentiation. Index key text now
-  canonicalizes `-n^2` as `-N**2` and folds `-2^2` to `4`.
-- Rebuild (`REINDEX`) indexes created by older FoxDbf versions with a sign before `^` (e.g. `n*-2^2`); their keys used the old precedence, unlike VFP9.
-- BREAKING: A truncated SQL projection such as `SELECT n+ FROM t` now reports VFP9 error
-  1221 instead of 1231. Truncated UPDATE assignments retain 1231 with `Missing operand.`
-  through microVFP, SQL sessions and ADO.NET.
-- `SUM`, `AVERAGE` and `CALCULATE` match VFP9's operand sampling, including nested conditionals,
-  seeded `RAND()`, unchosen-branch errors, division precision and `SET DECIMALS` as SUM's display minimum.
-  Metadata sampling precedes the unchanged per-row evaluation; MIN/MAX retain their initial sample and
-  NULL result for `NEXT 0`, and NPV evaluates rate before flow.
-- BREAKING: Evaluated user-defined or unresolved function calls in `CALCULATE` operands now
-  raise VFP9 error 31, including indirect `EVALUATE` calls. SUM/AVERAGE continue to support UDFs.
-
-- Invalid microVFP `CALCULATE` items now raise VFP9's catchable errors when executed, including the
-  matching syntax, missing-expression and unrecognized-phrase messages. Unexecuted invalid lines no
-  longer prevent a program from loading.
-- `CALCULATE`, `SUM` and `AVERAGE` raise VFP9 error 12 for undefined operand names instead of treating
-  them as NULL, preserving the destination on failure. NPV still skips explicitly NULL rates and does
-  not evaluate its rate when no rows qualify. Invalid NPV rate/initial expressions fail even without rows.
-- Currency literals accept a minus after `$`, including negative initial values in `CALCULATE NPV`.
-  Malformed currency operands now report the matching VFP9 error in assignments and aggregates.
-- BREAKING: Unary minus binds before exponentiation, matching VFP9 (`-5^2` and `-$5^2` both return 25).
-- NPV overflow display precision no longer increases the size of values copied by expression hot paths
-  (`VfpValue` remains 48 bytes).
+- Invalid microVFP `CALCULATE` items raise VFP9's catchable errors when executed, with VFP9's syntax,
+  missing-expression and unrecognized-phrase messages. An unexecuted invalid line no longer prevents a
+  program from loading.
+- `SUM`, `AVERAGE` and `CALCULATE` evaluate their operands as often as VFP9 (one metadata pass on the first
+  qualifying record, visible with side-effecting UDFs and seeded `RAND()`), ignore errors in unselected
+  `IIF`/`ICASE` branches during that pass, and derive the display scale of conditional, multiplied and
+  divided expressions as VFP9 does.
+- Currency literals accept a minus after `$` (`$-500`), including negative NPV initial values. Malformed
+  currency operands report VFP9's error in assignments and aggregates.
 
 ## [0.13.0] - 2026-11-10
 
