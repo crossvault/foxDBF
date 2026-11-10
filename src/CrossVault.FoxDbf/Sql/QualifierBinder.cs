@@ -50,9 +50,22 @@ internal sealed class QualifierBinder
         _checkBare = checkBare;
     }
 
+    internal Func<string, bool>? OuterQueryKnows { get; init; }
+
     internal void Check(VfpExpression? expr, bool orderOrGroup = false)
     {
         if (expr is null) return;
+        // VFP9 permits ordinary correlated comparisons, but not outer-query columns inside
+        // IN-list, BETWEEN or LIKE operands (1801). Host memvars are not outer-query columns.
+        foreach (string field in expr.SqlInfixFields)
+        {
+            int separator = field.IndexOf('.');
+            if (separator <= 0) continue;
+            string qualifier = field[..separator];
+            if (!_sources.Any(s => s.Alias.Equals(qualifier, StringComparison.OrdinalIgnoreCase)) &&
+                OuterQueryKnows?.Invoke(qualifier) == true)
+                throw new FoxDbfSqlException("SQL: Correlation is not allowed in this predicate.") { VfpErrorNumber = 1801 };
+        }
         foreach (var name in expr.ReferencedFields())
         {
             int dot = name.IndexOf('.');

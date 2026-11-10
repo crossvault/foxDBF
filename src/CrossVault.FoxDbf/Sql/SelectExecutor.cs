@@ -92,10 +92,11 @@ internal sealed class SelectExecutor
     private QualifierBinder Binder(IReadOnlyList<QualifierBinder.Source> sources)
     {
         if (_outer is null && _host is null) return new QualifierBinder(_session, sources, null, hostBound: false);
-        return new QualifierBinder(_session, sources, OuterKnows, hostBound: _host is not null);
+        return new QualifierBinder(_session, sources, q => OuterKnows(q), hostBound: _host is not null)
+            { OuterQueryKnows = q => OuterKnows(q, queryOnly: true) };
     }
 
-    private bool OuterKnows(string q)
+    private bool OuterKnows(string q, bool queryOnly = false)
     {
         for (IRowContext? o = _outer; o is not null; )
         {
@@ -115,11 +116,11 @@ internal sealed class SelectExecutor
                 default:
                     // The interpreter: an open work area (read at its current record), or a defined
                     // variable such as an object reference. m. is handled by the binder itself.
-                    return _host is not null && HostKnows(q);
+                    return !queryOnly && _host is not null && HostKnows(q);
             }
         }
         // An uncorrelated hosted subquery has no outer row: the interpreter itself still resolves names.
-        return _outer is null && _host is not null && HostKnows(q);
+        return !queryOnly && _outer is null && _host is not null && HostKnows(q);
     }
 
     private bool HostKnows(string qualifier)
@@ -506,7 +507,9 @@ internal sealed class SelectExecutor
                 VfpBlankFields));
         }, ctx, schema);
 
+        if (sel.WherePredicate is not null) AddInfixIndexes(ctx, cdx, alias);
         var rows = CollectSingleRows(table, cdx, ctx, sel, alias);
+        ctx.SqlIndexedFields = null; // HAVING is evaluated after Rushmore, without index validation.
 
         // (3) aggregate vs row projection. Each output row is carried together with a representative
         // row context so ORDER BY / TOP can re-evaluate row-level keys after grouping.
@@ -576,7 +579,7 @@ internal sealed class SelectExecutor
             var rc = Bind(new RowContext(rec, rn, table.RecordCount, alias, _outer, colNames, VfpBlankFields));
             bool keep;
             if (sel.WherePredicate is not null)
-                keep = EvalPredicate(sel.WherePredicate, rc, ctx) == true;
+                keep = IsPredicateCandidate(sel.WherePredicate, rc, ctx) && EvalPredicate(sel.WherePredicate, rc, ctx) == true;
             else if (sel.Where is not null)
             {
                 var v = sel.Where.Evaluate(rc, ctx);
@@ -591,6 +594,31 @@ internal sealed class SelectExecutor
     // =======================================================================================
     //  Subquery predicates (IN / NOT IN / EXISTS / NOT EXISTS / scalar) — three-valued logic.
     // =======================================================================================
+
+    private static bool IsPredicateCandidate(SqlPredicate predicate, IRowContext row, EvaluationContext context, bool negated = false) => predicate switch
+    {
+        AndPredicate conjunction when !negated => IsPredicateCandidate(conjunction.Left, row, context) && IsPredicateCandidate(conjunction.Right, row, context),
+        OrPredicate disjunction when negated => IsPredicateCandidate(disjunction.Left, row, context, true) && IsPredicateCandidate(disjunction.Right, row, context, true),
+        NotPredicate negation => IsPredicateCandidate(negation.Operand, row, context, !negated),
+        ExprPredicate expr => expr.Expression.IsSqlCandidate(row, context, negated),
+        _ => true,
+    };
+
+    internal static void AddInfixIndexes(EvaluationContext context, CdxFile? cdx, string alias)
+    {
+        // VFP9 SQL retains these index-dependent error rules even with SET OPTIMIZE OFF.
+        if (cdx is null) return;
+        foreach (string name in cdx.TagNames)
+        {
+            var tag = cdx.Tag(name)!;
+            string field = tag.KeyExpression.Trim();
+            if (tag.IsUnique || !string.IsNullOrWhiteSpace(tag.ForExpression) ||
+                !SimpleFieldRx.IsMatch(field) || field.Contains('.')) continue;
+            context.SqlIndexedFields ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            context.SqlIndexedFields.Add(field);
+            context.SqlIndexedFields.Add(alias + "." + field);
+        }
+    }
 
     /// <summary>Evaluates a WHERE predicate tree against one outer/candidate row, in VFP three-valued
     /// logic (<see langword="true"/> / <see langword="false"/> / <see langword="null"/>=unknown). A row
@@ -636,16 +664,7 @@ internal sealed class SelectExecutor
     /// unless the set contains a NULL, which makes it unknown. <c>x NOT IN set</c> (the caller negates)
     /// is therefore empty whenever the set contains a NULL. An empty set ⇒ false.</summary>
     private static bool? InMembership(VfpValue x, IReadOnlyList<VfpValue> set, EvaluationContext ctx)
-    {
-        if (x.IsNull) return null;
-        bool sawNull = false;
-        foreach (var v in set)
-        {
-            if (v.IsNull) { sawNull = true; continue; }
-            if (ValueEqSql(x, v, ctx)) return true;
-        }
-        return sawNull ? null : false;
-    }
+        => VfpRuntime.InMembership(x, set, ctx);
 
     private bool? EvalScalarSubquery(ScalarSubqueryPredicate sc, IRowContext row, EvaluationContext ctx)
     {
@@ -999,6 +1018,9 @@ internal sealed class SelectExecutor
                     : Bind(new CompositeRowContext(src, first, _outer, VfpBlankFields));
             }, ctx, schema);
 
+            if (sel.WherePredicate is not null || sel.Joins.Any(j => j.On.HasSqlInfix))
+                foreach (var source in src) AddInfixIndexes(ctx, source.Cdx, source.Alias);
+
             // Per-step descriptor for sources[1..]: comma-FROM entries are an inner cross join
             // (ON is implicitly .T.); each explicit JOIN carries its own type + ON predicate.
             var steps = new JoinStep[src.Length];
@@ -1047,8 +1069,11 @@ internal sealed class SelectExecutor
             {
                 var kept = new List<DbfRecord?[]>(composites.Count);
                 foreach (var c in composites)
-                    if (EvalPredicate(sel.WherePredicate, Bind(new CompositeRowContext(src, c, _outer, VfpBlankFields)), ctx) == true)
+                {
+                    var row = Bind(new CompositeRowContext(src, c, _outer, VfpBlankFields));
+                    if (IsPredicateCandidate(sel.WherePredicate, row, ctx) && EvalPredicate(sel.WherePredicate, row, ctx) == true)
                         kept.Add(c);
+                }
                 composites = kept;
             }
             else if (sel.Where is not null)
@@ -1062,6 +1087,7 @@ internal sealed class SelectExecutor
                 composites = kept;
             }
 
+            ctx.SqlIndexedFields = null;
             bool aggregate = sel.GroupBy.Count > 0 || sel.Items.Any(ContainsAggregate);
 
             List<(object?[] row, IRowContext rep)> pairs;
@@ -1414,7 +1440,9 @@ internal sealed class SelectExecutor
                 bool ok = step.On is null; // comma cross-join: ON is implicitly true.
                 if (!ok)
                 {
-                    var v = step.On!.Evaluate(Bind(new CompositeRowContext(src, cand, _outer, VfpBlankFields)), ctx);
+                    var row = Bind(new CompositeRowContext(src, cand, _outer, VfpBlankFields));
+                    var v = step.On!.HasSqlInfix && !step.On.IsSqlCandidate(row, ctx)
+                        ? VfpValue.Logical(false) : step.On.Evaluate(row, ctx);
                     ok = v.Type == VfpType.Logical && v.AsLogical;
                 }
                 if (ok)
@@ -1813,11 +1841,7 @@ internal sealed class SelectExecutor
     /// subquery predicates, mirroring the WHERE path's runtime operator. Strings route through the canonical
     /// <see cref="VfpRuntime.StrEqSql"/>; other types use the collation-aware VFP comparison.</summary>
     private static bool ValueEqSql(VfpValue a, VfpValue b, EvaluationContext ctx)
-    {
-        if (a.Type == VfpType.Character && b.Type == VfpType.Character)
-            return VfpRuntime.StrEqSql(a.AsString, b.AsString, ctx);
-        return CompareVfp(a, b, ctx) == 0;
-    }
+        => VfpRuntime.ValueEqSql(a, b, ctx);
 
     /// <summary>True when <paramref name="s"/> contains a top-level <c>AND</c>/<c>OR</c> (outside
     /// parentheses and string literals) — the marker of a compound boolean we do not yet support.</summary>

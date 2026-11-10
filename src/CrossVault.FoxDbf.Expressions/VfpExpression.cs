@@ -54,6 +54,11 @@ public sealed class VfpExpression
     /// <summary>The original source text.</summary>
     public string Text { get; }
 
+    internal bool IsSqlCandidate(IRowContext row, EvaluationContext context, bool negated = false)
+        => _root.IsSqlCandidate(row, context, negated);
+    internal bool HasSqlInfix { get; private init; }
+    internal IReadOnlyCollection<string> SqlInfixFields { get; private init; } = Array.Empty<string>();
+
     private readonly AstNode _root;
 
     private VfpExpression(string text, AstNode root) { Text = text; _root = root; }
@@ -121,10 +126,10 @@ public sealed class VfpExpression
     internal VfpTypeInfo InferSqlType(ISchema schema, IRowContext row, EvaluationContext context)
         => _root.InferSql(new SqlInferenceSchema(schema, row, context));
 
-    internal static VfpExpression ParseSql(string text, bool aggregates = false)
+    internal static VfpExpression ParseSql(string text, bool aggregates = false, bool predicates = false)
     {
-        var (root, normalized) = ExpressionParser.ParseSql(text, aggregates);
-        return new VfpExpression(normalized, root);
+        var (root, normalized, hasSqlInfix, infixFields) = ExpressionParser.ParseSql(text, aggregates, predicates);
+        return new VfpExpression(normalized, root) { HasSqlInfix = hasSqlInfix, SqlInfixFields = infixFields };
     }
 
     /// <summary>

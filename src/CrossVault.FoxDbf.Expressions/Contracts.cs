@@ -101,6 +101,7 @@ public sealed class EvaluationContext
     // SET DECIMALS controls computed display precision and the default scale of Double fields.
     internal int NumericDecimals { get; set; } = 2;
     internal bool FixedNumeric { get; set; }
+    internal HashSet<string>? SqlIndexedFields { get; set; }
 
     /// <summary>SET EXACT. VFP default is OFF (<c>false</c>).</summary>
     public bool Exact { get; set; }

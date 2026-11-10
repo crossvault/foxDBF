@@ -17,6 +17,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   including fractional-component truncation, NULL component defaults and empty results for impossible
   calendar dates, as in VFP9. Invalid arguments now raise VFP errors 11, 1229 or 1230
   instead of returning the current timestamp.
+- SQL conditions support `[NOT] IN (list)`, `[NOT] BETWEEN … AND …` and `[NOT] LIKE … [ESCAPE …]`
+  (WHERE, JOIN ON, HAVING, UPDATE/DELETE WHERE, subqueries, embedded microVFP SQL, ADO.NET), including
+  prefix `NOT`, VFP9 NULL semantics, SET ANSI comparisons, VFP9's LIKE escape rules and the VFP9 errors
+  (10, 11, 36, 107, 1833) — previously these conditions were rejected as invalid expressions.
 - microVFP supports xBase `UPDATE ON field FROM alias REPLACE ... [RANDOM]`, including
   sequential source matches, VFP9 record pointers and `_TALLY`, errors, buffering,
   validation/triggers and index maintenance through the existing REPLACE writer. Assignments
