@@ -37,7 +37,7 @@ internal sealed partial class BinaryNode
         int? left = _left.AggregateDecimals(schema, memory, decimals);
         int? right = _right.AggregateDecimals(schema, memory, decimals);
         if (left is null || right is null) return null;
-        // VFP9 SUM/AVERAGE multiply operand scales, while division retains at least SET DECIMALS.
+        // VFP9 SUM/AVERAGE add operand scales for multiplication; division retains at least SET DECIMALS.
         return _op switch
         {
             BinOp.Mul => Math.Min(18, left.Value + right.Value),
