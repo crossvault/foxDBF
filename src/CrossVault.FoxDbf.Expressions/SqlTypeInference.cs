@@ -107,7 +107,7 @@ internal sealed partial class BinaryNode
                 length = Math.Max(l.Length - l.Decimals, r.Length - r.Decimals) + decimals + 1;
                 break;
         }
-        return new(VfpType.Numeric, Math.Min(20, length), Math.Min(19, decimals));
+        return new(VfpType.Numeric, Math.Min(20, length), Math.Min(18, decimals));
     }
 
     internal static VfpTypeInfo NumericStorage(VfpTypeInfo info) => info.SqlStorageType == 'B'

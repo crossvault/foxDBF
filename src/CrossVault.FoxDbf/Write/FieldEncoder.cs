@@ -1,3 +1,4 @@
+using CrossVault.FoxDbf.Expressions;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Globalization;
@@ -216,6 +217,13 @@ public static class FieldEncoder
 
             if (handled)
             {
+                // VFP9 sacrifices fractional digits before declaring numeric overflow.
+                int reduced = VfpRuntime.NumericStorageDecimals(ToDouble(value), dest.Length, decimals);
+                if (reduced < decimals && TryFormatNumber(value, reduced, chars, out charsWritten, out _))
+                {
+                    WriteAsciiRightJustified(chars[..charsWritten], dest);
+                    return true;
+                }
                 dest.Fill((byte)'*');
                 return true;
             }

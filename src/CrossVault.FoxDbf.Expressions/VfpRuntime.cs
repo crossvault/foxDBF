@@ -962,6 +962,14 @@ internal static partial class VfpRuntime
         return VfpValue.Currency(Math.Round(value / factor, 0, MidpointRounding.AwayFromZero) * factor);
     }
 
+    internal static int NumericStorageDecimals(double value, int width, int decimals)
+    {
+        double magnitude = Math.Abs(value);
+        int integerDigits = magnitude < 1 ? 1 : (int)Math.Floor(Math.Log10(magnitude)) + 1;
+        if (value < 0) integerDigits++;
+        return Math.Clamp(width - integerDigits - 1, 0, decimals);
+    }
+
     internal static double Round(double n, int dec)
     {
         if (dec >= 0)

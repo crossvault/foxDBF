@@ -742,6 +742,12 @@ public sealed partial class VfpInterpreter
                         });
                     }
                     assigned++;
+                    if (NumericFieldOverflow(wa.Table.Columns[idx], values[idx], writer.Schema.Encoding))
+                    {
+                        // REPLACE publishes the overflowing field's stars before reporting error 39.
+                        assignmentError = new MicroVfpRuntimeException("Numeric overflow. Data was lost.", 39);
+                        break;
+                    }
                 }
             }
             catch (MicroVfpRuntimeException error) when (error.VfpErrorNumber == 9 && !error.FromFieldErrorExpression && assigned > 0)
@@ -797,6 +803,14 @@ public sealed partial class VfpInterpreter
             parentSnap?.Cleanup();
             candSnap?.Cleanup();
         }
+    }
+
+    private static bool NumericFieldOverflow(DbfColumn column, object? value, System.Text.Encoding encoding)
+    {
+        if (column.Type is not ('N' or 'F') || value is null) return false;
+        Span<byte> bytes = stackalloc byte[column.Length];
+        FieldEncoder.Encode(column, value, encoding, bytes);
+        return bytes.Length > 0 && bytes[0] == (byte)'*';
     }
 
     private void ExecReplaceScope(ReplaceStmt rp)

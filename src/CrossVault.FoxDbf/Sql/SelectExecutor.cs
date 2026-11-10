@@ -2391,7 +2391,12 @@ internal sealed class SelectExecutor
                 value = Math.Round(Convert.ToDecimal(value), decimals, MidpointRounding.AwayFromZero);
                 // VFP's all-star numeric cursor value is +infinity when copied into a B field.
                 if (((decimal)value).ToString("F" + decimals, CultureInfo.InvariantCulture).Length > column.Length)
-                    return double.PositiveInfinity;
+                {
+                    decimals = VfpRuntime.NumericStorageDecimals((double)(decimal)value, column.Length, decimals);
+                    value = Math.Round((decimal)value, decimals, MidpointRounding.AwayFromZero);
+                    if (((decimal)value).ToString("F" + decimals, CultureInfo.InvariantCulture).Length > column.Length)
+                        return double.PositiveInfinity;
+                }
             }
         }
         value = CoerceCell(value, column.ClrType);

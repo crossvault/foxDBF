@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 
+- SQL computed numeric columns cap their scale at 18. Numeric storage reduces fractional digits
+  to fit the declared width before overflowing; microVFP REPLACE reports true numeric overflow as error 39.
+
 - Numeric scalar results, FOR counters, SECONDS and saved/restored variables retain VFP9 display
   precision in later arithmetic. High-precision numeric formatting preserves VFP9 significant digits;
   financial functions use VFP9 period rounding and reciprocal-power evaluation.
