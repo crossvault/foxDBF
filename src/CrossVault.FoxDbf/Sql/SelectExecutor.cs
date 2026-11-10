@@ -631,22 +631,20 @@ internal sealed class SelectExecutor
 
     private static bool? Not3(bool? a) => a is null ? null : !a.Value;
 
-    /// <summary><c>x IN set</c>, matching what VFP9 actually does (cross-checked against the local
-    /// the VFP9 oracle): a NULL <paramref name="x"/> is unknown (never IN, never NOT IN); a NULL set
-    /// member is simply IGNORED — it does NOT poison the result. So <c>x IN set</c> is true on a match,
-    /// else false; <c>x NOT IN set</c> (the caller negates) is therefore true when x matches no non-null
-    /// member, even when the set contains a NULL. An empty set ⇒ false.
-    /// <para>
-    /// This differs from textbook ANSI three-valued logic (where a NULL in the set would make NOT IN
-    /// unknown / empty), but it is VFP's observed behaviour for an indexed subquery — and the executor
-    /// is deliberately index-INDEPENDENT, so it gives this same answer with or without a CDX.
-    /// </para></summary>
+    /// <summary><c>x IN set</c> in three-valued logic, as VFP9 evaluates it (native VFP9 tables, with
+    /// and without a CDX): a NULL <paramref name="x"/> is unknown; a match is true; no match is false
+    /// unless the set contains a NULL, which makes it unknown. <c>x NOT IN set</c> (the caller negates)
+    /// is therefore empty whenever the set contains a NULL. An empty set ⇒ false.</summary>
     private static bool? InMembership(VfpValue x, IReadOnlyList<VfpValue> set, EvaluationContext ctx)
     {
         if (x.IsNull) return null;
+        bool sawNull = false;
         foreach (var v in set)
-            if (!v.IsNull && ValueEqSql(x, v, ctx)) return true;
-        return false;
+        {
+            if (v.IsNull) { sawNull = true; continue; }
+            if (ValueEqSql(x, v, ctx)) return true;
+        }
+        return sawNull ? null : false;
     }
 
     private bool? EvalScalarSubquery(ScalarSubqueryPredicate sc, IRowContext row, EvaluationContext ctx)
