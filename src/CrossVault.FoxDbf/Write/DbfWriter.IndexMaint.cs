@@ -426,8 +426,16 @@ public sealed partial class DbfWriter
         }
         catch { return false; }   // cannot even parse → not derivable
         foreach (var f in fields)
-            if (!_schema.Columns.Any(c => string.Equals(c.Name, f, StringComparison.OrdinalIgnoreCase)))
+        {
+            string field = f;
+            int dot = field.LastIndexOf('.');
+            // Native tags can qualify a field with their own table name. Other aliases still
+            // need the host's normalization; guessing them could maintain a foreign key.
+            if (dot >= 0 && string.Equals(field[..dot], Path.GetFileNameWithoutExtension(_stream.Name), StringComparison.OrdinalIgnoreCase))
+                field = field[(dot + 1)..];
+            if (!_schema.Columns.Any(c => string.Equals(c.Name, field, StringComparison.OrdinalIgnoreCase)))
                 return false;
+        }
         return true;
     }
 

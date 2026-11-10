@@ -352,6 +352,8 @@ internal static class CdxIndexBuilder
             entries = DropDuplicateKeys(entries);
 
         byte options = standalone ? (byte)0x20 : (byte)0x60; // [compound |] compact
+        // VFP9 advertises the leading NULL discriminator in the tag header as well as the key width.
+        if (computer.NullableKey) options |= 0x02;
         if (def.Unique) options |= 0x01;
         if (def.Candidate) options |= 0x04;
         if (hasFor) options |= 0x08;
@@ -433,9 +435,9 @@ internal static class CdxIndexBuilder
             if (NullableKey)
             {
                 var value = KeyFn(rc);
-                key = value.IsNull ? new byte[KeyLen] : IndexKey.PrefixNonNullKey(DateField is not null
-                    ? IndexKey.EncodeDateField(record, DateField)
-                    : EncodeKey(value, KeyType, KeyLen - 1, Collation, CharacterEncoding, Pad));
+                key = value.IsNull ? new byte[KeyLen] : DateField is not null
+                    ? IndexKey.PrefixNonNullKey(IndexKey.EncodeDateField(record, DateField))
+                    : EncodeKey(value, KeyType, KeyLen, Collation, CharacterEncoding, Pad, nullableKey: true);
             }
             else key = DateField is not null
                 ? IndexKey.EncodeDateField(record, DateField)
@@ -503,6 +505,7 @@ internal static class CdxIndexBuilder
         int keyLen = CollatedKeyLength(baseLen, isChar, collation);
         bool nullableKey = IndexKey.NullableKeyField(schema, def.KeyExpression);
         if (nullableKey) keyLen++;
+        if (keyLen > 240) throw new DbfWriteException("Index key is too long.", 112);
         byte pad = isChar && !isBinary ? IndexKey.CharacterKeyPad(collation.Name) : (byte)0x00;
 
         Func<IRowContext, VfpValue>? forFn = !string.IsNullOrWhiteSpace(def.ForExpression)
@@ -1196,8 +1199,10 @@ internal static class CdxIndexBuilder
         => string.Equals(collation.Name, "MACHINE", StringComparison.OrdinalIgnoreCase);
 
     private static byte[] EncodeKey(VfpValue value, IndexKeyType type, int keyLen, IVfpCollation collation,
-        Encoding characterEncoding, byte pad)
+        Encoding characterEncoding, byte pad, bool nullableKey = false)
     {
+        int offset = nullableKey ? 1 : 0;
+        int payloadLength = keyLen - offset;
         if (type == IndexKeyType.Character)
         {
             // Pad the NATURAL collated key up to the (already collation-expanded) keyLen: blanks under MACHINE,
@@ -1205,14 +1210,28 @@ internal static class CdxIndexBuilder
             // code-page bytes (VFP9: CP850 'Peñarol' = 50 65 A4 ...). For GENERAL the natural key is the head+tail
             // weight run, which for accented / ligature data is LONGER than the field width — keyLen is 2× the base
             // width so it rarely is truncated; when heads+tails still overflow, the key is cut at keyLen.
-            var natural = value.IsNull
-                ? Array.Empty<byte>()
-                : value.IsBinary ? Encoding.Latin1.GetBytes(value.AsString)
-                : IndexKey.EncodeCharacterKey(value.AsString.AsSpan(), collation, characterEncoding, keyLen);
             var key = new byte[keyLen];
-            for (int i = 0; i < keyLen; i++) key[i] = pad;
-            int copy = Math.Min(natural.Length, keyLen);
-            natural.AsSpan(0, copy).CopyTo(key);
+            key.AsSpan(offset).Fill(pad);
+            if (nullableKey) key[0] = 0x80;
+            if (!value.IsNull)
+            {
+                if (value.IsBinary || IsIdentityCollation(collation))
+                {
+                    var encoding = value.IsBinary ? Encoding.Latin1 : characterEncoding;
+                    if (encoding.IsSingleByte)
+                        encoding.GetBytes(value.AsString.AsSpan(0, Math.Min(value.AsString.Length, payloadLength)), key.AsSpan(offset));
+                    else
+                    {
+                        var raw = encoding.GetBytes(value.AsString);
+                        raw.AsSpan(0, Math.Min(raw.Length, payloadLength)).CopyTo(key.AsSpan(offset));
+                    }
+                }
+                else
+                {
+                    var natural = IndexKey.EncodeCharacterKey(value.AsString.AsSpan(), collation, characterEncoding, payloadLength);
+                    natural.AsSpan(0, Math.Min(natural.Length, payloadLength)).CopyTo(key.AsSpan(offset));
+                }
+            }
             return key;
         }
 
@@ -1230,8 +1249,11 @@ internal static class CdxIndexBuilder
         if (encoded is null)
             return new byte[keyLen]; // null / unencodable → all-zero key (sorts first)
 
+        if (!nullableKey && encoded.Length == keyLen) return encoded;
+
         var buf = new byte[keyLen];
-        Array.Copy(encoded, buf, Math.Min(encoded.Length, keyLen));
+        if (nullableKey) buf[0] = 0x80;
+        encoded.AsSpan(0, Math.Min(encoded.Length, payloadLength)).CopyTo(buf.AsSpan(offset));
         return buf;
     }
 
@@ -1524,6 +1546,7 @@ internal static class CdxIndexBuilder
         public TableSchema(DbfTable table) => _table = table;
         public bool TryGetColumn(string name, out char type, out int length, out int decimals)
         {
+            name = IndexKey.UnqualifiedField(name);
             foreach (var c in _table.Columns)
             {
                 if (string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))

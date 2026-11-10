@@ -68,6 +68,8 @@ internal static class IdxIndexBuilder
         var (keyType, keyLen, _) = CdxIndexBuilder.ResolveKey(schema, keyExpr, ctx);
         bool nullableKey = IndexKey.NullableKeyField(schema, keyExpr);
         if (nullableKey) keyLen++;
+        // Legacy IDX has a 100-byte limit, including VFP9's NULL discriminator.
+        if (keyLen > 100) throw new DbfWriteException("Index key is too long.", 112);
         Encoding characterEncoding = ResolveCharacterEncoding(schema, keyExpr);
 
         var keyFn = CdxIndexBuilder.CompileIndex(keyExpr, ctx);
@@ -89,13 +91,17 @@ internal static class IdxIndexBuilder
                 if (!(f.Type == VfpType.Logical && f.AsLogical))
                     continue;
             }
-            var value = keyFn(rc);
-            byte[] key = nullableKey
-                ? value.IsNull ? new byte[keyLen] : IndexKey.PrefixNonNullKey(dateField is not null
-                    ? IndexKey.EncodeDateField(row.Record, dateField) : EncodeKey(value, keyType, keyLen - 1, characterEncoding))
-                : dateField is not null
-                ? IndexKey.EncodeDateField(row.Record, dateField)
-                : EncodeKey(value, keyType, keyLen, characterEncoding);
+            byte[] key;
+            if (dateField is not null && !nullableKey)
+                key = IndexKey.EncodeDateField(row.Record, dateField);
+            else
+            {
+                var value = keyFn(rc);
+                key = nullableKey
+                    ? value.IsNull ? new byte[keyLen] : IndexKey.PrefixNonNullKey(dateField is not null
+                        ? IndexKey.EncodeDateField(row.Record, dateField) : EncodeKey(value, keyType, keyLen - 1, characterEncoding))
+                    : EncodeKey(value, keyType, keyLen, characterEncoding);
+            }
             entries.Add(new Entry(key, (uint)row.RecNo));
         }
 
@@ -104,6 +110,8 @@ internal static class IdxIndexBuilder
             entries = DropDuplicateKeys(entries);
 
         byte options = 0x00;
+        // Legacy IDX uses the same NULL-discriminator option as compact tags.
+        if (nullableKey) options |= 0x02;
         if (unique) options |= 0x01;
         if (forFn is not null) options |= 0x08;
 

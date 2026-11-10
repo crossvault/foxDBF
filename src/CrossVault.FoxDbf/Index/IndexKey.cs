@@ -101,14 +101,15 @@ public readonly struct IndexKey
     /// (plan §C5). Never throws — returns an undecodable key on short/garbage input.
     /// </summary>
     public static IndexKey Decode(ReadOnlySpan<byte> keyBytes, IndexKeyType type)
+        => new(type, keyBytes.ToArray(), DecodeValue(keyBytes, type));
+
+    internal static object? DecodeValue(ReadOnlySpan<byte> keyBytes, IndexKeyType type, Encoding? encoding = null)
     {
-        var raw = keyBytes.ToArray();
-        object? value;
         try
         {
-            value = type switch
+            return type switch
             {
-                IndexKeyType.Character => DecodeCharacter(raw),
+                IndexKeyType.Character => (encoding ?? Encoding.Latin1).GetString(keyBytes).TrimEnd(' '),
                 IndexKeyType.Logical => keyBytes.Length == 0 ? null : keyBytes[0] == (byte)'T',
                 IndexKeyType.Integer => DecodeInteger(keyBytes),
                 IndexKeyType.Numeric => DecodeDouble(keyBytes),
@@ -120,10 +121,8 @@ public readonly struct IndexKey
         catch
         {
             // Never throw on bad / short / malformed key bytes.
-            value = null;
+            return null;
         }
-
-        return new IndexKey(type, raw, value);
     }
 
     /// <summary>
@@ -131,18 +130,7 @@ public readonly struct IndexKey
     /// value is the trailing-pad-trimmed string. Never throws.
     /// </summary>
     internal static IndexKey DecodeCharacter(ReadOnlySpan<byte> keyBytes, Encoding encoding)
-    {
-        var raw = keyBytes.ToArray();
-        object? value;
-        try { value = encoding.GetString(raw).TrimEnd(' '); }
-        catch { value = null; }
-        return new IndexKey(IndexKeyType.Character, raw, value);
-    }
-
-    /// <summary>Character key: trailing spaces are significant; the value is the trailing-trimmed string.</summary>
-    private static object DecodeCharacter(byte[] raw)
-        // Latin1 maps every byte 1:1 (ASCII-compatible); trim only trailing pad spaces.
-        => Encoding.Latin1.GetString(raw).TrimEnd(' ');
+        => new(IndexKeyType.Character, keyBytes.ToArray(), DecodeValue(keyBytes, IndexKeyType.Character, encoding));
 
     /// <summary>Integer (I): 4-byte big-endian with the sign bit flipped back.</summary>
     private static object? DecodeInteger(ReadOnlySpan<byte> b)
@@ -273,8 +261,23 @@ public readonly struct IndexKey
     // VFP reserves a leading null discriminator for a nullable field's key:
     // all zero bytes for NULL, 0x80 followed by the ordinary key otherwise.
     internal static bool NullableKeyField(DbfTable? table, string expression)
-        => table is not null && table.Columns.Any(c => c.IsNullable && c.Type is 'C' or 'V' or 'I' or 'N' or 'F' or 'B' or 'Y' or 'L' or 'D' or 'T'
-            && string.Equals(c.Name, expression.Trim(), StringComparison.OrdinalIgnoreCase));
+    {
+        if (table is null) return false;
+        string text = expression.Trim();
+        foreach (var column in table.Columns)
+            if (string.Equals(column.Name, text, StringComparison.OrdinalIgnoreCase)) return column.IsNullable;
+        // VFP9 retains the marker through UPPER, LEN, NVL, IIF and concatenation.
+        // ISNULL itself produces a nonnullable Logical, even when its operand is nullable.
+        try
+        {
+            return VfpExpression.Parse(text).ReferencedFields((name, _) => name == "ISNULL")
+                .Any(field => table.Columns.Any(c => c.IsNullable && string.Equals(c.Name, UnqualifiedField(field), StringComparison.OrdinalIgnoreCase)));
+        }
+        catch { return false; }
+    }
+
+    internal static string UnqualifiedField(string name)
+        => name[(name.LastIndexOf('.') + 1)..];
 
     internal static byte[] PrefixNonNullKey(byte[] bytes)
     {
@@ -297,7 +300,7 @@ public readonly struct IndexKey
     {
         if (table is null)
             return Encodings.ResolveEncoding(0);
-        string field = (keyExpr ?? string.Empty).Trim();
+        string field = UnqualifiedField((keyExpr ?? string.Empty).Trim());
         foreach (var col in table.Columns)
             if (string.Equals(col.Name, field, StringComparison.OrdinalIgnoreCase))
                 return col.IsBinary ? Encoding.Latin1 : table.Encoding;
@@ -432,7 +435,7 @@ public readonly struct IndexKey
     {
         foreach (var column in table.Columns)
             if (column.Type is 'D' or 'T'
-                && string.Equals(column.Name, expression.Trim(), StringComparison.OrdinalIgnoreCase))
+                && string.Equals(column.Name, UnqualifiedField(expression.Trim()), StringComparison.OrdinalIgnoreCase))
                 return column;
         return null;
     }
@@ -496,7 +499,7 @@ public readonly struct IndexKey
 
         foreach (var col in table.Columns)
         {
-            if (string.Equals(col.Name, field, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(col.Name, UnqualifiedField(field), StringComparison.OrdinalIgnoreCase))
                 return FromColumnType(col.Type);
         }
 
@@ -528,7 +531,8 @@ public readonly struct IndexKey
             IndexKeyType.Numeric or IndexKeyType.Date or IndexKeyType.DateTime => 8,
             _ => keyLength,
         };
-        return width == keyLength ? inferred : IndexKeyType.Unknown;
+        return width + (NullableKeyField(table, keyExpression) ? 1 : 0) == keyLength || inferred == IndexKeyType.Character
+            ? inferred : IndexKeyType.Unknown;
     }
 
     internal static bool IsBinaryExpression(string expression, DbfTable? table)

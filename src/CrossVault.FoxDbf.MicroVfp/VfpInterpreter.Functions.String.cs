@@ -93,8 +93,9 @@ public sealed partial class VfpInterpreter
         // VFP9 (runtime-verified): the format-less TRANSFORM of a logical is the ".T."/".F." literal, NOT "T"/"F".
         VfpType.Logical => v.AsLogical ? ".T." : ".F.",
         VfpType.Null => ".NULL.",
-        VfpType.Date => v.AsDate == default ? new string(' ', 10) : v.AsDate.ToString("MM/dd/yyyy", CultureInfo.InvariantCulture),
-        VfpType.DateTime => v.AsDateTime.ToString("MM/dd/yyyy hh:mm:ss tt", CultureInfo.InvariantCulture),
+        VfpType.Date => v.IsEmptyDate ? TransformEmptyDate() : v.AsDate.ToString("MM/dd/yyyy", CultureInfo.InvariantCulture),
+        VfpType.DateTime => v.IsEmptyDate ? TransformEmptyDate() + "   :  :   AM"
+            : v.AsDateTime.ToString("MM/dd/yyyy hh:mm:ss tt", CultureInfo.InvariantCulture),
         // SQL cursor overflow remains numeric; VFP's default TRANSFORM renders ten stars.
         VfpType.Numeric when double.IsNaN(v.AsDouble) => new string('*', 11),
         VfpType.Numeric when double.IsInfinity(v.AsDouble) => new string('*', 10),
@@ -106,6 +107,18 @@ public sealed partial class VfpInterpreter
         VfpType.Numeric or VfpType.Integer => NumberToPlainString(v.AsNumber),
         _ => v.ToString(),
     };
+
+    private string TransformEmptyDate()
+    {
+        // Empty VFP9 dates keep their separators; DateTime also keeps the blank time and AM suffix.
+        string year = Session.ImportCentury ? "    " : "  ";
+        return Session.ImportDateFormat switch
+        {
+            "GERMAN" => "  .  ." + year,
+            "ANSI" => year + ".  .  ",
+            _ => "  /  /" + year
+        };
+    }
 
     /// <summary>A numeric value as its shortest exact decimal string (no leading/trailing padding, trailing
     /// fractional zeros trimmed): 5→"5", 1234.5→"1234.5", 1234.50→"1234.5".</summary>

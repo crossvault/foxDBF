@@ -110,6 +110,11 @@ public sealed class VfpExpression
     public VfpTypeInfo InferType(ISchema schema)
         => _root.Infer(schema);
 
+    // SUM/AVERAGE need operand precision even when the index-oriented InferType has no width.
+    // This does not alter arithmetic values or general TRANSFORM formatting.
+    internal int? InferAggregateDecimals(ISchema schema, Func<string, VfpValue> memory, int decimals)
+        => _root.AggregateDecimals(schema, memory, decimals);
+
     internal VfpTypeInfo InferSqlType(ISchema schema) => _root.InferSql(schema);
 
     internal VfpTypeInfo InferSqlType(ISchema schema, IRowContext row, EvaluationContext context)

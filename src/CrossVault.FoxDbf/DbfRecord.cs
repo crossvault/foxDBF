@@ -197,15 +197,16 @@ public readonly struct DbfRecord
 
     internal VfpValue GetIndexScaledValue(string name)
     {
-        int index = IndexOfColumn(name);
+        int index = IndexOfColumn(Index.IndexKey.UnqualifiedField(name));
         if (index < 0) return VfpValue.Null;
         var column = _table.Columns[index];
         object? value = this[index];
         if (value is DateOnly date) return VfpValue.Date(date, empty: false);
         if (value is DateTime timestamp) return VfpValue.DateTime(timestamp, empty: false);
-        // Index keys retain stored, padded text and distinguish empty dates from true NULLs.
+        // Index keys retain stored, padded text and distinguish physical blanks from true NULLs:
+        // a blank nullable N/F key encodes numeric zero with the non-NULL marker.
         if (value is string) value = GetStoredExpressionValue(index);
-        else if (value is null && column.Type is 'D' or 'T') value = GetVfpValue(index);
+        else if (value is null && column.Type is 'D' or 'T' or 'N' or 'F') value = GetVfpValue(index);
         return VfpValue.FromField(value, column.Type, column.Decimal);
     }
 

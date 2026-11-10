@@ -10,39 +10,46 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 - BREAKING: SQL aggregates reject missing or extra arguments with VFP9 errors 152/1300;
   only COUNT/CNT accept `*`. SQL CNT is recognized as COUNT; scalar MIN/MAX in WHERE and outside SQL remain variadic.
-
 - microVFP implements SET FIXED and SET("FIXED") for numeric TRANSFORM and ?/?? output.
   STR keeps its explicit/default precision. Screen output can be captured through Output or SET ALTERNATE.
-
 - INDEX ON resolves field metadata once per read while preserving stored text, empty dates and currency scale.
-
 - SQL computed numeric columns cap their scale at 18. Numeric storage reduces fractional digits
   to fit the declared width before overflowing; microVFP REPLACE reports true numeric overflow as error 39.
-
 - Numeric scalar results, FOR counters, SECONDS and saved/restored variables retain VFP9 display
   precision in later arithmetic. High-precision numeric formatting preserves VFP9 significant digits;
   financial functions use VFP9 period rounding and reciprocal-power evaluation.
-
 - SQL HAVING aliases and source fields, DELETE source predicates and import validation preserve
   currency types and field scales, matching SELECT expressions at exact-half rounding boundaries.
-
 - Currency conversion retains the scaled 64-bit precision of double operands; `ROUND` preserves
   currency digits and `MTON` leaves non-currency numeric payloads intact, including very large numbers.
   Y-field writes use the same conversion; currency text retains VFP9's 16-significant-digit display limit.
-
 - BREAKING: Currency overflow now reports VFP9 errors (1988 for expressions, 39 for Y-field writes)
   instead of clamping, writing zero or leaking a .NET overflow. Currency MOD avoids intermediate overflow;
   exponent notation in currency literals raises VFP9 syntax error 10.
-
 - Currency arithmetic preserves VFP9 type Y, operand conversion and four-place rounding, including
   unary minus, `ROUND`, `INT`, `ABS`, `MOD`, mixed `MAX`/`MIN`, `NTOM`/`MTON` and currency literals.
   Negative currency displays as `$-...`; SQL cursor descriptors retain currency where VFP9 does.
-
 - Numeric expressions retain VFP9 display scale through literals (including exponents), arithmetic,
   scalar functions and assignments. `TRANSFORM` preserves trailing zeroes and `STR()` keeps its default zero decimals.
   SQL computed cursor widths/scales honor operand metadata and `SET DECIMALS`.
-
+- microVFP `TRANSFORM` of empty Date/DateTime values preserves VFP9's blank date separators,
+  century width and empty time with AM suffix under AMERICAN, GERMAN and ANSI date formats.
+  The expression engine also accepts the empty DateTime literal `{//::}`.
+- BREAKING: microVFP `SUM`/`AVERAGE` reject nonnumeric expressions with VFP9 error 27,
+  including empty tables and FOR selections without matches. Dynamic expressions receive VFP9's
+  initial type probe at the first matching record or the final record pointer.
+- Nullable CDX tags and legacy/compact IDX headers now set VFP9's NULL-marker option bit,
+  matching native headers byte for byte while preserving nonnullable headers.
+- Nullable CDX and IDX expression keys (including qualified fields, Varbinary, `UPPER`, concatenation
+  and character `IIF`) retain VFP9 NULL markers through reads, seeks and updates. NULL seeks no longer
+  match zero-filled nonnullable keys, and blank numeric fields index as zero. Index creation validates
+  the full encoded width, including the NULL byte (240 bytes compact; 100 bytes legacy IDX).
+  Nullable weighted indexes retain selective Rushmore bounds and avoid redundant key-buffer copies.
+- microVFP `SUM`/`AVERAGE` preserve fractional expression and memory-variable precision, and currency
+  aggregates accumulate exactly. `CALCULATE MIN/MAX` preserve Character, Date, DateTime and Logical
+  values; numeric aggregates (including `CNT(expr)`) reject nonnumeric inputs with VFP9 error 27.
 - microVFP `UPDATE ON` propagates NULL keys like VFP9, including its distinct sequential and RANDOM behavior.
+  Varchar keys compare at their full declared width, including trailing blanks, even with `SET EXACT OFF`.
   NULL `SEEK`/`INDEXSEEK`/`KEYMATCH` probes use stored NULL keys and honor visibility. Nullable fields
   retain VFP9's NULL marker in CDX and legacy/compact IDX keys, including write maintenance.
 - microVFP `SUM` and `AVERAGE` retain VFP9 numeric display precision and currency results.

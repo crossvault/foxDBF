@@ -425,7 +425,7 @@ public sealed partial class VfpInterpreter
         {
             if (CdxTag is { } t) return t.DecodeKey(keyBytes);
             if (!IdxNullableKey || keyBytes.Length == 0) return IndexKey.Decode(keyBytes, IdxKeyType);
-            return new IndexKey(IdxKeyType, keyBytes, keyBytes[0] == 0 ? null : IndexKey.Decode(keyBytes.AsSpan(1), IdxKeyType).Value);
+            return new IndexKey(IdxKeyType, keyBytes, keyBytes[0] == 0 ? null : IndexKey.DecodeValue(keyBytes.AsSpan(1), IdxKeyType));
         }
     }
 

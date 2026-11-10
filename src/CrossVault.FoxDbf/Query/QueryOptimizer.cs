@@ -1884,6 +1884,7 @@ public static class QueryOptimizer
             foreach (string suffix in trailers)
             {
                 byte[] key = collation.GetHeadKey((literal + suffix).AsSpan());
+                if (tag.NullableKey) key = IndexKey.PrefixNonNullKey(key);
                 if (CompareBytes(key, lower) < 0) lower = key;
             }
             return lower;
@@ -1911,7 +1912,7 @@ public static class QueryOptimizer
             {
                 // NORDAN 'a' + 'A' contracts to aa. Probing with A/B would lose the
                 // shared head run and incorrectly exclude aa-prefixed matches.
-                hc = weighted.GetHeadKey(literal).Length;
+                hc = weighted.GetHeadKey(literal).Length + (tag.NullableKey ? 1 : 0);
             }
             else
             {
