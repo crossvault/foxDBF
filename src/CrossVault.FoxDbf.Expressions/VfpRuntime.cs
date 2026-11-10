@@ -732,7 +732,15 @@ internal static partial class VfpRuntime
         // The scale and text must use the same exact value at rounding-carry boundaries.
         decimal number = value.Type == VfpType.Currency ? value.AsNumber : value.AsDisplayNumber;
         int scale = NumericStorageDecimals(number, len, dec);
-        return VfpValue.Character(FitNumericText(value.RoundForDisplay(scale).ToString("F" + scale, Inv), len));
+        string text = FitNumericText(value.RoundForDisplay(scale).ToString("F" + scale, Inv), len);
+        // Display rounding is limited to significant digits and can carry into the integer part
+        // ($9999999999999.9999 at scale 4); VFP9 then drops decimals until the text fits.
+        while (scale > 0 && text.Length > 0 && text[0] == '*')
+        {
+            scale--;
+            text = FitNumericText(value.RoundForDisplay(scale).ToString("F" + scale, Inv), len);
+        }
+        return VfpValue.Character(text);
     }
 
     private static string FitNumericText(string text, int width)

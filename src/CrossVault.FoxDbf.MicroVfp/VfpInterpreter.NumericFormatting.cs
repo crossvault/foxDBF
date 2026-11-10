@@ -123,14 +123,24 @@ public sealed partial class VfpInterpreter
             type = '\0'; length = 0; decimals = 0;
             int dot = name.IndexOf('.');
             string? alias = dot < 0 ? null : name[..dot];
-            if (string.Equals(alias, "m", StringComparison.OrdinalIgnoreCase)) return false;
-            var area = alias is null ? owner.Session.AreaAt(owner.Session.CurrentArea)
-                : owner.Session.OpenAreas.FirstOrDefault(a => a.Alias.Equals(alias, StringComparison.OrdinalIgnoreCase));
             string field = dot < 0 ? name : name[(dot + 1)..];
+            bool memvar = string.Equals(alias, "m", StringComparison.OrdinalIgnoreCase);
+            var area = memvar ? null : alias is null ? owner.Session.AreaAt(owner.Session.CurrentArea)
+                : owner.Session.OpenAreas.FirstOrDefault(a => a.Alias.Equals(alias, StringComparison.OrdinalIgnoreCase));
             var column = area?.Table.Columns.FirstOrDefault(c => c.Name.Equals(field, StringComparison.OrdinalIgnoreCase));
-            if (column is null) return false;
-            type = column.Type; length = column.Length; decimals = column.Decimal;
-            return true;
+            if (column is not null)
+            {
+                type = column.Type; length = column.Length; decimals = column.Decimal;
+                return true;
+            }
+            // A logical memvar can only steer the result (an IIF condition), never size it; numeric
+            // memvars have no field width and keep the variable padding.
+            if ((memvar || alias is null) && owner.Memory.IsDefined(field) && owner.Memory.Get(field).Type == VfpType.Logical)
+            {
+                type = 'L'; length = 1;
+                return true;
+            }
+            return false;
         }
     }
 
