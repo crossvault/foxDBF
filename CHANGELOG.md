@@ -4,6 +4,44 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [0.16.0] - 2026-11-12
+
+### Changed
+
+- **BREAKING:** Expressions, index keys, SQL and the ADO.NET provider keep every byte of a C field, as VFP9 does.
+  A trailing NUL padding is no longer read as blanks. A NUL-padded `'abc'` no longer matches `'abc'` under `==`
+  or `SET ANSI ON`, an all-NUL value is not `EMPTY()`, and NUL-padded values sort below blank-padded ones in
+  `ORDER BY` and in index tags. `DbfRecord`'s indexer still returns the trimmed value.
+- **BREAKING:** REINDEX indexes built by 0.15 or earlier over C fields containing NUL bytes. Those tags hold
+  blank-padded keys for NUL-padded values. Updating or deleting such a record leaves its old entry in the tag;
+  VFP9 leaves it too, except for the first entry of the tag. A `SEEK` can then land on a record that no longer
+  matches.
+- **BREAKING:** `Recovery.Strict` refuses a table with a field of type `'7'` (`DbfCorruptHeaderException`), as
+  VFP9 cannot read it. `Recovery.Tolerant` opens it and decodes the field as text.
+- **BREAKING:** dBase III `.dbt` memos are read as VFP9 reads them. Every byte up to the first `0x1A` is
+  returned, across blocks and with NUL bytes kept. The blank padding after the `0x1A 0x1A` terminator is no
+  longer part of the memo, and NUL bytes are no longer stripped.
+- **BREAKING:** For dBase IV `.dbt` memos, the stored block length counts the 8-byte block header, as VFP9
+  reads it. The memo is 8 bytes shorter than before. A length of 8 is an empty memo, and a length below 8 is
+  null (VFP9: error 1903). A length past the end of the file returns the bytes up to the end of the file, where
+  it used to return null.
+- **BREAKING:** The column type of a SQL `UNION` over numeric branches follows VFP9. The column takes the type of
+  the first branch that is not I, with the largest width and decimals of all branches: F first gives F, B first
+  gives `B` with width 8 (CLR `double`), I with Y gives `Y,8,4`. A Y column with an N, F or B column raises error
+  1851, as in VFP9; it used to return N. `INTO TABLE` and `INTO CURSOR` write the same descriptors.
+- **BREAKING:** SQL result columns of `ABS`, `IIF`, `ICASE`, `NVL` and `EVL` over an F field, and aggregates of
+  such expressions such as `SUM(ABS(f))`, are N as in VFP9. A bare F field and `SUM`/`AVG`/`MAX`/`MIN` of a bare
+  F field stay F. The CLR types of these columns are unchanged.
+
+### Fixed
+
+- dBase II (0x02) tables read the decimal count from descriptor byte 15. N fields such as `N(8,3)` keep their
+  fraction.
+- `Recovery.Reconstruct` keeps an intact version byte (for example 0x30, 0x31, 0x83, 0x8B, 0xF5) when the
+  on-disk header length matches its layout, and rebuilds only the record count from the file length. A VFP free
+  table with only C (and M) columns is no longer read as dBase 0x03: 5 records came back as 29. A version without
+  a memo file is still replaced for a table with memo columns.
+
 ## [0.15.0] - 2026-11-12
 
 ### Added
