@@ -44,7 +44,10 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
   of the same field value is the same directly, in `SCAN`, after assignment, in SQL projections and in `WHERE`.
 - microVFP `SCATTER` (`MEMVAR`, `TO` array, `NAME`) reads N, F, B and Y fields like a field read, so the
   memory variable equals the field, keeps its display decimals and currency type, and `GATHER` writes the
-  value back unchanged; `SELECT * INTO TABLE`/`CURSOR` copies large F values with their stored digits.
+  value back unchanged; `SCATTER ... BLANK` leaves Y fields currency.
+- SQL copies F fields with VFP9's stored digits when the decoded double would lose some (for example
+  `123456789012.3456` and `1234567890123.5679` in `INTO TABLE`, `CURSOR` and `ARRAY`), and `DISTINCT`, `UNION`
+  and `GROUP BY` compare F values by their 16-digit field read, as VFP9 does; `GROUP BY` writes the last row's digits.
 - `STR` with more decimals than the field (for example `STR(n, 30, 6)` of an N(20,4) field) shows VFP9's digits.
 - A dynamically typed SQL projection whose value overflows (for example `EVALUATE('1/0')`) stays a numeric column.
 
