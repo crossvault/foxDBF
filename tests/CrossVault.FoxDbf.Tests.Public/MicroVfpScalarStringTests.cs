@@ -344,39 +344,38 @@ public sealed class MicroVfpScalarStringTests
             Alines(h, "ALINES(ld, '||a||||', 0, '||')", "ld[1]", "ld[2]", "ld[3]"));
     }
 
-    [Fact]
-    public async Task Alines_LargeCrOnlyInput_Flag4_CompletesWithinBoundedTime()
-    {
-        var task = Task.Run(() =>
-        {
-            using var h = new H();
-            h.Run("lcText = REPLICATE(CHR(13), 500000)");
-            Assert.Equal(500000m, h.Num("LEN(lcText)"));
-            return h.Num("ALINES(la, lcText, 4)");
-        });
+    // Complexity guards: only the ALINES call is timed, so thread-pool or CPU contention from a parallel
+    // test run cannot fail them; a quadratic scan over these 500 000-character inputs takes minutes.
+    private static readonly TimeSpan AlinesWorkBudget = TimeSpan.FromSeconds(10);
 
-        var completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(30)));
-        Assert.True(ReferenceEquals(task, completed),
-            "ALINES did not complete within the bounded large-input budget.");
-        Assert.Equal(0m, await task);
+    [Fact]
+    public void Alines_LargeCrOnlyInput_Flag4_CompletesWithinBoundedTime()
+    {
+        using var h = new H();
+        h.Run("lcText = REPLICATE(CHR(13), 500000)");
+        Assert.Equal(500000m, h.Num("LEN(lcText)"));
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        decimal count = h.Num("ALINES(la, lcText, 4)");
+        watch.Stop();
+        Assert.True(watch.Elapsed < AlinesWorkBudget,
+            $"ALINES took {watch.Elapsed} for the large-input case.");
+        Assert.Equal(0m, count);
     }
 
     [Fact]
-    public async Task Alines_LongNearMissDelimiter_Flag4_CompletesWithinBoundedTime()
+    public void Alines_LongNearMissDelimiter_Flag4_CompletesWithinBoundedTime()
     {
-        var task = Task.Run(() =>
-        {
-            using var h = new H();
-            h.Run("lcText = REPLICATE('a', 500000)");
-            Assert.Equal(500000m, h.Num("LEN(lcText)"));
-            Assert.Equal(250001m, h.Num("LEN(REPLICATE('a', 250000) + 'b')"));
-            return h.Num("ALINES(la, lcText, 4, REPLICATE('a', 250000) + 'b')");
-        });
-
-        var completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(30)));
-        Assert.True(ReferenceEquals(task, completed),
-            "ALINES did not complete within the bounded near-miss budget.");
-        Assert.Equal(1m, await task);
+        using var h = new H();
+        h.Run("lcText = REPLICATE('a', 500000)");
+        Assert.Equal(500000m, h.Num("LEN(lcText)"));
+        Assert.Equal(250001m, h.Num("LEN(REPLICATE('a', 250000) + 'b')"));
+        h.Run("lcDelim = REPLICATE('a', 250000) + 'b'");
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        decimal count = h.Num("ALINES(la, lcText, 4, lcDelim)");
+        watch.Stop();
+        Assert.True(watch.Elapsed < AlinesWorkBudget,
+            $"ALINES took {watch.Elapsed} for the near-miss delimiter case.");
+        Assert.Equal(1m, count);
     }
 
     [Fact]
