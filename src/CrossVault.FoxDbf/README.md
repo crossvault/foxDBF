@@ -59,6 +59,10 @@ provider built on this package). Need to run VFP9 stored-procedure `.prg` busine
   numeric keys; **late materialization** (reads only the surviving records); an adaptive sparse/dense
   bitmap; and a **SYS(3054)-style ShowPlan** (`DbfTable.ExplainQuery`). The result is always identical
   to a full scan.
+  To query without any index (VFP9 `SET OPTIMIZE OFF` / `NOOPTIMIZE` for Xbase commands), pass
+  `new EvaluationContext { Optimize = false }` to `DbfTable.Query` / `Count` / `ExplainQuery`; it reads
+  every record and gives VFP9's scan answer even when a `.cdx` is out of date. VFP9's `SELECT` ignores
+  `SET OPTIMIZE`, so the ADO.NET connection string has no such key.
 - An optional **memory-mapped read backend** (`DbfOptions.ReadBackend`) for local files (falls back
   to `FileStream` on network shares).
 
