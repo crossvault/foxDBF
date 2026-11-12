@@ -81,6 +81,68 @@ public sealed class ReconstructIntactVersionTests
         Assert.Equal("r5", table.GetRecord(Rows - 1)!.Value.GetString("C")!.TrimEnd());
     }
 
+    [Fact]
+    public void Reconstruct_keeps_the_vfp_version_of_a_file_cut_inside_the_backlink()
+    {
+        // HeaderLength 328 matches 0x30, but the file ends at byte 200: no record is complete. Inferring
+        // 0x03 without the backlink would read the backlink's NUL bytes as 12 records.
+        byte[] bytes = BuildVfp(0x30, memo: false, dbc: false, headerCount: Rows)[..200];
+
+        using var table = DbfTable.Open(new MemoryStream(bytes), new DbfOptions { Recovery = Recovery.Reconstruct });
+
+        Assert.Equal(0x30, table.Version.Code);
+        Assert.Equal(0, table.RecordCount);
+    }
+
+    [Theory]
+    [InlineData((byte)0x83)]
+    [InlineData((byte)0x8B)]
+    [InlineData((byte)0xF5)]
+    public void Reconstruct_keeps_an_intact_memo_version_of_the_dbase_layout(byte version)
+    {
+        byte[] bytes = BuildDbase(version, memo: true);
+
+        using var table = DbfTable.Open(new MemoryStream(bytes), new DbfOptions { Recovery = Recovery.Reconstruct });
+
+        Assert.Equal(version, table.Version.Code);
+        Assert.Equal(32 + 2 * 32 + 1, table.HeaderLength);
+        Assert.Equal(Rows, table.RecordCount);
+        Assert.Equal("r5", table.GetRecord(Rows - 1)!.Value.GetString("C")!.TrimEnd());
+    }
+
+    [Fact]
+    public void Reconstruct_does_not_keep_a_version_without_memo_file_for_a_table_with_memo_columns()
+    {
+        // 0x03 has no memo file; keeping it would read every M value as null. The inference picks 0x83.
+        byte[] bytes = BuildDbase(0x03, memo: true);
+
+        using var table = DbfTable.Open(new MemoryStream(bytes), new DbfOptions { Recovery = Recovery.Reconstruct });
+
+        Assert.Equal(0x83, table.Version.Code);
+        Assert.NotEqual(MemoKind.None, table.Version.MemoKind);
+        Assert.Equal(Rows, table.RecordCount);
+    }
+
+    /// <summary>A dBase-layout table (no backlink): C(10) and an optional M(10) memo pointer, five
+    /// records, header count 8.</summary>
+    private static byte[] BuildDbase(byte version, bool memo)
+    {
+        int descriptors = memo ? 2 : 1;
+        int header = 32 + descriptors * 32 + 1;
+        int recordLength = 1 + 10 + (memo ? 10 : 0);
+        var bytes = new byte[header + Rows * recordLength + 1];
+        bytes[0] = version;
+        WriteGeometry(bytes, 8, header, recordLength);
+        WriteDescriptor(bytes.AsSpan(32, 32), "C", 'C', 10);
+        if (memo) WriteDescriptor(bytes.AsSpan(64, 32), "M", 'M', 10);
+        bytes[header - 1] = 0x0D;
+        WriteRows(bytes, header, recordLength);
+        if (memo)
+            for (int i = 0; i < Rows; i++)
+                bytes.AsSpan(header + i * recordLength + 11, 10).Fill(0x20);
+        return bytes;
+    }
+
     /// <summary>A VFP table: C(10), then an optional M(4) memo pointer (or an I(4) when
     /// <paramref name="withInteger"/>), the 263-byte backlink (a ".dbc" path when <paramref name="dbc"/>),
     /// five records and the 0x1A EOF byte, with the header record count set to <paramref name="headerCount"/>.</summary>

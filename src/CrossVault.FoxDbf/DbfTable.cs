@@ -634,11 +634,15 @@ public sealed partial class DbfTable : IDisposable
         // a recognized 32/32-layout version whose HeaderLength is exactly offset(0x0D) + 1 (+ 263 for the
         // VFP backlink). Without this a VFP free table of only C columns (no _NullFlags, no ".dbc"
         // string, no VFP-only type) was inferred as 0x03, lost its 263-byte backlink, and read the
-        // backlink bytes as records (Paket R5: 5 records on disk came back as 29).
+        // backlink bytes as records (Paket R5: 5 records on disk came back as 29). A file cut inside the
+        // header keeps the version too (it then has 0 records instead of backlink bytes read as records).
+        // A version without a memo file is not trusted when the table has memo columns: keeping it would
+        // read every memo as null, the inference picks a memo version instead.
         var onDisk = rawHeader.Version;
+        bool memoColumns = columns.Any(c => c.Type is 'M' or 'G' or 'P');
         if (onDisk.IsRecognized && onDisk.HeaderSize == 32 && onDisk.DescriptorWidth == 32
             && rawHeader.HeaderLength == headerBase + (onDisk.HasBacklink ? 263 : 0)
-            && rawHeader.HeaderLength <= fileSize)
+            && !(memoColumns && onDisk.MemoKind == MemoKind.None))
             inferredByte = rawHeader.VersionByte;
 
         var inferredVersion = DbfVersion.FromByte(inferredByte);

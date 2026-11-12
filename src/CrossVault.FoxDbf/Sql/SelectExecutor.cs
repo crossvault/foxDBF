@@ -1042,7 +1042,8 @@ internal sealed class SelectExecutor
             return lead switch
             {
                 'Y' => new SqlColumn(name, 'Y', 8, 4, clr),
-                'B' => new SqlColumn(name, 'B', 8, dec, clr),
+                // A B column is double everywhere (reader contract, INTO CURSOR re-read); decimal would cut digits.
+                'B' => new SqlColumn(name, 'B', 8, dec, typeof(double)),
                 'F' => new SqlColumn(name, 'F', len, dec, clr),
                 _ => new SqlColumn(name, 'N', len, dec, clr),
             };
