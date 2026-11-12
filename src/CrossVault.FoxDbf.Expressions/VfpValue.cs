@@ -65,6 +65,20 @@ public readonly struct VfpValue : IEquatable<VfpValue>
     internal VfpValue WithDisplayDecimals(int decimals) => new(_type, _num, _dec, _isExact,
         _str, _bool, _date, _isBinary, (byte)(Math.Clamp(decimals, -1, 19) + 1));
 
+    // Round9's live oracle: large finite B fields use a 21-column picture, N/F fields
+    // retain their declared width, including after assignment and INTO ARRAY.
+    // Numeric values do not use the date payload; keep the row value's size unchanged.
+    internal int NumericDisplayWidth => _type == VfpType.Numeric && _date.Ticks > 0 ? (int)_date.Ticks
+        : Math.Abs(_num) >= 1000000000000000d && double.IsFinite(_num)
+            ? Math.Max(20, (int)Math.Floor(Math.Log10(Math.Abs(_num))) + 1 + (DisplayDecimals > 0 ? DisplayDecimals + 1 : 0) + (_num < 0 ? 1 : 0))
+            : Math.Max(20, VfpRuntime.NumericOverflowWidth(DisplayDecimals));
+    internal VfpValue WithNumericDisplayWidth(int width) => _type == VfpType.Numeric && double.IsFinite(_num)
+        ? new(_type, _num, _dec, _isExact, _str, _bool, new System.DateTime(width), _isBinary, _displayDecimalsPlusOne)
+        : this;
+    // Field conversion already populated the double payload; do not convert decimal again per row.
+    internal bool IsFinite => double.IsFinite(_num);
+    internal bool NeedsNumericPicture(double limit) => Math.Abs(_num) >= limit && double.IsFinite(_num);
+
     // VFP9 calculated overflow (NPV) has a different TRANSFORM width from stored DBF overflow.
     // Retain the observed width on the value so assignments and later SET DECIMALS preserve it.
     // Non-finite double-backed numbers do not use the exact-decimal payload. Reuse it
@@ -75,18 +89,100 @@ public readonly struct VfpValue : IEquatable<VfpValue>
         ? new(_type, _num, width, _isExact, _str, _bool, _date, _isBinary, _displayDecimalsPlusOne)
         : this;
 
-    internal static VfpValue FromField(object? value, char type, int decimals) => value switch
+    // Only non-finite values use this spare payload. The integer part is the stored
+    // width; the fractional part holds six digits of immediate width and two
+    // digits of scale+1. Re-division needs the original shape scale, which can
+    // differ from DisplayDecimals for a constant quotient (review oracle).
+    internal int ImmediateOverflowWidth => OverflowDisplayWidth == 0 ? 0
+        : (int)((_dec - decimal.Truncate(_dec)) * 1000000m);
+    internal int OverflowShapeScale => OverflowDisplayWidth == 0 ? -1
+        : (int)((_dec - decimal.Truncate(_dec)) * 100000000m) % 100 - 1;
+    internal VfpValue WithOverflowWidths(int stored, int immediate, int scale = -1)
+        => new(_type, _num, stored + Math.Clamp(immediate, 0, 999999) / 1000000m
+            + Math.Clamp(scale + 1, 0, 99) / 100000000m,
+            _isExact, _str, _bool, _date, _isBinary, _displayDecimalsPlusOne);
+
+    internal static VfpValue FromField(object? value, char type, int decimals)
     {
-        null => Null,
-        VfpValue typed => typed.WithFieldScale(type, decimals),
-        _ when type == 'Y' => Currency(FromClr(value).AsNumber),
-        decimal number => new(VfpType.Numeric, (double)number, number, true, null, false, default,
-            displayDecimalsPlusOne: (byte)(Math.Clamp(decimals, 0, 19) + 1)),
-        double number => Number(number, decimals),
-        long number => new(VfpType.Numeric, number, number, true, null, false, default,
-            displayDecimalsPlusOne: (byte)(Math.Clamp(decimals, 0, 19) + 1)),
-        _ => FromClr(value),
-    };
+        // N fields with decimals are the common row-level case. Keep their direct
+        // return ahead of overflow dispatch and reuse the required double conversion.
+        if (value is decimal number)
+        {
+            if (type == 'Y') return Currency(number);
+            double numeric = (double)number;
+            if (Math.Abs(numeric) >= 1000000000000d)
+                return LargeNumericField(number, decimals);
+            return new(VfpType.Numeric, numeric, number, true, null, false, default,
+                displayDecimalsPlusOne: (byte)(Math.Clamp(decimals, 0, 19) + 1));
+        }
+        if (value is double floating && type != 'Y')
+            return type == 'F' && Math.Abs(floating) >= 1000000000000d && Math.Abs(floating) < (double)decimal.MaxValue
+                ? LargeNumericField(decimal.Parse(floating.ToString("R", System.Globalization.CultureInfo.InvariantCulture), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture), decimals)
+                : type == 'B' && Math.Abs(floating) >= 1000000000000d && double.IsFinite(floating)
+                ? Number(floating, decimals).WithNumericDisplayWidth(21) : Number(floating, decimals);
+        if (value is int integer && type != 'Y') return Integer(integer);
+        return OtherField(value, type, decimals);
+    }
+
+    private static VfpValue OtherField(object? value, char type, int decimals)
+        => value switch
+        {
+            null => Null,
+            VfpValue typed => typed.WithFieldScale(type, decimals),
+            _ when type == 'Y' => Currency(FromClr(value).AsNumber),
+            long integer when Math.Abs((double)integer) >= 10000000000000000d => LargeNumericField(integer, decimals),
+            long integer => new(VfpType.Numeric, integer, integer, true, null, false, default,
+                displayDecimalsPlusOne: (byte)(Math.Clamp(decimals, 0, 19) + 1)),
+            _ => FromClr(value),
+        };
+
+    // Stored overflow and large finite TRANSFORM pictures need the field width.
+    // Keep it out of the ordinary decimal conversion's argument list.
+    internal static VfpValue FromFieldWithWidth(object? value, char type, int decimals, int width)
+    {
+        var result = value switch
+        {
+            null => Null,
+            VfpValue typed when typed.Type == VfpType.Numeric && !double.IsFinite(typed.AsDouble)
+                => FieldOverflow(typed.WithFieldScale(type, decimals), type, decimals, width),
+            VfpValue typed => typed.WithFieldScale(type, decimals),
+            _ when type == 'Y' => Currency(FromClr(value).AsNumber),
+            double floating when !double.IsFinite(floating)
+                => FieldOverflow(Number(floating, decimals), type, decimals, width),
+            double floating => FromField(floating, type, decimals),
+            int integer => Integer(integer),
+            float floating when !float.IsFinite(floating)
+                => FieldOverflow(FromClr(value), type, decimals, width),
+            _ => FromField(value, type, decimals),
+        };
+        return result.Type == VfpType.Numeric && double.IsFinite(result.AsDouble)
+            && Math.Abs(result.AsDouble) >= Math.Pow(10, Math.Min(12, (type == 'B' ? 21 : width) - (decimals > 0 ? decimals + 2 : 1)))
+            ? result.WithNumericDisplayWidth(type == 'B' ? 21 : Math.Max(1, width))
+            : result;
+    }
+
+    private static VfpValue FieldOverflow(VfpValue value, char type, int decimals, int width)
+        // Round4: assigning stored overflow retains the column width/scale. Decimal
+        // fields use their direct conversion above, without a second value copy.
+        => width > 0 && value.Type == VfpType.Numeric && !double.IsFinite(value.AsDouble)
+            ? value.WithOverflowDisplayWidth(Math.Max(type == 'I' ? 11 : width,
+                VfpRuntime.NumericOverflowWidth(decimals))) : value;
+
+    private static VfpValue LargeNumericField(decimal number, int decimals)
+    {
+        // Round10's raw N(20) fixture: field decoding consumes at most sixteen
+        // significant digits (123456789012345678 reads as 123456789012345600).
+        int digits = decimal.Truncate(Math.Abs(number)).ToString(System.Globalization.CultureInfo.InvariantCulture).Length;
+        decimal unit = (decimal)Math.Pow(10, digits - 16);
+        number = decimal.Truncate(number / unit) * unit;
+        // The live largeval fixture distinguishes coefficient conversion from a direct
+        // decimal cast: -999999999999997.5 reads as -999999999999997.6 in VFP9.
+        string text = number.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture);
+        int dot = text.IndexOf('.');
+        int scale = dot < 0 ? 0 : text.Length - dot - 1;
+        double coefficient = double.Parse(dot < 0 ? text : text.Remove(dot, 1), System.Globalization.CultureInfo.InvariantCulture);
+        return Number(coefficient / Math.Pow(10, scale), decimals).WithNumericDisplayWidth(20);
+    }
 
     internal VfpValue WithFieldScale(char type, int decimals) => IsNull ? this
         : type == 'Y' ? Currency(AsNumber)
@@ -217,17 +313,41 @@ public readonly struct VfpValue : IEquatable<VfpValue>
             }
             if (_isExact || !double.IsFinite(_num) || Math.Abs(_num) >= (double)decimal.MaxValue) return AsNumber;
             Span<char> text = stackalloc char[32];
-            _num.TryFormat(text, out int length, "G16", System.Globalization.CultureInfo.InvariantCulture);
-            return decimal.TryParse(text[..length], System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out decimal value)
-                ? Math.Round(value, 15, MidpointRounding.AwayFromZero) : AsNumber;
+            // VFP9 rounds the sixteenth significant digit away at a midpoint.
+            bool large = Math.Abs(_num) >= 100000000000000d;
+            _num.TryFormat(text, out int length, large ? "G17" : "G16", System.Globalization.CultureInfo.InvariantCulture);
+            if (!decimal.TryParse(text[..length], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out decimal value)) return AsNumber;
+            // Log10 rounds up just below a power of ten (999999999999999.5),
+            // which would incorrectly discard its last fractional digit.
+            int places = large ? 16 - decimal.Truncate(Math.Abs(value))
+                .ToString(System.Globalization.CultureInfo.InvariantCulture).Length : 15;
+            // Sixteen significant digits also limits the integer part: the live B(2)
+            // SUM probe renders 100000123456789016 as 100000123456789000.
+            if (places < 0)
+            {
+                decimal unit = (decimal)Math.Pow(10, -places);
+                return Math.Round(value / unit, 0, MidpointRounding.AwayFromZero) * unit;
+            }
+            return Math.Round(value, places, MidpointRounding.AwayFromZero);
         }
     }
+
+    // The exact value of the double nearest 0.0001, to decimal's 28 places.
+    private const decimal BinaryCurrencyScale = 0.0001000000000000000047921736m;
 
     internal decimal RoundForDisplay(int decimals)
     {
         if (_type != VfpType.Currency)
             return Math.Round(AsDisplayNumber, decimals, MidpointRounding.AwayFromZero);
+        // Round10: currency pictures multiply the scaled integer by the double 0.0001 and round
+        // once (S9: raw -922337203685475800 shows .58, S2: raw ...840 shows .59). Casting the
+        // integer to double first would merge both.
+        if (Math.Abs(_dec) >= 10000000000000m)
+        {
+            string product = (decimal.Truncate(_dec * 10000m) * BinaryCurrencyScale).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return Math.Round(Number(double.Parse(product, System.Globalization.CultureInfo.InvariantCulture)).AsDisplayNumber, decimals, MidpointRounding.AwayFromZero);
+        }
         decimal magnitude = Math.Abs(_dec);
         int digits = magnitude < 1 ? 1 : (int)Math.Floor(Math.Log10((double)magnitude)) + 1;
         // Apply the display's significant-digit limit and requested scale in one rounding.

@@ -32,6 +32,10 @@ public sealed record DbfColumn
     /// <summary>Prefix-sum of prior column lengths; field data lives at record byte <c>Offset + 1</c>.</summary>
     public int Offset { get; }
 
+    // Values below this bound cannot overflow the declared finite TRANSFORM picture.
+    // Cache the negative-sign boundary so ordinary row reads need only one comparison.
+    internal double NumericPictureLimit { get; }
+
     /// <summary>
     /// The VFP field-flags byte from the 32-byte descriptor (offset 18). Only the
     /// 32-byte layout carries it; the 16/48-byte layouts have no such byte and
@@ -71,5 +75,8 @@ public sealed record DbfColumn
         Decimal = decimalCount;
         Offset = offset;
         Flags = flags;
+        NumericPictureLimit = type is 'N' or 'F' or 'B'
+            ? Math.Pow(10, Math.Min(12, (type == 'B' ? 21 : length) - (decimalCount > 0 ? decimalCount + 2 : 1)))
+            : double.PositiveInfinity;
     }
 }

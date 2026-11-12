@@ -1320,27 +1320,41 @@ public sealed partial class VfpInterpreter
         return VfpValue.Null;
     }
 
+    // Keep the common scalar read inline despite the cold width and overflow branches.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private VfpValue ReadExpressionField(VfpSession.WorkArea area, string name, int index)
     {
         if (index < 0) return VfpValue.Null;
         var column = area.Table.Columns[index];
-        return VfpValue.FromField(ReadField(area, name), column.Type, column.Decimal);
+        object? value = ReadField(area, name, index);
+        // Below the field-picture boundary, construct B/I directly without another boxed conversion.
+        if (column.Type == 'B' && value is double floating && Math.Abs(floating) < column.NumericPictureLimit)
+            return VfpValue.Number(floating, column.Decimal);
+        if (column.Type == 'I' && value is int integer) return VfpValue.Integer(integer);
+        var numeric = VfpValue.FromField(value, column.Type, column.Decimal);
+        if (numeric.IsFinite)
+        {
+            return numeric.NeedsNumericPicture(column.NumericPictureLimit)
+                ? numeric.WithNumericDisplayWidth(column.Type == 'B' ? 21 : column.Length)
+                : numeric;
+        }
+        return VfpValue.FromFieldWithWidth(value, column.Type, column.Decimal, column.Length);
     }
 
     // Field read WITH the buffer overlay: a buffered edit to the current record shadows the on-disk value,
     // and a read on a buffered APPENDED row (recno past the physical count) comes from the append buffer.
     // Falls through to the raw on-disk read when the area is unbuffered / the field is unedited.
-    private object? ReadField(VfpSession.WorkArea wa, string field)
+    private object? ReadField(VfpSession.WorkArea wa, string field, int index = -1)
     {
         if (DefaultRowFor(wa.Area) is { } pending && Meta(wa.Area).RecNo == pending.RecNo)
         {
-            var col = wa.Table.Columns[ColumnIndex(wa.Table, field)];
+            var col = wa.Table.Columns[index >= 0 ? index : ColumnIndex(wa.Table, field)];
             if (!pending.Values.TryGetValue(col.Name, out var value)) return BlankFor(col);
             return value is string text && col.Type == 'C' ? FitToField(col, text) : value;
         }
         if (_meta.TryGetValue(wa.Area, out var mm) && mm.Buffering > 1 && mm.Buf is { } buf)
         {
-            int idx = ColumnIndex(wa.Table, field);
+            int idx = index >= 0 ? index : ColumnIndex(wa.Table, field);
             if (idx < 0) return null;
             int rcTable = wa.Table.RecordCount;
             if (mm.RecNo > rcTable)                                // a buffered appended row.
@@ -1353,7 +1367,7 @@ public sealed partial class VfpInterpreter
                 && e.Fields.TryGetValue(idx, out var bv))
                 return bv;                                          // buffered edit shadows the disk value.
         }
-        return ReadFieldOnDisk(wa, field);
+        return ReadFieldOnDisk(wa, field, index);
     }
 
     // The typed blank an unset buffered-append field READS as before the commit: the column type's EMPTY()
@@ -1373,9 +1387,11 @@ public sealed partial class VfpInterpreter
 
     // Field read straight from the on-disk record (ignores the buffer) — the pre-change value OLDVAL is
     // seeded from and the value CURVAL() reports.
-    private object? ReadFieldOnDisk(VfpSession.WorkArea wa, string field)
+    private object? ReadFieldOnDisk(VfpSession.WorkArea wa, string field, int index = -1)
     {
-        int idx = ColumnIndex(wa.Table, field);
+        // Expression resolution already found the column. Reuse it through the
+        // buffer/disk read instead of resolving the same name again for each row.
+        int idx = index >= 0 ? index : ColumnIndex(wa.Table, field);
         if (idx < 0) return null;
         var m = Meta(wa.Area);
         int rc = wa.Table.RecordCount;

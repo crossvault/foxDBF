@@ -113,11 +113,28 @@ public sealed partial class VfpInterpreter
         VfpType.Currency => (v.AsNumber < 0 ? "$-" : "$")
             + Math.Abs(v.RoundForDisplay(_ctx.NumericDecimals)).ToString("N" + _ctx.NumericDecimals, CultureInfo.InvariantCulture),
         VfpType.Numeric or VfpType.Integer when _ctx.FixedNumeric => FixedNumber(v),
+        // Round9: a finite B has a 21-column picture; N/F retain the field width.
+        // VFP9 still shows picture overflow for finite values that exceed that width.
+        VfpType.Numeric when v.DisplayDecimals > 0 && Math.Abs(v.AsDouble) >= Math.Pow(10, Math.Max(1, v.NumericDisplayWidth - 1 - v.DisplayDecimals) - (v.AsDouble < 0 ? 1 : 0))
+            => new string('*', Math.Max(1, v.NumericDisplayWidth - 1 - v.DisplayDecimals)) + "." + new string('*', v.DisplayDecimals),
+        VfpType.Numeric when v.DisplayDecimals == 0 && Math.Abs(v.AsDouble) >= Math.Pow(10, v.NumericDisplayWidth - (v.AsDouble < 0 ? 1 : 0))
+            => new string('*', v.NumericDisplayWidth),
+        VfpType.Numeric when Math.Abs(v.AsDouble) >= 1000000000000d => TransformLargeNumber(v),
         VfpType.Numeric when v.DisplayDecimals >= 0 && v.AsNumber != decimal.Truncate(v.AsNumber)
             => Math.Round(v.AsDisplayNumber, v.DisplayDecimals, MidpointRounding.AwayFromZero).ToString("F" + v.DisplayDecimals, CultureInfo.InvariantCulture),
         VfpType.Numeric or VfpType.Integer => NumberToPlainString(v.AsNumber),
         _ => v.ToString(),
     };
+
+    private static string TransformLargeNumber(VfpValue value)
+    {
+        // TRANSFORM applies VFP's 16 significant display digits to exact N values too.
+        decimal number = VfpValue.Number(value.AsDouble).AsDisplayNumber;
+        return value.DisplayDecimals >= 0 && number != decimal.Truncate(number)
+            ? Math.Round(number, value.DisplayDecimals, MidpointRounding.AwayFromZero)
+                .ToString("F" + value.DisplayDecimals, CultureInfo.InvariantCulture)
+            : NumberToPlainString(number);
+    }
 
     private string TransformEmptyDate()
     {

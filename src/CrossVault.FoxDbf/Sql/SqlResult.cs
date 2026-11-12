@@ -54,6 +54,7 @@ public sealed class SqlColumn
 /// </summary>
 public sealed class SqlResult
 {
+    internal Dictionary<(object?[] Row, int Column), CrossVault.FoxDbf.Expressions.VfpValue>? OverflowValues { get; init; }
     /// <summary>The column schema, in select-list order. Empty for a non-row command.</summary>
     public IReadOnlyList<SqlColumn> Columns { get; }
 

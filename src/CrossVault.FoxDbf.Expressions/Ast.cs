@@ -12,7 +12,7 @@ internal sealed class BuildContext
 }
 
 /// <summary>Immutable AST node base. Provides interpret, compile and infer paths.</summary>
-internal abstract class AstNode
+internal abstract partial class AstNode
 {
     /// <summary>Tree-walking interpretation.</summary>
     public abstract VfpValue Eval(IRowContext row, EvaluationContext ctx);
@@ -22,7 +22,9 @@ internal abstract class AstNode
         => Eval(row, ctx);
 
     internal virtual bool HasQuotient => false;
-    internal virtual int AggregateOverflowWidth(int setting, int sampled, bool calculate) => VfpRuntime.NumericOverflowWidth(Math.Max(setting, sampled));
+    // Formatting propagates through INT/ROUND; aggregate guard precision stops there.
+    internal virtual bool HasAggregateQuotient => false;
+    internal virtual int AggregateOverflowWidth(int setting, int sampled, bool calculate, int expressionWidth = 0) => VfpRuntime.NumericOverflowWidth(Math.Max(setting, sampled));
 
     internal virtual bool ContainsFunction(Func<string, int, bool> predicate) => false;
 
@@ -35,12 +37,12 @@ internal abstract class AstNode
     // SQL cursor storage has different sizing rules from index expressions.
     internal virtual VfpTypeInfo InferSql(ISchema schema) => Infer(schema);
     // The host supplies its VFP runtime exception type without an expression-engine dependency on microVFP.
-    internal virtual (VfpValue Value, int? Decimals) ProbeAggregate<TVfpError>(ISchema schema, IRowContext row, EvaluationContext context) where TVfpError : Exception
+    internal virtual (VfpValue Value, int? Decimals, int Width) ProbeAggregate<TVfpError>(ISchema schema, IRowContext row, EvaluationContext context) where TVfpError : Exception
     {
         var value = Eval(row, context);
         var info = Infer(schema);
         int? scale = info.Length > 0 ? info.Decimals : VfpRuntime.IsNumeric(value) ? LiteralNode.Precision(value) : null;
-        return (value, scale);
+        return (value, scale, 0);
     }
     internal virtual bool IsSqlConstant => false;
     internal virtual bool IsSqlCandidate(IRowContext row, EvaluationContext context, bool negated = false) => true;
@@ -65,6 +67,7 @@ internal sealed partial class LiteralNode : AstNode
     public LiteralNode(VfpValue value)
     {
         _value = value;
+        _overflowShape = LiteralOverflowShape(value);
         _byteLiteral = value.Type == VfpType.Character && !value.IsBinary
             && value.AsString.AsSpan().IndexOfAnyInRange('\u0080', '\u009f') >= 0;
     }
@@ -156,8 +159,9 @@ internal sealed partial class UnaryNode : AstNode
 {
     private readonly UnOp _op;
     private readonly AstNode _operand;
-    public UnaryNode(UnOp op, AstNode operand) { _op = op; _operand = operand; HasQuotient = operand.HasQuotient; }
+    public UnaryNode(UnOp op, AstNode operand) { _op = op; _operand = operand; HasQuotient = operand.HasQuotient; SelectionCount = operand.SelectionCount; HasAggregateQuotient = operand.HasAggregateQuotient; }
     internal override bool HasQuotient { get; }
+    internal override bool HasAggregateQuotient { get; }
 
     internal override bool IsSqlCandidate(IRowContext row, EvaluationContext context, bool negated = false)
         => _op != UnOp.Not || _operand.IsSqlCandidate(row, context, !negated);
@@ -194,17 +198,20 @@ internal sealed partial class UnaryNode : AstNode
     public override void CollectFields(ICollection<string> into, Func<string, int, bool>? skipFunction = null) => _operand.CollectFields(into, skipFunction);
 }
 
-internal sealed partial class BinaryNode : AstNode
+internal partial class BinaryNode : AstNode
 {
-    private readonly BinOp _op;
-    private readonly AstNode _left, _right;
+    protected readonly BinOp _op;
+    protected readonly AstNode _left, _right;
     private readonly bool _constant;
     internal override bool HasQuotient { get; }
+    internal override bool HasAggregateQuotient { get; }
     public BinaryNode(BinOp op, AstNode left, AstNode right)
     {
         _op = op; _left = left; _right = right;
         _constant = left.IsSqlConstant && right.IsSqlConstant;
+        SelectionCount = left.SelectionCount + right.SelectionCount;
         HasQuotient = op == BinOp.Div || op is BinOp.Add or BinOp.Sub or BinOp.Mul && (left.HasQuotient || right.HasQuotient);
+        HasAggregateQuotient = op == BinOp.Div || op is BinOp.Add or BinOp.Sub or BinOp.Mul && (left.HasAggregateQuotient || right.HasAggregateQuotient);
     }
 
     internal override bool IsSqlCandidate(IRowContext row, EvaluationContext context, bool negated = false)
@@ -219,7 +226,9 @@ internal sealed partial class BinaryNode : AstNode
     {
         var l = _left.Eval(row, ctx);
         if (_op is BinOp.And or BinOp.Or && VfpRuntime.Decides(_op, l)) return l;
-        return VfpRuntime.Binary(_op, l, _right.Eval(row, ctx), ctx, IsSqlConstant);
+        // Overflow subclasses have their own evaluator. Ordinary arithmetic keeps
+        // the cached flag read that the formerly sealed BinaryNode inlined.
+        return VfpRuntime.Binary(_op, l, _right.Eval(row, ctx), ctx, _constant);
     }
 
     internal override VfpValue Eval(
@@ -227,7 +236,7 @@ internal sealed partial class BinaryNode : AstNode
     {
         var l = _left.Eval(row, ctx, functionResolver);
         if (_op is BinOp.And or BinOp.Or && VfpRuntime.Decides(_op, l)) return l;
-        return VfpRuntime.Binary(_op, l, _right.Eval(row, ctx, functionResolver), ctx, IsSqlConstant);
+        return VfpRuntime.Binary(_op, l, _right.Eval(row, ctx, functionResolver), ctx, _constant);
     }
 
     internal override bool ContainsFunction(Func<string, int, bool> predicate)
@@ -308,6 +317,8 @@ internal sealed partial class FunctionNode : AstNode
     private readonly string _upper;
     private readonly AstNode[] _args;
     private readonly bool _formatOverflow;
+    internal override bool HasQuotient { get; }
+    internal override bool HasAggregateQuotient { get; }
     public FunctionNode(string name, AstNode[] args)
     {
         _name = name;
@@ -316,7 +327,20 @@ internal sealed partial class FunctionNode : AstNode
         // resolved after its arguments were evaluated (VfpRuntime's unknown-function path does that for others).
         if (_upper == "ICAS") _upper = "ICASE";
         _args = args;
-        _formatOverflow = _upper == "TRANSFORM" && args.Length == 1 && args[0].HasQuotient && args[0].IsSqlConstant;
+        HasQuotient = _upper is "INT" or "ROUND" or "ABS" or "SQRT" or "MAX" or "MIN" or "IIF" or "ICASE" or "NVL" or "EVL"
+            && Array.Exists(args, a => a.HasQuotient);
+        HasAggregateQuotient = _upper is "ABS" or "SQRT" or "MAX" or "MIN" or "IIF" or "ICASE" or "NVL" or "EVL"
+            && Array.Exists(args, a => a.HasAggregateQuotient);
+        SelectionCount = (_upper is "IIF" or "ICASE" or "NVL" or "EVL" ? 1 : 0);
+        _selectionOffsets = new int[args.Length];
+        _resolverArguments = new ExpressionArgument[args.Length];
+        for (int i = 0; i < args.Length; i++)
+        {
+            _selectionOffsets[i] = SelectionCount;
+            SelectionCount += args[i].SelectionCount;
+            _resolverArguments[i] = new ExpressionArgument(args[i]);
+        }
+        _formatOverflow = _upper == "TRANSFORM" && args.Length == 1 && (args[0].HasQuotient || args[0] is FieldNode);
     }
 
     public override VfpValue Eval(IRowContext row, EvaluationContext ctx)
@@ -355,16 +379,18 @@ internal sealed partial class FunctionNode : AstNode
         return VfpRuntime.CallFunction(_upper, values, ctx, row);
     }
 
-    // Round8's VFP9 matrix limits static widths to function-free constant arithmetic.
-    // Memvars and function results carry runtime widths; SQL inference cannot recover them.
-    // Restrict the hook at parse time, without adding metadata to field reads or assignments.
+    // A bare variable uses the stored width. Immediate arithmetic retains the width
+    // computed at the overflow producer; no AST or condition is evaluated here.
     public VfpValue[] PrepareOverflowFormat(VfpValue[] values, IRowContext row, EvaluationContext ctx)
     {
-        if (_formatOverflow && values[0].Type == VfpType.Numeric && !double.IsFinite(values[0].AsDouble))
-        {
-            var schema = new SqlInferenceSchema(row as ISchema, null, ctx, overflowDisplay: true);
-            values[0] = values[0].WithOverflowDisplayWidth(_args[0].InferSql(schema).Length);
-        }
+        if (_formatOverflow && _args[0] is not FieldNode && values[0].ImmediateOverflowWidth is > 0 and var width)
+            values[0] = values[0].WithOverflowDisplayWidth(width);
+        else if (_formatOverflow && _args[0] is FieldNode field && values[0].Type == VfpType.Numeric
+            && !double.IsFinite(values[0].AsDouble) && row is ISchema schema
+            && schema.TryGetColumn(field.Name, out char type, out int length, out _))
+            // A field is rendered at its physical width; assigning it first makes
+            // a memory numeric. Keep this distinction out of ordinary field reads.
+            values[0] = values[0].WithOverflowDisplayWidth(type == 'I' ? 11 : type == 'B' ? 20 : length);
         return values;
     }
 

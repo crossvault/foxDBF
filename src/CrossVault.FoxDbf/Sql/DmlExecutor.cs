@@ -61,7 +61,7 @@ internal sealed partial class DmlExecutor
         try
         {
             var columns = target.Writer.Schema.Columns;
-            var values = EvaluateValues(_session, st);
+            var values = EvaluateValues(_session, st, columns);
             if (_session.InsertValidatorFor(st.Table) is { } validate)
             {
                 if (st.Columns is null) CheckInsertValueCount(columns, values);
@@ -94,7 +94,7 @@ internal sealed partial class DmlExecutor
     internal static void AppendInsertValuesRow(VfpSession session, DbfWriter writer, InsertStatement st)
     {
         var columns = writer.Schema.Columns;
-        var values = EvaluateValues(session, st);
+        var values = EvaluateValues(session, st, columns);
         if (st.Columns is null) { AppendAllColumns(session, st.Table, writer, columns, values); return; }
         var map = MapValues(st, columns, values);
         EvaluateDbcDefaults(session, st.Table, columns, map);
@@ -104,13 +104,29 @@ internal sealed partial class DmlExecutor
     /// <summary>Evaluate every VALUES expression to a CONSTANT against <see cref="ConstantRow.Instance"/>
     /// through <paramref name="session"/>'s SQL evaluation context: a bare field reference throws, while
     /// constant functions (DATE() / STR() …) evaluate fine.</summary>
-    private static object?[] EvaluateValues(VfpSession session, InsertStatement st)
+    private static object?[] EvaluateValues(VfpSession session, InsertStatement st, IReadOnlyList<DbfColumn> columns)
     {
         var ctx = session.SqlContext();
         var values = new object?[st.Values.Count];
         for (int i = 0; i < st.Values.Count; i++)
-            values[i] = SelectExecutor.ToClr(session.InsertValueEvaluator is { } evaluate
-                ? evaluate(st.Values[i]) : st.Values[i].Evaluate(ConstantRow.Instance, ctx));
+        {
+            var value = session.InsertValueEvaluator is { } evaluate
+                ? evaluate(st.Values[i]) : st.Values[i].Evaluate(ConstantRow.Instance, ctx);
+            int column = st.Columns is null ? i : i < st.Columns.Count ? IndexOfColumn(columns, st.Columns[i]) : -1;
+            // B stores the binary operand, not its decimal display. In particular,
+            // decimal's CLR cast rounds 999999999999999.5 one ULP above VFP9's literal.
+            values[i] = column >= 0 && column < columns.Count && columns[column].Type == 'B'
+                && VfpRuntime.IsNumeric(value) && Math.Abs(value.AsDouble) >= 100000000000000d
+                ? double.TryParse(st.Values[i].Text, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double literal) ? literal
+                : value.ToClr() is decimal exact
+                    ? double.Parse(exact.ToString(System.Globalization.CultureInfo.InvariantCulture), System.Globalization.CultureInfo.InvariantCulture)
+                    : value.AsDouble
+                  : column >= 0 && column < columns.Count && columns[column].Type == 'Y'
+                    && value.Type == VfpType.Numeric && Math.Abs(value.AsDouble) >= 1000000000000d
+                    ? value.AsDouble
+                    : SelectExecutor.ToClr(value);
+        }
         return values;
     }
 

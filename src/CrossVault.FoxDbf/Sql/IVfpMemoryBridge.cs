@@ -28,7 +28,7 @@ internal interface IVfpMemoryBridge
     /// (an N×1 array). When <paramref name="rows"/> is 0 the array is left UNCHANGED (an existing array is
     /// untouched; a new name is never created) and <c>_TALLY</c> is set to 0.
     /// </summary>
-    void StoreQueryIntoArray(string name, int rows, int cols, IReadOnlyList<object?[]> data);
+    void StoreQueryIntoArray(string name, int rows, int cols, IReadOnlyList<object?[]> data, IReadOnlyList<SqlColumn>? columns = null);
 
     /// <summary>
     /// <c>INSERT … FROM ARRAY name</c>: the array's rows as CLR values — a 1-D array yields exactly ONE row of

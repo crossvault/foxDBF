@@ -138,6 +138,9 @@ public static class FieldDecoder
             if (decimal.TryParse(s, NumberStyles.Number, inv, out var d) &&
                 d >= long.MinValue && d <= long.MaxValue)
                 return (long)d;
+            // VFP9 writes an exponent when large integer digits exceed the N field width.
+            if (s.Contains('E', StringComparison.OrdinalIgnoreCase) && double.TryParse(s, NumberStyles.Float, inv, out var scientific))
+                return scientific;
             return null; // never throw (§A10)
         }
 

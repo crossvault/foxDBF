@@ -4,6 +4,38 @@ All notable changes to the public packages are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [0.15.0] - 2026-11-12
+
+### Changed
+
+- **BREAKING:** SQL result column descriptors (type, width, decimals) and stored values now match VFP9 for
+  numeric memory variables (a memory variable `1.2345` is no longer stored as `1`), numeric functions over
+  quotients (`LOG`, `EXP`, `NVL`, `EVL`), currency `AVG` in arrays and large numeric values: N fields of 1e14
+  and above with a fraction and integer N values of 1e16 and above are read, compared, sought and written
+  with VFP9's 16 significant digits on every path (field read, memory variable, `SELECT INTO`, `INSERT`,
+  `REPLACE`, `SEEK`), currency literals of 1e13 and above keep VFP9's stored value, and SQL `SUM`/`AVG` over N, B and
+  currency columns produce VFP9's results for large totals. Cursors, tables and arrays created by `SELECT`
+  can get other column widths, decimals or last digits than in 0.14.0.
+- **BREAKING:** ADO.NET typed getters (`GetInt32`, `GetInt64`, `GetDecimal`, `GetFloat`, ...) throw
+  `OverflowException` for a non-finite numeric cell instead of returning a wrong value; `GetValue` and
+  `GetDouble` return the double.
+- **BREAKING:** SQL `SUM` over an Integer column whose total exceeds the Integer range keeps the `I` result
+  column with VFP9's overflow value instead of throwing.
+
+### Fixed
+
+- `TRANSFORM` matches VFP9's asterisk count for division-by-zero overflow
+  from literals, fields, memory variables, arithmetic, `INT`/`ROUND`/`ABS` and the selected branch of `IIF`/`ICASE`/`NVL`/`EVL`,
+  directly and after assignment, including operands changed by a UDF during evaluation and re-division of a
+  stored overflow value.
+- SQL `SUM`/`AVG` keep numeric overflow instead of saturating or leaking a .NET `OverflowException`; SQL
+  arrays, cursors and tables (including `UNION ALL`) and microVFP `SUM`/`CALCULATE` keep VFP9's overflow widths.
+- `TRANSFORM` of large finite B, N and F values shows the number or asterisks exactly as VFP9 does.
+- `SELECT TRANSFORM(n)` over large N fields sizes the result column so that no row is cut, and `TRANSFORM`
+  of the same field value is the same directly, in `SCAN`, after assignment, in SQL projections and in `WHERE`.
+- `STR` with more decimals than the field (for example `STR(n, 30, 6)` of an N(20,4) field) shows VFP9's digits.
+- A dynamically typed SQL projection whose value overflows (for example `EVALUATE('1/0')`) stays a numeric column.
+
 ## [0.14.0] - 2026-11-10
 
 ### Added

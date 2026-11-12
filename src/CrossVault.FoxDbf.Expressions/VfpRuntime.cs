@@ -60,8 +60,13 @@ internal static partial class VfpRuntime
             case UnOp.Neg:
                 // Round5 -(10^400): 11 columns. Round6 -(1/0)/-(-1/0): add/remove the sign column.
                 if (v.IsNull) return VfpValue.Null;
+                if (quotient && v.ImmediateOverflowWidth > 0)
+                    return VfpValue.Number(-v.AsDouble).WithDisplayDecimals(v.DisplayDecimals)
+                        .WithOverflowWidths(double.IsNaN(v.AsDouble) ? v.OverflowDisplayWidth
+                            : v.OverflowDisplayWidth + (v.AsDouble > 0 ? 1 : -1), v.ImmediateOverflowWidth + 1, v.OverflowShapeScale);
                 return v.Type == VfpType.Currency ? VfpValue.Currency(-v.AsNumber)
                     : VfpValue.Number(-v.AsDouble).WithDisplayDecimals(v.DisplayDecimals)
+                        .WithNumericDisplayWidth(v.NumericDisplayWidth + 1)
                         .WithOverflowDisplayWidth(double.IsNaN(v.AsDouble) ? v.OverflowDisplayWidth
                             : quotient ? v.OverflowDisplayWidth + (v.AsDouble > 0 ? 1 : -1) : 11);
             case UnOp.Not:
@@ -581,6 +586,9 @@ internal static partial class VfpRuntime
             // ---- numeric ----
             // Round5's OverflowPrecision oracle pins NaN's retained integer width:
             // INT(0/0) removes nine columns (Decimals=10/12/14/16/18 pins).
+            case "INT" when Arg(args, 0).ImmediateOverflowWidth > 0:
+                return VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble), 0)
+                    .WithOverflowWidths(Math.Max(10, Arg(args, 0).ImmediateOverflowWidth), Arg(args, 0).ImmediateOverflowWidth, 0);
             case "INT": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(decimal.Truncate(Arg(args, 0).AsNumber))
                 : VfpValue.Number(Math.Truncate(Arg(args, 0).AsDouble), 0)
                     .WithOverflowDisplayWidth(double.IsNaN(Arg(args, 0).AsDouble)
@@ -589,12 +597,22 @@ internal static partial class VfpRuntime
             {
                 // Round5 OverflowPrecision: ROUND(EXP(1000),0) adds one; ROUND(0/0,0) removes eight.
                 int digits = RoundDigits(Arg(args, 1));
+                if (Arg(args, 0).ImmediateOverflowWidth is > 0 and var width)
+                {
+                    int scale = Math.Clamp(digits, 0, 18);
+                    int immediate = width + 1 + Math.Max(0, scale - Arg(args, 0).OverflowShapeScale);
+                    return VfpValue.Number(Round(Arg(args, 0).AsDouble, digits), scale)
+                        .WithOverflowWidths(Math.Max(NumericOverflowWidth(scale), immediate), immediate, scale);
+                }
                 return Arg(args, 0).Type == VfpType.Currency ? RoundCurrency(Arg(args, 0).AsNumber, digits)
                     : VfpValue.Number(Round(Arg(args, 0).AsDouble, digits)).WithDisplayDecimals(Math.Clamp(digits, 0, 18))
                         .WithOverflowDisplayWidth(double.IsInfinity(Arg(args, 0).AsDouble)
                             ? Math.Max(Arg(args, 0).OverflowDisplayWidth + 1, NumericOverflowWidth(Math.Clamp(digits, 0, 18)))
                             : Math.Max(NumericOverflowWidth(Math.Clamp(digits, 0, 18)), Arg(args, 0).OverflowDisplayWidth - 8));
             }
+            case "ABS" when Arg(args, 0).ImmediateOverflowWidth > 0:
+                return VfpValue.Number(Math.Abs(Arg(args, 0).AsDouble), Arg(args, 0).DisplayDecimals)
+                    .WithOverflowWidths(Arg(args, 0).OverflowDisplayWidth, Arg(args, 0).ImmediateOverflowWidth, Arg(args, 0).OverflowShapeScale);
             case "ABS": return Arg(args, 0).Type == VfpType.Currency ? VfpValue.Currency(Math.Abs(Arg(args, 0).AsNumber))
                 : VfpValue.Number(Math.Abs(Arg(args, 0).AsDouble)).WithDisplayDecimals(Arg(args, 0).DisplayDecimals)
                     .WithOverflowDisplayWidth(Arg(args, 0).OverflowDisplayWidth);
@@ -793,6 +811,11 @@ internal static partial class VfpRuntime
         int len = Math.Max(0, a.Length > 1 ? IntArg(a, 1) : 10);
         if (len > 237) throw new ExpressionException("Width or decimal place argument is invalid.") { VfpErrorNumber = 1908 };
         int dec = Math.Clamp(a.Length > 2 ? IntArg(a, 2) : 0, 0, 28);
+        // Round10: STR uses binary significant digits even for exact numeric inputs.
+        // In particular N(20,4) 99999999999.9999 renders .999890 at six places.
+        if (value.Type == VfpType.Numeric && Math.Abs(value.AsDouble) >= 10000000000d)
+            value = VfpValue.Number(value.ToClr() is decimal exact
+                ? double.Parse(exact.ToString(Inv), Inv) : value.AsDouble);
         if (!double.IsFinite(value.AsDouble) || Math.Abs(value.AsDouble) >= (double)decimal.MaxValue)
             return VfpValue.Character(StrCore(value.AsDouble, len, dec));
         // The scale and text must use the same exact value at rounding-carry boundaries.
@@ -806,6 +829,7 @@ internal static partial class VfpRuntime
             scale--;
             text = FitNumericText(value.RoundForDisplay(scale).ToString("F" + scale, Inv), len);
         }
+        if (text.Length > 0 && text[0] == '*') text = NumericOverflowText(value.AsDouble, len, dec) ?? text;
         return VfpValue.Character(text);
     }
 
@@ -824,7 +848,29 @@ internal static partial class VfpRuntime
         double rounded = Round(number, scale);
         // IEEE negative zero has no sign in VFP9 numeric storage or STR output.
         if (rounded == 0) rounded = 0;
-        return FitNumericText(rounded.ToString("F" + scale, Inv), len);
+        string text = FitNumericText(rounded.ToString("F" + scale, Inv), len);
+        return text.Length > 0 && text[0] == '*' ? NumericOverflowText(number, len, dec) ?? text : text;
+    }
+
+    // Round10's STR/SQL table probes: when integer digits do not fit, VFP9 uses
+    // scientific notation if the sign, decimal point and exponent fit the field.
+    internal static string? NumericOverflowText(double value, int width, int decimals)
+    {
+        if (!double.IsFinite(value) || value == 0) return null;
+        // The integer fast path has a native short-marker quirk: STR(1e9,8,0)
+        // returns two stars. Fractional operands and values outside INT use an exponent.
+        if (decimals == 0 && value >= int.MinValue && value <= int.MaxValue && value == Math.Truncate(value))
+            return new string('*', width > 6 ? width - 6 : width);
+        int exponent = (int)Math.Floor(Math.Log10(Math.Abs(value)));
+        if (exponent < 0) return null;
+        string power = exponent.ToString(Inv);
+        int places = width - 5 - power.Length;
+        if (places < 0) return null;
+        double factor = Math.Pow(10, places);
+        // VFP9 truncates the mantissa: STR(9999999,6,2) is " 9.E+6".
+        double mantissa = Math.Truncate(Math.Abs(value) / Math.Pow(10, exponent) * factor) / factor;
+        return (value < 0 ? "-" : " ") + mantissa.ToString("F" + places, Inv)
+            + (places == 0 ? "." : "") + "E+" + power;
     }
 
     private static VfpValue Strzero(VfpValue[] a)
@@ -1119,7 +1165,7 @@ internal static partial class VfpRuntime
         return best;
     }
 
-    private static VfpValue Empty(VfpValue v, EvaluationContext ctx)
+    internal static VfpValue Empty(VfpValue v, EvaluationContext ctx)
     {
         switch (v.Type)
         {

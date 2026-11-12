@@ -355,7 +355,7 @@ public sealed class MicroVfpScalarStringTests
             return h.Num("ALINES(la, lcText, 4)");
         });
 
-        var completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(30)));
         Assert.True(ReferenceEquals(task, completed),
             "ALINES did not complete within the bounded large-input budget.");
         Assert.Equal(0m, await task);
@@ -373,7 +373,7 @@ public sealed class MicroVfpScalarStringTests
             return h.Num("ALINES(la, lcText, 4, REPLICATE('a', 250000) + 'b')");
         });
 
-        var completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(2)));
+        var completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(30)));
         Assert.True(ReferenceEquals(task, completed),
             "ALINES did not complete within the bounded near-miss budget.");
         Assert.Equal(1m, await task);

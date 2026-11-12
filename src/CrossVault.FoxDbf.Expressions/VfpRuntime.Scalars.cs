@@ -36,7 +36,9 @@ internal static partial class VfpRuntime
             case "RTOD": return VfpValue.Number(x * (180 / Math.PI)).WithDisplayDecimals(ctx.NumericDecimals);
             case "PI": return VfpValue.Number(Math.PI).WithDisplayDecimals(ctx.NumericDecimals);
             case "EXP": return VfpValue.Number(Math.Exp(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals))
-                .WithOverflowDisplayWidth(double.IsNaN(x) ? Arg(args, 0).OverflowDisplayWidth : NumericOverflowWidth(ctx.NumericDecimals));
+                .WithOverflowDisplayWidth(Arg(args, 0).ImmediateOverflowWidth > 0
+                    ? NumericOverflowWidth(Math.Max(ctx.NumericDecimals + 2, Arg(args, 0).OverflowShapeScale))
+                    : double.IsNaN(x) ? Arg(args, 0).OverflowDisplayWidth : NumericOverflowWidth(ctx.NumericDecimals));
             case "LOG":
                 if (x <= 0) throw new ExpressionException("LOG(): Zero or negative used as argument.") { VfpErrorNumber = 58 };
                 return VfpValue.Number(Math.Log(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals)).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
@@ -45,6 +47,7 @@ internal static partial class VfpRuntime
                 return VfpValue.Number(Math.Log10(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals)).WithOverflowDisplayWidth(ScalarOverflowWidth(ctx));
             case "SQRT":
                 if (x < 0) throw new ExpressionException("SQRT() argument cannot be negative.") { VfpErrorNumber = 61 };
+                if (Arg(args, 0).ImmediateOverflowWidth > 0) return Arg(args, 0);
                 return VfpValue.Number(Math.Sqrt(x)).WithDisplayDecimals(Math.Max(ctx.NumericDecimals, Arg(args, 0).DisplayDecimals))
                     .WithOverflowDisplayWidth(Arg(args, 0).OverflowDisplayWidth);
             // Round5 oracle: SIGN of an indeterminate overflow is -1, not a CLR ArithmeticException.

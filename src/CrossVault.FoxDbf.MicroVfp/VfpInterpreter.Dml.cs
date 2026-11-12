@@ -731,6 +731,11 @@ public sealed partial class VfpInterpreter
                     CheckReplaceValueType(wa.Table.Columns[idx], v);
                     values[idx] = v.IsNull ? null : (type == 'M' && v.IsBinary ? v.ToClr()
                         : type is 'C' or 'M' or 'V' ? v.AsString : v.ToClr());
+                    // Round10's INSERT/REPLACE probes use the same binary conversion for
+                    // large numeric operands; explicit currency literals remain exact.
+                    if (v.Type == VfpType.Numeric && double.IsFinite(v.AsDouble) && Math.Abs(v.AsDouble) >= 1000000000000d)
+                        values[idx] = type == 'Y' ? v.AsDouble
+                            : type is 'N' or 'F' ? VfpValue.Number(v.AsDouble).AsDisplayNumber : values[idx];
                     if (reportNumericOverflow && type == 'I' && ReplaceIntegerOverflows(v))
                     {
                         values[idx] = FieldEncoder.StoredIntegerOverflow;
@@ -1242,7 +1247,8 @@ public sealed partial class VfpInterpreter
         var types = sum.Expressions.Select(e => e.Parsed?.InferType(schema) ?? default).ToArray();
         var currencies = types.Select(t => t.Type == VfpType.Currency).ToArray();
         var scales = types.Select(t => t.Decimals).ToArray();
-        (VfpValue Value, int? Decimals) Probe(PrgExpr expression)
+        var overflowWidths = new int[n];
+        (VfpValue Value, int? Decimals, int Width) Probe(PrgExpr expression)
         {
             bool previous = _requireDmlNames, previousCalculate = _calculateOperand;
             _requireDmlNames = true;
@@ -1250,7 +1256,7 @@ public sealed partial class VfpInterpreter
             try
             {
                 return expression.Parsed is { } parsed ? parsed.ProbeAggregate<MicroVfpRuntimeException>(schema, _row, _ctx)
-                    : (Eval(expression), null);
+                    : (Eval(expression), null, 0);
             }
             finally { _requireDmlNames = previous; _calculateOperand = previousCalculate; }
         }
@@ -1279,9 +1285,10 @@ public sealed partial class VfpInterpreter
                 // Inferred numeric types can still contain undefined names in the evaluated branch.
                 // VFP9 probes even with no matching rows; errors in unchosen IIF branches are ignored.
                 var sample = function is "MIN" or "MAX"
-                    ? (Value: EvalAggregateOperand(sum.Expressions[k], calculate: true), Decimals: (int?)null)
+                    ? (Value: EvalAggregateOperand(sum.Expressions[k], calculate: true), Decimals: (int?)null, Width: 0)
                     : Probe(sum.Expressions[k]);
                 var probe = sample.Value;
+                overflowWidths[k] = sample.Width;
                 if (sample.Decimals is int scale) scales[k] = scale;
                 if (!probe.IsNull || type == VfpType.Unknown) type = probe.Type;
                 if (function is not ("MIN" or "MAX") && type is not (VfpType.Numeric or VfpType.Integer or VfpType.Currency))
@@ -1412,13 +1419,18 @@ public sealed partial class VfpInterpreter
             decimal currencyResult = !currency ? 0 : function == "SUM" ? currencyAcc[k]
                 : function == "AVG" && counts[k] > 0 ? currencyAcc[k] / counts[k]
                 : function == "MIN" ? minima[k].AsNumber : function == "MAX" ? maxima[k].AsNumber : (decimal)result;
+            if (currency && function == "AVG" && sum.CalculateFunctions is not null && counts[k] > 0)
+                currencyResult = decimal.Truncate(currencyResult * 10000m) / 10000m;
             var value = currency ? VfpValue.Currency(Math.Round(currencyResult, 4, MidpointRounding.AwayFromZero))
                 : VfpValue.Number(result).WithDisplayDecimals(decimals);
+            if (function is "MIN" or "MAX" && !currency && !double.IsFinite(result))
+                value = value.WithOverflowDisplayWidth(SelectedAggregateOverflowWidth(
+                    function == "MIN" ? minima : maxima, k, sum.Expressions[k], schema, decimals));
             if (function is "SUM" or "AVG" && !currency && !double.IsFinite(result))
             {
                 // Round6: preserve aggregate overflow precision and the negative sign column.
                 int overflowWidth = sum.Expressions[k].Parsed?.AggregateOverflowWidth(
-                    _ctx.NumericDecimals, scales[k], sum.CalculateFunctions is not null) ?? VfpRuntime.NumericOverflowWidth(decimals);
+                    _ctx.NumericDecimals, scales[k], sum.CalculateFunctions is not null, Math.Max(0, overflowWidths[k] - (result < 0 ? 1 : 0))) ?? VfpRuntime.NumericOverflowWidth(decimals);
                 value = value.WithOverflowDisplayWidth(overflowWidth + (result < 0 ? 1 : 0));
             }
             if (function == "NPV" && !double.IsFinite(result))
@@ -1426,6 +1438,15 @@ public sealed partial class VfpInterpreter
             if (function is "MIN" or "MAX" && counts[k] == 0 && sawNull[k]) value = VfpValue.Null;
             AssignTo(sum.To[k], value);
         }
+    }
+
+    // This descriptor walk is cold. Keep its temporaries out of the method that
+    // contains the ordinary per-record aggregation loop.
+    private int SelectedAggregateOverflowWidth(VfpValue[] selected, int index, PrgExpr expression, ISchema schema, int decimals)
+    {
+        int width = selected[index].ImmediateOverflowWidth;
+        if (width == 0) width = expression.Parsed?.InferSqlType(new SqlInferenceSchema(schema, null, _ctx)).Length ?? 0;
+        return Math.Max(VfpRuntime.NumericOverflowWidth(decimals), width);
     }
 
     // ─────────────────────────── P2 table/record movers + whole-table I/O ───────────────────────────
@@ -1497,7 +1518,7 @@ public sealed partial class VfpInterpreter
             }
             foreach (var c in fields)
             {
-                var value = s.Blank ? BlankValueFor(c) : VfpValue.FromClr(ReadField(wa, c.Name));
+                var value = s.Blank ? BlankValueFor(c) : ScatterValue(wa, c);
                 if (!value.IsNull && c.Type == 'Y') value = VfpValue.Currency(value.AsNumber);
                 if (s.Blank && c.Type is 'Q' or 'W') value = VfpValue.Varbinary(Array.Empty<byte>());
                 obj.Fields[c.Name] = value;
@@ -1510,14 +1531,21 @@ public sealed partial class VfpInterpreter
             if (string.IsNullOrEmpty(s.Name)) return;
             var arr = Memory.RedimOrCreateArray(s.Name, fields.Count, 0);
             for (int i = 0; i < fields.Count; i++)
-                arr.SetLinear(i + 1, s.Blank ? BlankValueFor(fields[i]) : VfpValue.FromClr(ReadField(wa, fields[i].Name)));
+                arr.SetLinear(i + 1, s.Blank ? BlankValueFor(fields[i]) : ScatterValue(wa, fields[i]));
             return;
         }
 
         // MEMVAR: create/update a same-named memory variable per field.
         foreach (var c in fields)
-            Memory.Set(c.Name, s.Blank ? BlankValueFor(c) : VfpValue.FromClr(ReadField(wa, c.Name)));
+            Memory.Set(c.Name, s.Blank ? BlankValueFor(c) : ScatterValue(wa, c));
     }
+
+    // Round10 S8/S9 (VFP9): SCATTER reads a numeric field exactly like m=field, including the
+    // sixteen-digit large-value read, the field picture and B display decimals; Y stays
+    // currency. GATHER then writes that value back.
+    private VfpValue ScatterValue(VfpSession.WorkArea wa, DbfColumn c) => c.Type is 'N' or 'F' or 'B' or 'Y'
+        ? ReadExpressionField(wa, c.Name, ColumnIndex(wa.Table, c.Name))
+        : VfpValue.FromClr(ReadField(wa, c.Name));
 
     private void ExecGather(GatherStmt g)
     {

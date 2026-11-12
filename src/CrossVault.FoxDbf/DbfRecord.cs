@@ -127,7 +127,7 @@ public readonly struct DbfRecord
                 && !(_table.ApplyNullFlags && IsNullFlagSet(column)))
             {
                 var raw = GetRawField(column);
-                if (!raw.IsEmpty && raw.IndexOfAnyExcept((byte)'*') < 0) return double.PositiveInfinity;
+                if (!raw.IsEmpty && raw[0] == (byte)'*' && raw.IndexOfAnyExcept((byte)'*', (byte)0) < 0) return double.PositiveInfinity;
             }
             return fieldValue;
         }
@@ -187,12 +187,23 @@ public readonly struct DbfRecord
     /// <see cref="this[int]"/> keeps mapping blank → <see langword="null"/> (the ADO.NET IsDBNull contract);
     /// this accessor is the read the microVFP runtime and its SQL engine use.
     /// </summary>
+    // Keep the finite-picture check inline with decoding on the per-record hot path.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     internal VfpValue GetScaledValue(string name, bool blanks)
     {
         int index = IndexOfColumn(name);
         if (index < 0) return VfpValue.Null;
         var column = _table.Columns[index];
-        return VfpValue.FromField(blanks ? GetVfpValue(index) : GetExpressionValue(index), column.Type, column.Decimal);
+        object? raw = blanks ? GetVfpValue(index) : GetExpressionValue(index);
+        // Small B values need no picture metadata; I has no finite field picture.
+        if (column.Type == 'B' && raw is double floating && Math.Abs(floating) < column.NumericPictureLimit)
+            return VfpValue.Number(floating, column.Decimal);
+        if (column.Type == 'I') return VfpValue.FromField(raw, column.Type, column.Decimal);
+        var value = VfpValue.FromField(raw, column.Type, column.Decimal);
+        // Round10: TRANSFORM in SQL retains the same finite field picture as SCAN.
+        return value.NeedsNumericPicture(column.NumericPictureLimit)
+            ? value.WithNumericDisplayWidth(column.Type == 'B' ? 21 : column.Length)
+            : value;
     }
 
     internal VfpValue GetIndexScaledValue(string name)

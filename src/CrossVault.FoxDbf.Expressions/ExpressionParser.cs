@@ -22,6 +22,7 @@ internal sealed class ExpressionParser
     private int _depth;
     private string? _sql;
     private bool _sqlAggregates;
+    private int _aggregateArguments;
     private bool _sqlPredicates;
     private bool _allowSqlLookup;
     private bool _hasSqlInfix;
@@ -133,7 +134,7 @@ internal sealed class ExpressionParser
                 // VFP9 reports a missing operand for an invalid currency after a binary operator.
                 throw new ExpressionException("Missing operand.", error.Position) { VfpErrorNumber = 1231 };
             }
-            left = new BinaryNode(MapBinOp(t.Type), left, right);
+            left = BinaryNode.Create(MapBinOp(t.Type), left, right);
         }
         return left;
     }
@@ -275,6 +276,7 @@ internal sealed class ExpressionParser
             Next(); // '('
             string name = id.Text;
             bool aggregate = _sqlAggregates && name.ToUpperInvariant() is "MIN" or "MAX" or "SUM" or "AVG" or "COUNT" or "CNT";
+            bool insideAggregate = _aggregateArguments > 0;
             if (aggregate && name.Equals("CNT", StringComparison.OrdinalIgnoreCase))
             {
                 name = "COUNT";
@@ -289,6 +291,7 @@ internal sealed class ExpressionParser
                 Next();
             }
             var args = new List<AstNode>();
+            if (aggregate) _aggregateArguments++;
             if (_sql is not null && name.Equals("COUNT", StringComparison.OrdinalIgnoreCase) && Peek.Type == TokenType.Star
                 || aggregate && Peek.Type == TokenType.Star)
             {
@@ -308,6 +311,11 @@ internal sealed class ExpressionParser
                 }
             }
             Expect(TokenType.RParen, "Expected ')' to close function call.");
+            if (aggregate) _aggregateArguments--;
+            // VFP9 permits scalar MIN/MAX inside an aggregate's operand, while
+            // the same multi-argument call at SQL projection level is error 1300.
+            if (aggregate && insideAggregate && args.Count > 1 && name.ToUpperInvariant() is "MIN" or "MAX")
+                aggregate = false;
             if (aggregate && args.Count != 1)
                 throw new ExpressionException(args.Count == 0 ? "Expression is invalid. A valid expression is required." : "Function name is missing ( ).", id.Pos)
                     { VfpErrorNumber = args.Count == 0 ? 152 : 1300 };

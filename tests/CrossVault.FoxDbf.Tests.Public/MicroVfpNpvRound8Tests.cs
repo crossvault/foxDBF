@@ -8,7 +8,7 @@ namespace CrossVault.FoxDbf.Tests;
 public sealed partial class MicroVfpNpvRound8Tests
 {
     internal sealed record Probe(string Name, string Body);
-    internal const string Setup = "CREATE TABLE t FREE (n N(10,2), ii I, bb B, yy Y, cc C(8), ll L)\nINSERT INTO t VALUES (1,1,1,1,'text',.T.)";
+    internal const string Setup = "CREATE TABLE t FREE (n N(10,2), ii I, bb B, yy Y, cc C(8), ll L, s N(5,0), h N(12,4))\nINSERT INTO t VALUES (1,1,1,1,'text',.T.,1,1)";
     internal static Probe[] Matrix(int decimals)
     {
         var probes = new List<Probe>();
@@ -45,6 +45,34 @@ public sealed partial class MicroVfpNpvRound8Tests
         return probes.ToArray();
     }
 
+    internal static Probe[] Extensions(int decimals)
+    {
+        var probes = new List<Probe>();
+        foreach (string operand in new[] { "s", "h", "x", "z", "q" })
+        foreach (string producer in new[] { "{0}", "({0}+1)", "({0}-12345)", "({0}*2)", "({0}/2)", "({0}%2)", "INT({0})", "ROUND({0},1)", "ABS({0})", "-{0}", "(({0}+1)*2)", "INT({0}+1)", "ROUND({0}*2,3)" })
+        {
+            string expression = string.Format(producer, operand) + "/0";
+            string prefix = $"SET DECIMALS TO {decimals}\nx=12345\nz=1.5\nq=12345.6789\n";
+            probes.Add(new(expression, prefix + "result=TRANSFORM(" + expression + ")"));
+            probes.Add(new(expression + "/stored", prefix + "v=" + expression + "\nresult=TRANSFORM(v)"));
+        }
+        foreach (string expression in new[] { "(n+1.5)/0", "(n*1.5)/0", "(n/1.5)/0", "(1.5+n)/0", "(1.5-n)/0", "ROUND(n,0)/0", "ROUND(n,4)/0", "INT(n+1)/0", "ABS(1.00)/0", "ABS(12345)/0", "ABS(1.5)/0", "(IIF(RAND()>0,n,ii)+1)/0", "IIF(RAND()>0,n+1,ii*2)/0", "ICASE(RAND()<0,1,RAND()>0,h,ii)/0", "NVL(.NULL.,n)/0", "EVL(0,h)/0", "IIF(RAND()>0,1,2)/z", "(1-(-12345))/0", "(1-(-1.23))/0", "((0-1)-(-2))/0" })
+        {
+            string prefix = $"SET DECIMALS TO {decimals}\n=RAND(1)\nz=0\n";
+            probes.Add(new(expression, prefix + "result=TRANSFORM(" + expression + ")+ '|' + ALLTRIM(STR(RAND(),30,10))"));
+            probes.Add(new(expression + "/stored", prefix + "v=" + expression + "\nresult=TRANSFORM(v)+ '|' + ALLTRIM(STR(RAND(),30,10))"));
+        }
+        if (decimals == 0)
+        foreach (int setting in new[] { 16, 18 })
+        foreach (string expression in new[] { "1/0", "n/0", "bb/0" })
+        {
+            string prefix = $"SET DECIMALS TO {setting}\n";
+            probes.Add(new($"D{setting}/" + expression, prefix + "result=TRANSFORM(" + expression + ")"));
+            probes.Add(new($"D{setting}/" + expression + "/stored", prefix + "v=" + expression + "\nresult=TRANSFORM(v)"));
+        }
+        return probes.Select(p => new Probe("extension/" + p.Name, p.Body)).ToArray();
+    }
+
     internal static readonly string[] DateFunctions = ["DTOC", "DTOS", "TTOC", "TTOD", "QUARTER", "WEEK", "DMY", "MDY", "DAY", "MONTH", "YEAR", "DOW", "CDOW", "CMONTH", "DTOT", "HOUR", "MINUTE", "SEC"];
     internal static Probe[] DateArguments() => (from function in DateFunctions
         from argument in new[] { "1", "1/0", "'text'", ".T.", ".F.", "n", "ii", "bb", "yy", "cc", "ll" }
@@ -57,15 +85,14 @@ public sealed partial class MicroVfpNpvRound8Tests
         select new Probe(expression, "v=" + expression + "\nresult=IIF(ISNULL(v),'NULL','OK')")).ToArray();
 
     public static IEnumerable<object[]> OverflowCases => from decimals in new[] { 0, 2, 4 }
-        from probe in Matrix(decimals)
-        where Pins.ContainsKey(decimals + "/" + probe.Name)
+        from probe in Matrix(decimals).Concat(Extensions(decimals))
         select new object[] { decimals, probe.Name };
 
     [Theory]
     [MemberData(nameof(OverflowCases))]
     public void TransformOverflow_MatchesExpectedVfp(int decimals, string name)
     {
-        var probe = Matrix(decimals).Single(p => p.Name == name);
+        var probe = Matrix(decimals).Concat(Extensions(decimals)).Single(p => p.Name == name);
         Check(probe, Pins[decimals + "/" + name]);
     }
 
@@ -123,13 +150,13 @@ public sealed partial class MicroVfpNpvRound8Tests
         var failures = new List<string>();
         foreach (int decimals in new[] { 0, 2, 4, -1, -2 })
         {
-            var probes = decimals == -2 ? DateKinds() : decimals == -1 ? DateArguments() : Matrix(decimals);
+            var probes = decimals == -2 ? DateKinds() : decimals == -1 ? DateArguments() : Matrix(decimals).Concat(Extensions(decimals)).ToArray();
             foreach (var probe in probes)
             {
                 string expected;
                 if (decimals == -2) expected = DateKindPins[probe.Name];
                 else if (decimals == -1) expected = "ERR|11";
-                else if (!Pins.TryGetValue(decimals + "/" + probe.Name, out expected!)) continue;
+                else expected = Pins[decimals + "/" + probe.Name];
                 // The final assignment is evaluated through the independent engine path.
                 // For the date-kind probes, evaluate their first assignment and retain only type acceptance.
                 int start = probe.Body.LastIndexOf("result=", StringComparison.Ordinal);
@@ -163,8 +190,16 @@ public sealed partial class MicroVfpNpvRound8Tests
     }
 
     // Only TRANSFORM needs the host formatter; date guards run in the shared engine.
-    private sealed class ProbeRow(VfpInterpreter vfp) : IRowContext, IVfpValueRow, IVfpFunctionHost
+    private sealed class ProbeRow(VfpInterpreter vfp) : IRowContext, IVfpValueRow, IVfpFunctionHost, ISchema
     {
+        public bool TryGetColumn(string name, out char type, out int length, out int decimals)
+        {
+            var column = vfp.Session.AreaAt(vfp.Session.CurrentArea)?.Table.Columns.FirstOrDefault(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            type = column?.Type ?? default;
+            length = column?.Length ?? 0;
+            decimals = column?.Decimal ?? 0;
+            return column is not null;
+        }
         public VfpValue GetValue(string name) => vfp.ResolveName(name);
         public bool TryInvoke(string name, VfpValue[] args, EvaluationContext context, out VfpValue result)
         {
@@ -175,6 +210,47 @@ public sealed partial class MicroVfpNpvRound8Tests
         public int RecNo => 1;
         public bool Deleted => false;
         public int RecCount => 1;
+    }
+
+    [Theory]
+    [InlineData("n*1.5+2", 1)]
+    [InlineData("-n/3+n%7", 2)]
+    [InlineData("IIF(n>0,n,1)/3", 2)]
+    [InlineData("ICASE(.F.,1)/n", 1)]
+    public void FiniteArithmetic_DoesNotReadMetadataOrAllocate(string source, int reads)
+    {
+        var row = new CountingRow();
+        var expression = VfpExpression.Parse(source);
+        var context = new EvaluationContext();
+        foreach (var evaluate in new Func<IRowContext, VfpValue>[] { r => expression.Evaluate(r, context), expression.Compile(context) })
+        {
+            for (int i = 0; i < 1024; i++) evaluate(row);
+            row.Reads = 0;
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1024; i++) evaluate(row);
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(0, allocated);
+            Assert.Equal(1024 * reads, row.Reads);
+            Assert.Equal(0, row.MetadataReads);
+        }
+    }
+
+    private sealed class CountingRow : IRowContext, IVfpValueRow, ISchema
+    {
+        private readonly VfpValue _value = VfpValue.Number(1m).WithDisplayDecimals(2);
+        internal int Reads;
+        internal int MetadataReads;
+        public VfpValue GetValue(string name) { Reads++; return _value; }
+        public object? GetField(string name) => throw new InvalidOperationException("Typed field read expected.");
+        public int RecNo => 1;
+        public int RecCount => 1;
+        public bool Deleted => false;
+        public bool TryGetColumn(string name, out char type, out int length, out int decimals)
+        {
+            MetadataReads++;
+            type = 'N'; length = 10; decimals = 2;
+            return true;
+        }
     }
 
     [Fact]

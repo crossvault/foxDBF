@@ -212,7 +212,8 @@ public sealed class FoxDbfDataReader : DbDataReader
         return count;
     }
 
-    // ADO.NET requires GetValue/GetValues/this[] to return an instance of GetFieldType. The executor
+    // Finite values follow GetFieldType; numeric overflow remains a non-finite double sentinel.
+    // Typed getters reject that sentinel unless returning the double itself. The executor
     // hands back DateOnly for D columns, but GetFieldType (and GetSchemaTable) report DateTime, so we
     // box DateOnly as DateTime here. GetDateTime / GetFieldValue<DateOnly> handle the raw value directly.
     private static object Normalize(object? raw)
@@ -226,9 +227,16 @@ public sealed class FoxDbfDataReader : DbDataReader
     private static InvalidCastException NullCast(int ordinal)
         => new($"Column {ordinal} is NULL. Use IsDBNull or GetValue to read a NULL value.");
 
+    private static void RequireFinite(object value, int ordinal)
+    {
+        if (value is double number && !double.IsFinite(number))
+            throw new OverflowException($"Column {ordinal} contains a non-finite numeric overflow value. Use GetDouble or GetValue to read it.");
+    }
+
     public override bool GetBoolean(int ordinal)
     {
         var val = GetValue(ordinal);
+        RequireFinite(val, ordinal);
         if (val is DBNull) throw NullCast(ordinal);
         if (val is bool b) return b;
         throw new InvalidCastException($"Cannot cast {val?.GetType()?.Name ?? "null"} to bool.");
@@ -237,6 +245,7 @@ public sealed class FoxDbfDataReader : DbDataReader
     public override byte GetByte(int ordinal)
     {
         var val = GetValue(ordinal);
+        RequireFinite(val, ordinal);
         if (val is DBNull) throw NullCast(ordinal);
         if (val is byte b) return b;
         throw new InvalidCastException($"Cannot cast {val?.GetType()?.Name ?? "null"} to byte.");
@@ -245,6 +254,7 @@ public sealed class FoxDbfDataReader : DbDataReader
     public override long GetBytes(int ordinal, long dataOffset, byte[]? buffer, int bufferOffset, int length)
     {
         var val = GetValue(ordinal);
+        RequireFinite(val, ordinal);
         if (val is DBNull) return 0;
         if (val is byte[] ba)
         {
@@ -287,6 +297,7 @@ public sealed class FoxDbfDataReader : DbDataReader
 
         var val = _currentRow[ordinal];
         if (val == null) throw NullCast(ordinal);
+        RequireFinite(val, ordinal);
         if (val is DateTime dt) return dt;
         if (val is DateOnly d) return d.ToDateTime(TimeOnly.MinValue);
         throw new InvalidCastException($"Cannot cast {val?.GetType()?.Name ?? "null"} to DateTime.");
@@ -295,6 +306,7 @@ public sealed class FoxDbfDataReader : DbDataReader
     public override decimal GetDecimal(int ordinal)
     {
         var val = GetValue(ordinal);
+        RequireFinite(val, ordinal);
         if (val is DBNull) throw NullCast(ordinal);
         if (val is decimal d) return d;
         if (val is double db) return Convert.ToDecimal(db);
@@ -314,11 +326,17 @@ public sealed class FoxDbfDataReader : DbDataReader
         throw new InvalidCastException($"Cannot cast {val?.GetType()?.Name ?? "null"} to double.");
     }
 
-    public override float GetFloat(int ordinal) => (float)GetDouble(ordinal);
+    public override float GetFloat(int ordinal)
+    {
+        var value = GetValue(ordinal);
+        RequireFinite(value, ordinal);
+        return (float)GetDouble(ordinal);
+    }
 
     public override Guid GetGuid(int ordinal)
     {
         var val = GetValue(ordinal);
+        RequireFinite(val, ordinal);
         if (val is DBNull) throw NullCast(ordinal);
         if (val is Guid g) return g;
         if (val is string s) return Guid.Parse(s);
@@ -330,6 +348,7 @@ public sealed class FoxDbfDataReader : DbDataReader
     public override int GetInt32(int ordinal)
     {
         var val = GetValue(ordinal);
+        RequireFinite(val, ordinal);
         if (val is DBNull) throw NullCast(ordinal);
         if (val is int i) return i;
         if (val is long l) return (int)l;
@@ -341,6 +360,7 @@ public sealed class FoxDbfDataReader : DbDataReader
     public override long GetInt64(int ordinal)
     {
         var val = GetValue(ordinal);
+        RequireFinite(val, ordinal);
         if (val is DBNull) throw NullCast(ordinal);
         if (val is long l) return l;
         if (val is int i) return i;
@@ -352,6 +372,7 @@ public sealed class FoxDbfDataReader : DbDataReader
     public override string GetString(int ordinal)
     {
         var val = GetValue(ordinal);
+        RequireFinite(val, ordinal);
         if (val is DBNull) throw NullCast(ordinal);
         if (val is string s) return s;
         return val?.ToString() ?? "";
@@ -362,6 +383,7 @@ public sealed class FoxDbfDataReader : DbDataReader
         var val = GetValue(ordinal);
         // ADO.NET contract: a NULL value must throw for a typed getter, even for non-nullable T.
         if (val is DBNull) throw NullCast(ordinal);
+        if (typeof(T) != typeof(double) && typeof(T) != typeof(object)) RequireFinite(val, ordinal);
         if (val is T t) return t;
 
         // Special handling for DateOnly (D columns surface as DateTime via GetValue/Normalize).

@@ -206,11 +206,13 @@ public static class FieldEncoder
             return false;
         Span<byte> bytes = stackalloc byte[column.Length];
         Encode(column, value, encoding, bytes);
-        return bytes.Length > 0 && bytes[0] == (byte)'*';
+        // REPLACE reports 39 even when the fallback exponent was successfully stored.
+        return bytes.Length > 0 && (bytes[0] == (byte)'*' || bytes.Contains((byte)'E'));
     }
 
     private static bool TryWriteNumberRightJustified(object value, int decimals, Span<byte> dest)
     {
+        int declaredDecimals = decimals;
         if (value is double d && !double.IsFinite(d) || value is float f && !float.IsFinite(f))
         {
             dest.Fill((byte)'*');
@@ -263,6 +265,17 @@ public static class FieldEncoder
                 }
                 else if (!handled) return false;
                 // Retry from the original value: a rounding carry can require another lost digit.
+            }
+            if (VfpRuntime.NumericOverflowText(ToDouble(value), dest.Length, declaredDecimals) is string scientific)
+            {
+                // VFP9 stores short integer overflow markers at the start, followed by NUL bytes.
+                if (scientific.Length > 0 && scientific[0] == '*')
+                {
+                    dest.Clear();
+                    dest[..scientific.Length].Fill((byte)'*');
+                }
+                else WriteAsciiRightJustified(scientific, dest);
+                return true;
             }
             dest.Fill((byte)'*');
             return true;

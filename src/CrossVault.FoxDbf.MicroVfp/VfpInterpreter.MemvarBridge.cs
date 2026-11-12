@@ -22,7 +22,7 @@ public sealed partial class VfpInterpreter
 
         public void SetImportTally(int count) => _it.Memory.Set("_TALLY", VfpValue.Integer(count));
 
-        public void StoreQueryIntoArray(string name, int rows, int cols, IReadOnlyList<object?[]> data)
+        public void StoreQueryIntoArray(string name, int rows, int cols, IReadOnlyList<object?[]> data, IReadOnlyList<SqlColumn>? columns = null)
         {
             // _TALLY = row count in ALL cases (incl. zero rows).
             _it.Memory.Set("_TALLY", VfpValue.Number((decimal)rows).WithDisplayDecimals(0));
@@ -42,7 +42,13 @@ public sealed partial class VfpInterpreter
                 for (int j = 0; j < c; j++)
                 {
                     object? v = srcRow is not null && j < srcRow.Length ? srcRow[j] : null;
-                    arr.Set(r + 1, j + 1, VfpValue.FromClr(v));
+                    // Preserve SQL scale/type during the existing copy, without boxing
+                    // an extra VfpValue for each finite numeric cell (Round4 oracle).
+                    var value = v is VfpValue typed ? typed
+                        : columns is not null && columns[j].Length > 0
+                            ? VfpValue.FromFieldWithWidth(v, columns[j].VfpType, columns[j].Decimals, columns[j].Length)
+                            : VfpValue.FromClr(v);
+                    arr.Set(r + 1, j + 1, value);
                 }
             }
         }

@@ -69,7 +69,7 @@ public sealed class MicroVfpSqlDmlFinalReviewConcurrencyTests
             session.Execute("INSERT INTO child VALUES (-1)");
             return new[] { new object?[] { -1 } };
         }
-        public void StoreQueryIntoArray(string name, int rows, int cols, IReadOnlyList<object?[]> data) => throw new NotSupportedException();
+        public void StoreQueryIntoArray(string name, int rows, int cols, IReadOnlyList<object?[]> data, IReadOnlyList<SqlColumn>? columns = null) => throw new NotSupportedException();
         public bool TryReadMemvar(string name, out object? value) { value = null; return false; }
         public bool IsObjectQualifier(string name) => false;
     }

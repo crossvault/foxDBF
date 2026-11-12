@@ -5,11 +5,11 @@ namespace CrossVault.FoxDbf.Expressions;
 
 // SQL chooses an IIF branch's storage width/scale from the first source record,
 // before WHERE or ORDER BY. Keep that sampling out of index type inference.
-internal sealed class SqlInferenceSchema(ISchema? schema, IRowContext? row, EvaluationContext context, bool overflowDisplay = false) : ISchema
+internal sealed class SqlInferenceSchema(ISchema? schema, IRowContext? row, EvaluationContext context, IRowContext? memory = null) : ISchema
 {
     internal IRowContext? Row => row;
+    internal IRowContext? Memory => memory ?? row;
     internal EvaluationContext Context => context;
-    internal bool OverflowDisplay => overflowDisplay;
     public bool TryGetColumn(string name, out char type, out int length, out int decimals)
     {
         type = default; length = 0; decimals = 0;
@@ -22,6 +22,22 @@ internal sealed partial class FieldNode
     internal override VfpTypeInfo InferSql(ISchema schema)
     {
         var info = Infer(schema);
+        if (info.Type == VfpType.Unknown && schema is SqlInferenceSchema { Memory: not null } sample)
+        {
+            var value = Eval(sample.Memory, sample.Context);
+            if (VfpRuntime.IsNumeric(value))
+            {
+                // Round4 memvar AFIELDS: retain the assigned scale, sign and large integer digits.
+                int scale = Math.Max(0, LiteralNode.Precision(value));
+                int width = VfpRuntime.NumericOverflowWidth(scale);
+                if (double.IsFinite(value.AsDouble))
+                {
+                    int digits = decimal.Truncate(Math.Abs(value.AsNumber)).ToString(CultureInfo.InvariantCulture).Length;
+                    width = Math.Max(10, digits) + (scale > 0 ? scale + 1 : 0) + (value.AsDouble < 0 ? 1 : 0);
+                }
+                return new(VfpType.Numeric, Math.Min(20, width), scale);
+            }
+        }
         return schema.TryGetColumn(_name, out char type, out _, out _) && type is 'F' or 'B'
             ? new(info.Type, info.Length, info.Decimals, type)
             : info;
@@ -50,11 +66,11 @@ internal sealed partial class UnaryNode
     {
         var info = _operand.InferSql(schema);
         if (_op == UnOp.Not) return new(VfpType.Logical, 1);
-        return new(info.Type, info.Length + (IsSqlConstant || schema is SqlInferenceSchema { OverflowDisplay: true } ? 1 : 0), info.Decimals);
+        return new(info.Type, info.Length + (IsSqlConstant ? 1 : 0), info.Decimals);
     }
 }
 
-internal sealed partial class BinaryNode
+internal partial class BinaryNode
 {
     internal override bool IsSqlConstant => _constant;
 
@@ -77,9 +93,12 @@ internal sealed partial class BinaryNode
         int setting = schema is SqlInferenceSchema sample ? sample.Context.NumericDecimals : 2;
         // VFP retains the literal scale for a constant quotient (1/2 is N(1,0)),
         // whereas a quotient involving a field gets at least four decimals.
-        if (IsSqlConstant && _op == BinOp.Div && schema is not SqlInferenceSchema { OverflowDisplay: true })
+        if (IsSqlConstant && _op == BinOp.Div)
         {
-            decimal value = Eval(null!, EvaluationContext.Default).AsNumber;
+            var evaluated = Eval(null!, schema is SqlInferenceSchema context ? context.Context : EvaluationContext.Default);
+            if (!double.IsFinite(evaluated.AsDouble))
+                return new(VfpType.Numeric, Math.Min(20, evaluated.ImmediateOverflowWidth), Math.Min(18, evaluated.OverflowShapeScale));
+            decimal value = evaluated.AsNumber;
             int width = Math.Round(value, decimals, MidpointRounding.AwayFromZero)
                 .ToString("F" + decimals, CultureInfo.InvariantCulture).Length;
             return new(VfpType.Numeric, Math.Max(width, Math.Max(l.Length, r.Length)), decimals);
@@ -132,6 +151,17 @@ internal sealed partial class FunctionNode
         var number = BinaryNode.NumericStorage(arg);
         switch (name)
         {
+            case "LOG" when _args.Length == 1 && _args[0].HasQuotient:
+                int logScale = Math.Max(number.Decimals, schema is SqlInferenceSchema logContext ? logContext.Context.NumericDecimals : 2);
+                return new(VfpType.Numeric, 20, Math.Min(18, logScale));
+            case "EXP" when _args.Length == 1 && _args[0].HasQuotient:
+                int expScale = Math.Max(number.Decimals, schema is SqlInferenceSchema expContext ? expContext.Context.NumericDecimals : 2);
+                return new(VfpType.Numeric, Math.Min(20, VfpRuntime.NumericOverflowWidth(expScale)), expScale);
+            case "NVL" when _args.Length == 2 && _args[0] is LiteralNode nvl:
+                return nvl.ConstantValue.IsNull ? _args[1].InferSql(schema) : arg;
+            case "EVL" when _args.Length == 2 && _args[0] is LiteralNode evl:
+                return !evl.ConstantValue.IsNull && VfpRuntime.Empty(evl.ConstantValue, EvaluationContext.Default).AsLogical
+                    ? _args[1].InferSql(schema) : arg;
             case "LEN": case "AT": case "RAT": case "RECNO": case "RECCOUNT": case "COUNT":
                 return new(VfpType.Numeric, 10);
             case "ASC": return new(VfpType.Numeric, 4);
@@ -148,7 +178,7 @@ internal sealed partial class FunctionNode
                 return new(VfpType.Numeric, Math.Min(20, Math.Min(20, arg.Length) + valScale + 1), valScale);
             case "SQRT":
                 int sqrtScale = Math.Max(number.Decimals, schema is SqlInferenceSchema sqrtContext ? sqrtContext.Context.NumericDecimals : 2);
-                return new(VfpType.Numeric, Math.Min(20, number.Length + sqrtScale - number.Decimals), sqrtScale);
+                return new(VfpType.Numeric, Math.Min(20, number.Length + sqrtScale - number.Decimals + (number.Decimals == 0 ? 1 : 0)), sqrtScale);
             case "ABS": case "MIN": case "MAX": case "SUM": case "AVG":
                 // Within a larger expression SUM/AVG have their argument's width. Only a root
                 // aggregate expands N/F storage to 16 columns (handled by the SQL executor).
@@ -177,6 +207,10 @@ internal sealed partial class FunctionNode
                 return _args.Length > 1 ? _args[1].InferSql(schema) : Infer(schema);
             case "ICASE":
                 return _args.Length > 1 ? _args[1].InferSql(schema) : Infer(schema);
+            case "NVL":
+                // Round10: retain the selected quotient's SQL width before outer arithmetic.
+                return _args.Length == 2 && _args[0].InferSql(schema).Type is VfpType.Null or VfpType.Unknown
+                    ? _args[1].InferSql(schema) : arg;
             case "UPPER": case "LOWER": case "TRIM": case "RTRIM": case "LTRIM": case "ALLTRIM":
                 return new(VfpType.Character, arg.Length);
             case "SUBSTR":

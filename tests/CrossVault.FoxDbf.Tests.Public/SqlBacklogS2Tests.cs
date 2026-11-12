@@ -109,6 +109,10 @@ public sealed class SqlBacklogS2Tests
         Assert.Equal("*****", Assert.Single(session.Execute("SELECT STR(x,5) FROM stored")!.Rows)[0]);
         using var interpreter = new VfpInterpreter(session);
         interpreter.Execute("rendered=TRANSFORM(stored.x)");
+        // Round3StoredField_TransformMatchesVfp9: the field retains N(1,0),
+        // while assignment to a memory variable widens it to ten columns.
+        Assert.Equal("*", interpreter.Memory.Get("rendered").AsString);
+        interpreter.Execute("v=stored.x\nrendered=TRANSFORM(v)");
         Assert.Equal("**********", interpreter.Memory.Get("rendered").AsString);
     }
 
