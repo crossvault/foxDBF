@@ -27,7 +27,9 @@ public sealed class SqlFloatResultTypeTests
           "ab=N,20,2,Double iif1=N,20,2,Double nv1=N,20,2,Double ic1=N,20,2,Double" },
         { "SELECT f2 AS a, SUM(f2) AS s, MAX(f2) AS m FROM fn GROUP BY 1", "a=F,20,2,Double s=F,20,2,Double m=F,20,2,Double" },
         { "SELECT SUM(ABS(f2)) AS s, MAX(IIF(.T., f2, n2)) AS m FROM fn", "s=N,20,2,Double m=N,20,2,Double" },
-        { "SELECT ABS(f2) AS v FROM fn UNION ALL SELECT f2 FROM fn", "v=N,20,2,Decimal" },
+        { "SELECT ABS(f2) AS v FROM fn UNION ALL SELECT f2 FROM fn", "v=N,20,2,Double" },
+        { "SELECT ABS(f2) AS v FROM fn UNION ALL SELECT n2 FROM fn", "v=N,20,2,Decimal" },
+        { "SELECT SUM(ABS(f2)) AS v FROM fn UNION ALL SELECT SUM(n2) FROM fn", "v=N,20,2,Decimal" },
     };
 
     [Theory]

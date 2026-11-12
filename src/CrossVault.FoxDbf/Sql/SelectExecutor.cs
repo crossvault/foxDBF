@@ -1018,9 +1018,9 @@ internal sealed class SelectExecutor
     {
         char first = char.ToUpperInvariant(cols[0].VfpType);
 
-        // All branches share the type char → keep the type/ClrType, widen length & decimals to the max.
+        // All branches share the type char → keep the type, widen length & decimals to the max.
         if (cols.All(x => char.ToUpperInvariant(x.VfpType) == first))
-            return new SqlColumn(name, first, cols.Max(x => x.Length), cols.Max(x => x.Decimals), cols[0].ClrType);
+            return new SqlColumn(name, first, cols.Max(x => x.Length), cols.Max(x => x.Decimals), UnionClrType(cols));
 
         var cats = cols.Select(x => CatOf(x.VfpType)).Distinct().ToList();
 
@@ -1038,8 +1038,7 @@ internal sealed class SelectExecutor
                 throw new FoxDbfSqlException(
                     $"SELECTs are not UNION compatible. Fields {cols[0].Name} and {(ReferenceEquals(cols[0], currency) ? other : currency).Name} are incompatible.")
                 { VfpErrorNumber = 1851 };
-            // The CLR type keeps the earlier rule: double only when every branch is double-backed.
-            Type clr = cols.All(x => x.ClrType == typeof(double)) ? typeof(double) : typeof(decimal);
+            Type clr = UnionClrType(cols);
             return lead switch
             {
                 'Y' => new SqlColumn(name, 'Y', 8, 4, clr),
@@ -1060,6 +1059,18 @@ internal sealed class SelectExecutor
         throw new FoxDbfSqlException(
             $"SELECTs are not UNION compatible. Fields {cols[0].Name} and {incompatible.Name} are incompatible.")
         { VfpErrorNumber = 1851 };
+    }
+
+    // The UNION CLR type keeps the rule it had before the VFP types followed VFP9: branches with one type
+    // char keep the first branch's CLR type, mixed ones are double only when every branch is double.
+    // An N column with a double CLR type is an expression over F, which was typed F then.
+    private static Type UnionClrType(List<SqlColumn> cols)
+    {
+        static char Former(SqlColumn c) =>
+            char.ToUpperInvariant(c.VfpType) == 'N' && c.ClrType == typeof(double) ? 'F' : char.ToUpperInvariant(c.VfpType);
+        char first = Former(cols[0]);
+        if (cols.All(x => Former(x) == first)) return cols[0].ClrType;
+        return cols.All(x => x.ClrType == typeof(double)) ? typeof(double) : typeof(decimal);
     }
 
     private SqlResult Execute(SelectStatement sel)
