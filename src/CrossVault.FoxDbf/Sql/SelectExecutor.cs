@@ -1650,10 +1650,27 @@ internal sealed class SelectExecutor
     private static object? ReadCopiedField(DbfRecord rec, DbfColumn column, bool vfpBlanks)
     {
         object? value = ReadField(rec, column.Name, vfpBlanks);
-        return column.Type == 'F' && value is double floating && double.IsFinite(floating) && Math.Abs(floating) < 1e28
-            && decimal.TryParse(System.Text.Encoding.ASCII.GetString(rec.GetRawField(column)).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var stored)
+        if (column.Type != 'F' || value is not double floating || !double.IsFinite(floating) || Math.Abs(floating) >= 1e28)
+            return value;
+        var raw = rec.GetRawField(column);
+        // A text of at most 15 digits round-trips through the double: below 1e12 the double is the copy.
+        if (Math.Abs(floating) < 1000000000000d && CountDigits(raw) <= 15) return value;
+        return decimal.TryParse(System.Text.Encoding.ASCII.GetString(raw).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var stored)
             && (Math.Abs(floating) >= 1000000000000d || stored != Convert.ToDecimal(floating))
             ? stored : value;
+    }
+
+    // Digits after the leading zeros (trailing zeros count), so <= 15 means the text fits a double exactly.
+    private static int CountDigits(ReadOnlySpan<byte> raw)
+    {
+        int count = 0;
+        foreach (byte b in raw)
+        {
+            if (b is < (byte)'0' or > (byte)'9') { if (b is (byte)'e' or (byte)'E') break; continue; }
+            if (count == 0 && b == (byte)'0') continue;
+            count++;
+        }
+        return count;
     }
 
     // Round10 S10 (VFP9): DISTINCT, UNION and GROUP BY compare an F cell as the value a field read
@@ -1665,9 +1682,11 @@ internal sealed class SelectExecutor
         object?[]? key = null;
         for (int i = 0; i < row.Length && i < columns.Count; i++)
         {
-            if (columns[i].VfpType != 'F' || row[i] is not decimal) continue;
+            if (columns[i].VfpType != 'F' || row[i] is not decimal cell) continue;
+            object? k = BinaryKey(cell);
+            if (k is decimal same && same == cell) continue; // ordinary values compare as themselves
             key ??= (object?[])row.Clone();
-            key[i] = BinaryKey(row[i]);
+            key[i] = k;
         }
         return key ?? row;
     }
@@ -1675,9 +1694,14 @@ internal sealed class SelectExecutor
     private static object? BinaryKey(object? cell)
     {
         double binary = cell is decimal or double ? VfpValue.FromField(cell, 'F', 0).AsDouble : double.NaN;
-        return double.IsFinite(binary)
-            ? decimal.Parse(binary.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture)
-            : Norm(cell);
+        if (!double.IsFinite(binary)) return Norm(cell);
+        // A double whose 15-digit decimal maps back to it has a round-trip text of at most 15 digits.
+        if (Math.Abs(binary) < 7.9e27)
+        {
+            decimal fifteen = (decimal)binary;
+            if ((double)fifteen == binary) return fifteen;
+        }
+        return decimal.Parse(binary.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture);
     }
 
     // ---- projection (join) ----------------------------------------------------------------
@@ -1793,12 +1817,23 @@ internal sealed class SelectExecutor
         else
         {
             var keyed = new List<(object?[] Key, IRowContext Row)>(rows.Count);
+            // Whether a GROUP BY item is a direct F field depends only on its text and the source table,
+            // so it is decided on the first row and not re-matched per row.
+            var directFloat = new bool?[sel.GroupBy.Count];
             foreach (var r in rows)
             {
                 var key = new object?[sel.GroupBy.Count];
                 for (int g = 0; g < key.Length; g++)
-                    key[g] = (r is HostedRow hosted ? hosted.Inner : r) is RowContext source && source.TryCopyFloating(sel.GroupBy[g].Text, out var copied)
-                        ? BinaryKey(copied) : Norm(ToClr(sel.GroupBy[g].Evaluate(r, ctx)));
+                {
+                    object? copied = null;
+                    if (directFloat[g] != false)
+                    {
+                        bool copiedField = (r is HostedRow hosted ? hosted.Inner : r) is RowContext source
+                            && source.TryCopyFloating(sel.GroupBy[g].Text, out copied);
+                        directFloat[g] = copiedField;
+                    }
+                    key[g] = directFloat[g] == true ? BinaryKey(copied) : Norm(ToClr(sel.GroupBy[g].Evaluate(r, ctx)));
+                }
                 keyed.Add((key, r));
             }
             var byKey = Comparer<object?[]>.Create((a, b) => CompareRow(a, b, ctx));
