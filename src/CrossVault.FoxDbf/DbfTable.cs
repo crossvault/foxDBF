@@ -583,7 +583,8 @@ public sealed partial class DbfTable : IDisposable
     /// the records physically present. The +263 backlink and the inferred version byte
     /// are decided by a DETERMINISTIC discriminator (a type-'0' <c>_NullFlags</c>
     /// descriptor or a readable ".dbc" backlink string), with the modulo check used only
-    /// as corroboration.
+    /// as corroboration. An intact, recognized version byte whose on-disk HeaderLength matches
+    /// that layout is kept as is; only the record count is then rebuilt from the file length.
     /// </summary>
     private static DbfTable Reconstruct(Stream stream, bool leaveOpen, DbfHeader rawHeader, DbfOptions options, long fileSize, string? dbfPath,
         Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? columnTransform = null)
@@ -619,6 +620,18 @@ public sealed partial class DbfTable : IDisposable
         byte inferredByte = (vfpLayout || hasVfpTypes)
             ? (byte)0x30
             : (columns.Any(c => c.Type == 'M') ? (byte)0x83 : (byte)0x03);
+
+        // An intact version byte wins over the inference when the on-disk HeaderLength agrees with it:
+        // a recognized 32/32-layout version whose HeaderLength is exactly offset(0x0D) + 1 (+ 263 for the
+        // VFP backlink). Without this a VFP free table of only C columns (no _NullFlags, no ".dbc"
+        // string, no VFP-only type) was inferred as 0x03, lost its 263-byte backlink, and read the
+        // backlink bytes as records (Paket R5: 5 records on disk came back as 29).
+        var onDisk = rawHeader.Version;
+        if (onDisk.IsRecognized && onDisk.HeaderSize == 32 && onDisk.DescriptorWidth == 32
+            && rawHeader.HeaderLength == headerBase + (onDisk.HasBacklink ? 263 : 0)
+            && rawHeader.HeaderLength <= fileSize)
+            inferredByte = rawHeader.VersionByte;
+
         var inferredVersion = DbfVersion.FromByte(inferredByte);
         long headerLength = headerBase + (inferredVersion.HasBacklink ? 263 : 0);
 
