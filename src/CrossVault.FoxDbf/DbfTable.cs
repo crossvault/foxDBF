@@ -562,11 +562,12 @@ public sealed partial class DbfTable : IDisposable
         // Field type '7' is not a VFP9 type: VFP9 opens such a table but stops with "Internal consistency error" on
         // the first record (probe DbfFormatEdgeVfp9OracleTests type7_31). The tables seen with it (a 0x31 with
         // C fields whose decimal byte is set) were written with a layout we do not know, so every field after the
-        // first such C field may be read from the wrong offset. Strict refuses it; Tolerant reads the raw bytes.
+        // first such C field may be read from the wrong offset. Strict refuses it; Tolerant opens it and decodes the
+        // field like any unknown type (as text).
         if (options.Recovery == Recovery.Strict && columns.FirstOrDefault(c => c.Type == '7') is { } type7)
             throw new DbfCorruptHeaderException(
                 $"Field {type7.Name} has type '7', which VFP9 cannot read (it fails on the first record); " +
-                "use Recovery.Tolerant to read the table's raw field bytes.");
+                "use Recovery.Tolerant to open the table anyway (the field then decodes as text).");
         if (columnTransform is not null)
             columns = columnTransform(columns);
 

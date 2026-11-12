@@ -10,14 +10,16 @@ public enum Recovery
     /// <summary>
     /// Default. Trust the header verbatim; throw <see cref="DbfCorruptHeaderException"/>
     /// on a structurally impossible/inconsistent header (e.g. a zeroed
-    /// <c>RecordLength</c>/<c>HeaderLength</c>). No silent reconstruction.
+    /// <c>RecordLength</c>/<c>HeaderLength</c>) and on a field of type <c>'7'</c>, which VFP9
+    /// cannot read. No silent reconstruction.
     /// </summary>
     Strict = 0,
 
     /// <summary>
     /// Tolerate single faults — a missing <c>0x1A</c> EOF marker or a data region
     /// truncated mid-records — reading what is physically present. <see cref="DbfTable.RecordCount"/>
-    /// is clamped to the records actually on disk rather than throwing.
+    /// is clamped to the records actually on disk rather than throwing. A table with a field of type
+    /// <c>'7'</c> opens; that field decodes like any unknown type, as text.
     /// </summary>
     Tolerant = 1,
 
