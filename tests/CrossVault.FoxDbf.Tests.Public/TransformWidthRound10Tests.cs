@@ -135,6 +135,33 @@ public sealed partial class TransformWidthRound10Tests
         Add("S9/gather-memvar", "USE g3m\nSCAN\nSCATTER MEMVAR\nGATHER MEMVAR\nENDSCAN\nresult='ok'", "g3m");
         Add("S9/gather-array", "USE g3a\nSCAN\nSCATTER TO arr\nGATHER FROM arr\nENDSCAN\nresult='ok'", "g3a");
         Add("S9/gather-name", "USE g3o\nSCAN\nSCATTER NAME oo\nGATHER NAME oo\nENDSCAN\nresult='ok'", "g3o");
+        // S10: SQL copies of raw F(20,4) text (Prepare's fd above 1e12: .5678 and .5679 are one double,
+        // .5671 and .5674 two that share sixteen digits; fs: sixteen digits below 1e12).
+        const string Rows = "\nSCAN\nresult=result+TRANSFORM(fb)+'/'+STR(fb,25,4)+';'\nENDSCAN";
+        Add("S10/distinct-cursor", "SELECT DISTINCT fb FROM fd INTO CURSOR rr\nresult=TRANSFORM(RECCOUNT())+'|'" + Rows);
+        Add("S10/distinct-table", "SELECT DISTINCT fb FROM fd INTO TABLE outval\nUSE outval\nresult=TRANSFORM(RECCOUNT())+'|'" + Rows, "outval");
+        foreach (var (left, right) in new[] { (1, 2), (2, 3), (3, 4) })
+            Add($"S10/union-{left}{right}", $"SELECT fb FROM fd WHERE k={left} UNION SELECT fb FROM fd WHERE k={right} INTO TABLE outval\nUSE outval\nresult=TRANSFORM(RECCOUNT())+'|'" + Rows, "outval");
+        Add("S10/group", "SELECT fb, COUNT(*) AS n FROM fd GROUP BY fb INTO TABLE outval\nUSE outval\nresult=TRANSFORM(RECCOUNT())+'|'" + Rows, "outval");
+        Add("S10/order", "SELECT k, fb FROM fd ORDER BY fb DESC, k INTO TABLE outval\nUSE outval\nresult=''" + Rows, "outval");
+        foreach (string table in new[] { "fd", "fs" })
+        {
+            Add($"S10/{table}/read", $"USE {table}\nSCAN\nm=fb\nresult=result+TRANSFORM(fb)+'/'+STR(fb,25,4)+'/'+TRANSFORM(m)+'/'+STR(m,25,4)+';'\nENDSCAN");
+            Add($"S10/{table}/star-table", $"SELECT * FROM {table} INTO TABLE outval\nUSE outval\nresult=''" + Rows, "outval");
+            Add($"S10/{table}/field-table", $"SELECT fb FROM {table} INTO TABLE outval\nUSE outval\nresult=''" + Rows, "outval");
+            Add($"S10/{table}/field-cursor", $"SELECT fb FROM {table} INTO CURSOR rr\nresult=''" + Rows);
+            Add($"S10/{table}/array", $"USE {table}\nSELECT fb FROM {table} INTO ARRAY ab\nSELECT {table}\nFOR j=1 TO ALEN(ab)\nGO j\n"
+                + "result=result+TRANSFORM(ab[j])+'/'+STR(ab[j],25,4)+'/'+TRANSFORM(ab[j]=fb)+';'\nENDFOR\nresult=result+TRANSFORM(ab[1]=ab[2])+TRANSFORM(ab[2]=ab[3])");
+        }
+        // S10: currency display of raw Y payloads (Prepare's yc).
+        Add("S10/currency", "USE yc\nSCAN\nm=y\nresult=result+TRANSFORM(y)+'/'+STR(y,25,4)+'/'+STR(y,25,2)+'/'+STR(y,25,0)+'/'+TRANSFORM(m)+'/'+ALLTRIM(STR(m,40,4))+'/'+TRANSFORM(y*1)+';'\nENDSCAN");
+        // S10: SCATTER ... BLANK value types (Prepare's sb: y Y, b B(2), n N(10,2), f F(10,3), i I).
+        string Blank(Func<string, int, string> target) => string.Concat(new[] { "y", "b", "n", "f", "i" }.Select((f, i) =>
+            $"\nresult=result+VARTYPE({target(f, i + 1)})+':'+TRANSFORM({target(f, i + 1)})+'/'+STR({target(f, i + 1)},20,4)+'/'+TRANSFORM({target(f, i + 1)}+1)+';'"));
+        Add("S10/scatter-blank-memvar", "USE sb\nSCATTER MEMVAR BLANK" + Blank((f, i) => "m." + f));
+        Add("S10/scatter-blank-array", "USE sb\nSCATTER TO arr BLANK" + Blank((f, i) => $"arr[{i}]"));
+        Add("S10/scatter-blank-name", "USE sb\nSCATTER NAME oo BLANK" + Blank((f, i) => "oo." + f));
+        Add("S10/scatter-memvar", "USE sb\nSCATTER MEMVAR" + Blank((f, i) => "m." + f));
         return probes.ToArray();
     }
 
@@ -200,6 +227,36 @@ public sealed partial class TransformWidthRound10Tests
             BitConverter.GetBytes(rows[row].Y).CopyTo(bytes, offset + 16);
         }
         foreach (string name in small) File.WriteAllBytes(Path.Combine(directory, name + ".dbf"), bytes);
+
+        // S10: fd/fs hold raw k N(1,0) + fb F(20,4) text, yc raw k N(1,0) + Y payloads, sb plain values.
+        foreach (string name in new[] { "fd", "fs", "yc", "sb" }) File.Delete(Path.Combine(directory, name + ".dbf"));
+        using (var session = new VfpSession())
+        {
+            session.OpenDirectory(directory);
+            using var vfp = new VfpInterpreter(session);
+            vfp.Execute("CREATE TABLE fd FREE (k N(1,0), fb F(20,4))\nCREATE TABLE fs FREE (k N(1,0), fb F(20,4))\nCREATE TABLE yc FREE (k N(1,0), y Y)\n"
+                + "CREATE TABLE sb FREE (y Y, b B(2), n N(10,2), f F(10,3), i I)\nINSERT INTO sb VALUES (12.5, 1.25, 3.5, 2.125, 7)\nCLOSE TABLES ALL");
+        }
+        static void Rows(string path, IReadOnlyList<byte[]> rows)
+        {
+            byte[] bytes = File.ReadAllBytes(path);
+            int header = BitConverter.ToUInt16(bytes, 8), length = BitConverter.ToUInt16(bytes, 10);
+            var table = new byte[header + rows.Count * length + 1];
+            bytes.AsSpan(0, header).CopyTo(table);
+            BitConverter.GetBytes(rows.Count).CopyTo(table, 4);
+            for (int row = 0; row < rows.Count; row++)
+            {
+                table[header + row * length] = (byte)' ';
+                rows[row].CopyTo(table, header + row * length + 1);
+            }
+            table[^1] = 0x1A;
+            File.WriteAllBytes(path, table);
+        }
+        byte[] Text(string text) => Encoding.ASCII.GetBytes(text);
+        Rows(Path.Combine(directory, "fd.dbf"), new[] { Text("1  1234567890123.5678"), Text("2  1234567890123.5679"), Text("3  1234567890123.5671"), Text("4  1234567890123.5674") });
+        Rows(Path.Combine(directory, "fs.dbf"), new[] { Text("1   123456789012.3456"), Text("2    99999999999.9999"), Text("3            123.4567") });
+        Rows(Path.Combine(directory, "yc.dbf"), new long[] { 922337203685475807, -922337203685475807, 666666666666666666, 922337203685475800, 922337203685475840 }
+            .Select((payload, row) => Text((row + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)).Concat(BitConverter.GetBytes(payload)).ToArray()).ToArray());
     }
 
     internal static string Raw(string path)
@@ -215,6 +272,7 @@ public sealed partial class TransformWidthRound10Tests
                 int width = bytes[field + 16];
                 if (bytes[field + 11] == '0') { offset += width; continue; }
                 result.Append(bytes[field + 11] == 'Y' ? BitConverter.ToInt64(bytes, offset).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : bytes[field + 11] == 'I' ? BitConverter.ToInt32(bytes, offset).ToString(System.Globalization.CultureInfo.InvariantCulture)
                     : bytes[field + 11] == 'B' ? BitConverter.ToDouble(bytes, offset).ToString("R", System.Globalization.CultureInfo.InvariantCulture)
                     : Encoding.ASCII.GetString(bytes, offset, width).Trim()).Append(';');
                 offset += width;

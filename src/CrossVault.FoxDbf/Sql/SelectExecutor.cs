@@ -904,7 +904,7 @@ internal sealed class SelectExecutor
             }
             if (i > 0 && !allFlags[i - 1])
                 acc = Distinct(acc.Select((r, _) =>
-                    (r, new DummyRowContext() as IRowContext)).ToList(), SqlContext())
+                    (r, new DummyRowContext() as IRowContext)).ToList(), SqlContext(), accSchema)
                     .ConvertAll(p => p.row);
         }
 
@@ -1643,14 +1643,41 @@ internal sealed class SelectExecutor
         return outv.ToArray();
     }
 
-    // Round10 S8 (VFP9): SELECT * copies the stored F text (1234567890123.5679 stays .5679);
-    // the decoded double would lose its last digits. An aliased F column is still CLR double.
+    // Round10 S8/S10 (VFP9): a direct F projection copies the stored text (1234567890123.5679 stays
+    // .5679, 123456789012.3456 stays .3456); the decoded double's decimal keeps only 15 digits.
+    // Below 1e12, texts the double already round-trips keep the double, so ordinary values are unchanged.
+    // An aliased F column is still CLR double.
     private static object? ReadCopiedField(DbfRecord rec, DbfColumn column, bool vfpBlanks)
     {
         object? value = ReadField(rec, column.Name, vfpBlanks);
-        return column.Type == 'F' && value is double floating && double.IsFinite(floating) && Math.Abs(floating) >= 1000000000000d
+        return column.Type == 'F' && value is double floating && double.IsFinite(floating) && Math.Abs(floating) < 1e28
             && decimal.TryParse(System.Text.Encoding.ASCII.GetString(rec.GetRawField(column)).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var stored)
+            && (Math.Abs(floating) >= 1000000000000d || stored != Convert.ToDecimal(floating))
             ? stored : value;
+    }
+
+    // Round10 S10 (VFP9): DISTINCT, UNION and GROUP BY compare an F cell as the value a field read
+    // decodes (at most sixteen significant digits), while the copy keeps the stored text: the texts
+    // 1234567890123.5671, .5674, .5678 and .5679 are one row, and DISTINCT keeps the first row's copy.
+    // The key is that read's exact round-trip decimal.
+    private static object?[] FloatingKey(object?[] row, IReadOnlyList<SqlColumn> columns)
+    {
+        object?[]? key = null;
+        for (int i = 0; i < row.Length && i < columns.Count; i++)
+        {
+            if (columns[i].VfpType != 'F' || row[i] is not decimal) continue;
+            key ??= (object?[])row.Clone();
+            key[i] = BinaryKey(row[i]);
+        }
+        return key ?? row;
+    }
+
+    private static object? BinaryKey(object? cell)
+    {
+        double binary = cell is decimal or double ? VfpValue.FromField(cell, 'F', 0).AsDouble : double.NaN;
+        return double.IsFinite(binary)
+            ? decimal.Parse(binary.ToString("R", CultureInfo.InvariantCulture), NumberStyles.Float, CultureInfo.InvariantCulture)
+            : Norm(cell);
     }
 
     // ---- projection (join) ----------------------------------------------------------------
@@ -1769,7 +1796,9 @@ internal sealed class SelectExecutor
             foreach (var r in rows)
             {
                 var key = new object?[sel.GroupBy.Count];
-                for (int g = 0; g < key.Length; g++) key[g] = Norm(ToClr(sel.GroupBy[g].Evaluate(r, ctx)));
+                for (int g = 0; g < key.Length; g++)
+                    key[g] = (r is HostedRow hosted ? hosted.Inner : r) is RowContext source && source.TryCopyFloating(sel.GroupBy[g].Text, out var copied)
+                        ? BinaryKey(copied) : Norm(ToClr(sel.GroupBy[g].Evaluate(r, ctx)));
                 keyed.Add((key, r));
             }
             var byKey = Comparer<object?[]>.Create((a, b) => CompareRow(a, b, ctx));
@@ -1836,7 +1865,7 @@ internal sealed class SelectExecutor
         if (_host is not null) columns = TypeUntypedColumnsByValue(columns, pairs);
         pairs = pairs.ConvertAll(p => (CoerceRow(p.row, columns), p.rep));
         if (sel.Distinct)
-            pairs = Distinct(pairs, ctx);
+            pairs = Distinct(pairs, ctx, columns);
 
         if (sel.OrderBy.Count > 0)
             pairs = ApplyOrderBy(pairs, sel.OrderBy, scope, aggregate, ctx);
@@ -1877,8 +1906,12 @@ internal sealed class SelectExecutor
             return EvaluateAggregateExpression(it.Expression, members, rep, ctx, binary);
 
         // non-aggregate item in an aggregate query (a GROUP BY column) → value of the last member;
-        // an empty group has no member to read → null.
-        return members.Count == 0 ? null : ToProjectedClr(it.Expression!.Evaluate(rep, ctx));
+        // an empty group has no member to read → null. A direct F field copies that member's stored
+        // text like a plain projection (Round10 S10 group: VFP9 writes the last row's .5674).
+        if (members.Count == 0) return null;
+        if ((rep is HostedRow hosted ? hosted.Inner : rep) is RowContext source && source.TryCopyFloating(it.Expression!.Text, out var copied))
+            return copied;
+        return ToProjectedClr(it.Expression!.Evaluate(rep, ctx));
     }
 
     private static object? EvaluateAggregateExpression(
@@ -2050,12 +2083,13 @@ internal sealed class SelectExecutor
     /// (collation-aware, .NULL. first) even without ORDER BY, and of rows that collate equal the first in
     /// source order is kept (a stable sort, then the first row of each equal run).</summary>
     private static List<(object?[] row, IRowContext rep)> Distinct(
-        List<(object?[] row, IRowContext rep)> pairs, EvaluationContext ctx)
+        List<(object?[] row, IRowContext rep)> pairs, EvaluationContext ctx, IReadOnlyList<SqlColumn> columns)
     {
         var byRow = Comparer<object?[]>.Create((a, b) => CompareRow(a, b, ctx));
         var kept = new List<(object?[] row, IRowContext rep)>();
-        foreach (var p in pairs.OrderBy(x => x.row, byRow))
-            if (kept.Count == 0 || CompareRow(kept[^1].row, p.row, ctx) != 0) kept.Add(p);
+        object?[]? last = null;
+        foreach (var (key, p) in pairs.Select(p => (Key: FloatingKey(p.row, columns), Pair: p)).OrderBy(x => x.Key, byRow))
+            if (last is null || CompareRow(last, key, ctx) != 0) { kept.Add(p); last = key; }
         return kept;
     }
 
@@ -2813,6 +2847,20 @@ internal sealed class SelectExecutor
         public bool Deleted => _rec.IsDeleted;
         public IRowContext? Outer => _outer;
         public bool HasAlias(string q) => string.Equals(q, _alias, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>A direct F field of this row, copied from its stored text (see <see cref="ReadCopiedField"/>).</summary>
+        public bool TryCopyFloating(string text, out object? value)
+        {
+            value = null;
+            text = text.Trim();
+            if (!SimpleFieldRx.IsMatch(text)) return false;
+            int dot = text.IndexOf('.');
+            if (dot >= 0 && !HasAlias(text[..dot].Trim())) return false;
+            var column = FindColumn(_rec.Table, StripAlias(text));
+            if (column is null || column.Type != 'F' || (_cols is not null && !_cols.Contains(column.Name))) return false;
+            value = ReadCopiedField(_rec, column, _vfpBlanks);
+            return true;
+        }
 
         public object? GetField(string name)
         {

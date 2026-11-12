@@ -2073,7 +2073,9 @@ public sealed partial class VfpInterpreter
         'C' => VfpValue.Character(new string(' ', col.Length)),
         'V' or 'M' or 'G' or 'P' or 'W' => VfpValue.Character(string.Empty),
         'I' => VfpValue.Integer(0),
-        'N' or 'F' or 'B' or 'Y' => VfpValue.Number(0m),
+        'N' or 'F' or 'B' => VfpValue.Number(0m),
+        // Round10 S10 (VFP9): every SCATTER ... BLANK form leaves a Y field currency.
+        'Y' => VfpValue.Currency(0m),
         'L' => VfpValue.Logical(false),
         'D' => VfpValue.Date(default),
         'T' => VfpValue.DateTime(default),
