@@ -172,9 +172,10 @@ public abstract class MemoFile : IDisposable
 }
 
 /// <summary>
-/// dBase III memo reader (.dbt, plan §A6): fixed 512-byte blocks from
-/// <c>block * 512</c>, every <c>0x00</c> and <c>0x1A</c> byte stripped per block,
-/// appending until a short (&lt; 512) read.
+/// dBase III memo reader (.dbt, plan §A6): fixed 512-byte blocks from <c>block * 512</c>. The memo ends at its
+/// first <c>0x1A</c> byte, as VFP9 reads it (the blocks after the <c>0x1A 0x1A</c> terminator may be padded with
+/// blanks or hold stale text of a reused block). Without a <c>0x1A</c>, every <c>0x00</c> byte is stripped per block
+/// and the memo ends at a block that loses bytes to that stripping, or at the end of the file.
 /// </summary>
 public sealed class Dbase3MemoFile : MemoFile
 {
@@ -204,21 +205,23 @@ public sealed class Dbase3MemoFile : MemoFile
                 if (read == 0 && !readAny)
                     return null;
                 readAny |= read > 0;
-                // Strip all 0x00 and 0x1A bytes in this block, then append (§A6). The gem
-                // breaks on the STRIPPED length, so a block carrying the 0x00/0x1A
-                // terminator/padding ends the memo even on a full 512-byte raw read.
+                // The memo ends at its first 0x1A (VFP9 oracle: LEN() of a dBase III memo is the byte count
+                // before it, DbfDataReaderFixtureVfp9OracleTests). 0x00 bytes before it are stripped; a block
+                // that loses bytes that way (NUL padding) also ends the memo, as before.
+                int end = block.AsSpan(0, read).IndexOf((byte)0x1A);
+                int take = end < 0 ? read : end;
                 int kept = 0;
-                for (int i = 0; i < read; i++)
+                for (int i = 0; i < take; i++)
                 {
                     byte b = block[i];
-                    if (b != 0x00 && b != 0x1A)
+                    if (b != 0x00)
                     {
                         memo.WriteByte(b);
                         kept++;
                     }
                 }
-                if (kept < DefaultBlockSize)
-                    break; // stripped block shorter than 512 => end of memo.
+                if (end >= 0 || kept < DefaultBlockSize)
+                    break;
             }
             return memo.ToArray();
         }
@@ -230,8 +233,9 @@ public sealed class Dbase3MemoFile : MemoFile
 }
 
 /// <summary>
-/// dBase IV memo reader (.dbt, plan §A6): fixed 512-byte blocks; per block skip 4 bytes,
-/// then read the LITTLE-endian u32 length at offset 4 and return exactly that many bytes.
+/// dBase IV memo reader (.dbt, plan §A6): fixed 512-byte blocks; a block starts <c>FF FF 08 00</c> and a
+/// LITTLE-endian u32 length at offset 4 that counts those 8 header bytes, so the memo is <c>length − 8</c> bytes
+/// from offset 8. VFP9 (after converting the .dbt) reads "First memo\r\n" (12 bytes) where the block says 20.
 /// </summary>
 public sealed class Dbase4MemoFile : MemoFile
 {
@@ -254,10 +258,12 @@ public sealed class Dbase4MemoFile : MemoFile
             if (header.Length < BlockHeaderSize)
                 return null;
 
-            // Skip 4 bytes; length is a LITTLE-endian u32 at block offset 4 (§A6).
-            uint length = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(4));
-            if (length == 0)
+            // Skip 4 bytes; length is a LITTLE-endian u32 at block offset 4 (§A6) that includes the
+            // 8-byte block header (VFP9: LEN = length − 8). A length of 8 or less holds no text.
+            uint total = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(4));
+            if (total <= BlockHeaderSize)
                 return null;
+            uint length = total - (uint)BlockHeaderSize;
 
             long remaining = Stream.Length - offset - BlockHeaderSize;
             if (length > int.MaxValue || remaining < 0 || (long)length > remaining)
