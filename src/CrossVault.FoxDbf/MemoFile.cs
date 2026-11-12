@@ -172,10 +172,11 @@ public abstract class MemoFile : IDisposable
 }
 
 /// <summary>
-/// dBase III memo reader (.dbt, plan §A6): fixed 512-byte blocks from <c>block * 512</c>. The memo ends at its
-/// first <c>0x1A</c> byte, as VFP9 reads it (the blocks after the <c>0x1A 0x1A</c> terminator may be padded with
-/// blanks or hold stale text of a reused block). Without a <c>0x1A</c>, every <c>0x00</c> byte is stripped per block
-/// and the memo ends at a block that loses bytes to that stripping, or at the end of the file.
+/// dBase III memo reader (.dbt, plan §A6): fixed 512-byte blocks from <c>block * 512</c>. As VFP9 reads it, the memo
+/// is every byte up to its first <c>0x1A</c>, however many blocks that takes, or up to the end of the file: NUL bytes
+/// are kept, and a single <c>0x1A</c> inside the text already ends the memo (VFP9 probe,
+/// DbfFormatEdgeVfp9OracleTests.Vfp9_dbase_memo_edges). Bytes after the <c>0x1A 0x1A</c> terminator may be padding or
+/// stale text of a reused block.
 /// </summary>
 public sealed class Dbase3MemoFile : MemoFile
 {
@@ -205,22 +206,9 @@ public sealed class Dbase3MemoFile : MemoFile
                 if (read == 0 && !readAny)
                     return null;
                 readAny |= read > 0;
-                // The memo ends at its first 0x1A (VFP9 oracle: LEN() of a dBase III memo is the byte count
-                // before it, DbfDataReaderFixtureVfp9OracleTests). 0x00 bytes before it are stripped; a block
-                // that loses bytes that way (NUL padding) also ends the memo, as before.
                 int end = block.AsSpan(0, read).IndexOf((byte)0x1A);
-                int take = end < 0 ? read : end;
-                int kept = 0;
-                for (int i = 0; i < take; i++)
-                {
-                    byte b = block[i];
-                    if (b != 0x00)
-                    {
-                        memo.WriteByte(b);
-                        kept++;
-                    }
-                }
-                if (end >= 0 || kept < DefaultBlockSize)
+                memo.Write(block, 0, end < 0 ? read : end);
+                if (end >= 0 || read < DefaultBlockSize)
                     break;
             }
             return memo.ToArray();
@@ -235,7 +223,10 @@ public sealed class Dbase3MemoFile : MemoFile
 /// <summary>
 /// dBase IV memo reader (.dbt, plan §A6): fixed 512-byte blocks; a block starts <c>FF FF 08 00</c> and a
 /// LITTLE-endian u32 length at offset 4 that counts those 8 header bytes, so the memo is <c>length − 8</c> bytes
-/// from offset 8. VFP9 (after converting the .dbt) reads "First memo\r\n" (12 bytes) where the block says 20.
+/// from offset 8. VFP9 (after converting the .dbt) reads "First memo\r\n" (12 bytes) where the block says 20. A stored
+/// length of 8 is an empty memo; below 8 VFP9 fails reading the memo (error 1903), here it is null. A length past the
+/// end of the file gives the bytes up to the end: VFP9 returns <c>length − 8</c> bytes, the rest of them not from the
+/// file (VFP9 probe, DbfFormatEdgeVfp9OracleTests.Vfp9_dbase_memo_edges).
 /// </summary>
 public sealed class Dbase4MemoFile : MemoFile
 {
@@ -259,18 +250,17 @@ public sealed class Dbase4MemoFile : MemoFile
                 return null;
 
             // Skip 4 bytes; length is a LITTLE-endian u32 at block offset 4 (§A6) that includes the
-            // 8-byte block header (VFP9: LEN = length − 8). A length of 8 or less holds no text.
+            // 8-byte block header (VFP9: LEN = length − 8): 8 is an empty memo, less fails in VFP9 (error 1903).
             uint total = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(4));
-            if (total <= BlockHeaderSize)
+            if (total < BlockHeaderSize)
                 return null;
             uint length = total - (uint)BlockHeaderSize;
 
             long remaining = Stream.Length - offset - BlockHeaderSize;
-            if (length > int.MaxValue || remaining < 0 || (long)length > remaining)
+            if (length > int.MaxValue || remaining < 0)
                 return null;
 
-            var content = ReadExact(offset + BlockHeaderSize, (int)length);
-            return content;
+            return ReadExact(offset + BlockHeaderSize, (int)Math.Min(length, remaining));
         }
         catch
         {
