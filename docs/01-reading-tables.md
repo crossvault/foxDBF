@@ -23,6 +23,36 @@ foreach (var rec in table.Records)
 see [`SET DELETED`](#deleted-records) below), reading straight from the file with no upfront full
 load.
 
+## Open from streams
+
+When the table is not a file on disk (a blob, an archive entry, an upload), open it from a stream
+and pass its memo file (`.fpt`, `.dbt`, or `.dct` for a `.dbc`) as a second stream. The values are
+the same as opening the table from its path, memos included:
+
+```csharp
+using var dbf = OpenDbfBlob();    // any readable, seekable Stream
+using var memo = OpenFptBlob();   // or null when the table has no memo file
+
+using var table = DbfTable.Open(dbf, memo, options: null, leaveOpen: false);
+string? notes = table.GetRecord(0)?.GetString("notes");
+```
+
+- **Start position:** each file spans from its stream's current `Position` to the end of the
+  stream, and every later read is relative to that start. To open a table embedded with trailing
+  data, pass a stream bounded to the table's length (for a byte buffer:
+  `new MemoryStream(buffer, offset, length)`); trailing bytes would otherwise count as part of the
+  file. The older `DbfTable.Open(Stream, …)` overloads keep reading from position 0.
+- **No memo:** write `memo: null`. A bare `DbfTable.Open(stream, null)` does not compile (it is
+  ambiguous with `DbfTable.Open(Stream, DbfOptions)`, which still works for a stream without memo).
+- **Seekable streams only:** headers, random record access and memo blocks all seek, so a
+  non-seekable stream (a network or decompression stream) throws `NotSupportedException` at open.
+  Copy it into a `MemoryStream` first.
+- **No memo stream:** with `memo: null` the table reads memo fields as `null`, exactly like a path
+  open whose `.fpt`/`.dbt` is missing (unless `DbfOptions.MemoPath` names a memo file). A given memo
+  stream wins over `DbfOptions.MemoPath`, and is ignored for a version without memos.
+- **Ownership:** `leaveOpen` covers both streams. With `false` (the default) they are disposed with
+  the table, or right away when the open fails.
+
 ## Open a `.dbc` database container
 
 A `.dbc` gives you **long field names** (VFP truncates physical `.dbf` column names to 10

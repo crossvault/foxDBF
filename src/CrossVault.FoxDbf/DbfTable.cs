@@ -231,7 +231,8 @@ public sealed partial class DbfTable : IDisposable
         Version = header.Version;
 
         // Auto-open the sidecar memo (.fpt/.dbt/.dct) beside the .dbf, or from an explicit
-        // override (§A6). Stream-only opens with no path/override carry no memo. Never throws.
+        // override (§A6). Stream-only opens with no path/override carry no memo here (the
+        // Open(Stream, Stream?, …) overload attaches its memo stream afterwards). Never throws.
         // The sidecar memo rides the SAME opt-in read backend as the table (§B-3): a forced/auto map
         // on a local file maps the .fpt/.dbt too; a network path or any failure falls back to FileStream.
         if (options.MemoPath is not null)
@@ -407,6 +408,80 @@ public sealed partial class DbfTable : IDisposable
     /// </summary>
     public static DbfTable Open(Stream stream, DbfOptions options, bool leaveOpen = false)
         => Open(stream, options, leaveOpen, dbfPath: null);
+
+    /// <summary>
+    /// Open a DBF table over a <paramref name="dbf"/> stream with its memo file supplied as a
+    /// second stream (<c>.fpt</c>, <c>.dbt</c> or <c>.dct</c>, read by the reader the table's
+    /// version selects). Values are the same as when the table is opened from its path.
+    /// </summary>
+    /// <remarks>
+    /// <para>Each file spans from its stream's <see cref="Stream.Position"/> at the time of the call
+    /// to the end of the stream; all later reads are relative to that start. To open a table embedded
+    /// with trailing data, pass a stream bounded to the table's length (trailing bytes would otherwise
+    /// count as part of the file). The older <c>Open(Stream, …)</c> overloads keep reading from
+    /// position 0.</para>
+    /// <para>Pass a missing memo as <c>memo: null</c>: a bare <c>Open(stream, null)</c> is ambiguous
+    /// with <see cref="Open(Stream, DbfOptions, bool)"/>, which remains the overload to use for a
+    /// stream without a memo stream.</para>
+    /// <para>Both streams must be readable and seekable: header parsing, random record access and
+    /// memo block lookups all seek. A non-seekable stream throws <see cref="NotSupportedException"/>
+    /// here, at open time; copy it into a <see cref="MemoryStream"/> first.</para>
+    /// <para>A <see langword="null"/> <paramref name="memo"/> falls back to
+    /// <see cref="DbfOptions.MemoPath"/> when set; otherwise the table has no memo file and memo
+    /// fields read as <see langword="null"/>, exactly as a path open whose memo file is missing.
+    /// A given <paramref name="memo"/> takes precedence over <see cref="DbfOptions.MemoPath"/>, and
+    /// is ignored when the table's version carries no memo.</para>
+    /// <para><paramref name="leaveOpen"/> applies to both streams: when <see langword="false"/> they
+    /// are disposed with the table, or right away when the open fails or the memo stream is unused.</para>
+    /// </remarks>
+    public static DbfTable Open(Stream dbf, Stream? memo, DbfOptions? options = null, bool leaveOpen = false)
+    {
+        ArgumentNullException.ThrowIfNull(dbf);
+        options ??= new DbfOptions();
+
+        DbfTable? table = null;
+        try
+        {
+            RequireSeekable(dbf, nameof(dbf));
+            if (memo is not null)
+                RequireSeekable(memo, nameof(memo));
+
+            // A given memo stream replaces any MemoPath, so the constructor must not open that file.
+            var tableOptions = memo is null ? options : options with { MemoPath = null };
+            table = OpenCore(AtCurrentPosition(dbf), tableOptions, leaveOpen, dbfPath: null);
+
+            if (memo is not null)
+            {
+                table._memo = MemoFile.Open(AtCurrentPosition(memo), table.Version, leaveOpen);
+                if (table._memo is null && !leaveOpen)
+                    memo.Dispose(); // the version carries no memo: the stream is unused.
+            }
+            return table;
+        }
+        catch
+        {
+            table?.Dispose();
+            if (!leaveOpen)
+            {
+                dbf.Dispose();
+                memo?.Dispose();
+            }
+            throw;
+        }
+    }
+
+    // A stream that does not start at position 0 is wrapped so every later Seek(…, Begin) is
+    // relative to the caller's start position. Position 0 needs no wrapper (no extra indirection).
+    private static Stream AtCurrentPosition(Stream stream)
+        => stream.Position == 0 ? stream : new OffsetReadStream(stream, stream.Position);
+
+    private static void RequireSeekable(Stream stream, string paramName)
+    {
+        if (!stream.CanRead || !stream.CanSeek)
+            throw new NotSupportedException(
+                $"DbfTable.Open needs a readable, seekable '{paramName}' stream (header parsing, record access " +
+                "and memo blocks seek); copy the data into a MemoryStream first.");
+    }
 
     internal static DbfTable Open(Stream stream, DbfOptions options, bool leaveOpen, string? dbfPath,
         Func<IReadOnlyList<DbfColumn>, IReadOnlyList<DbfColumn>>? columnTransform = null)
@@ -878,9 +953,9 @@ public sealed partial class DbfTable : IDisposable
     public void RefreshView()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_stream is FileStream fs)
+        if (_stream is FileStream or OffsetReadStream)
         {
-            try { fs.Flush(); } catch { /* best-effort read-buffer reset */ }
+            try { _stream.Flush(); } catch { /* best-effort read-buffer reset */ }
         }
     }
 

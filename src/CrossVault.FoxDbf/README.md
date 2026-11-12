@@ -21,6 +21,10 @@ provider built on this package). Need to run VFP9 stored-procedure `.prg` busine
 - Visual FoxPro **NULL** semantics via the hidden `_NullFlags` column, plus Varchar/Varbinary.
 - Full code-page map with encoding selection (UTF-8 short-circuit, NOCPTRANS binary bypass).
 - Memo files: FoxPro `.fpt` (big-endian) and dBase III/IV `.dbt` (little-endian).
+- Open from streams: `DbfTable.Open(dbfStream, memoStream, options, leaveOpen)` reads the same
+  values as a path open, memos included. Each file spans from its stream's current position to
+  the end of the stream (seekable streams only; bound the stream when the table is followed by
+  other data).
 - `.dbc` containers: resolves member tables via the `PROPERTY`/`.DCT` path and applies
   **long field names**.
 - Header **recovery** for corrupted/zeroed headers, plus a force-version open.

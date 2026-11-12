@@ -119,13 +119,10 @@ public abstract class MemoFile : IDisposable
 
         try
         {
-            return version.MemoKind switch
-            {
-                MemoKind.Dbase3 => new Dbase3MemoFile(stream),
-                MemoKind.Dbase4 => new Dbase4MemoFile(stream),
-                MemoKind.Foxpro => new FoxproMemoFile(stream),
-                _ => null,
-            };
+            var memo = Open(stream, version, leaveOpen: false);
+            if (memo is null)
+                stream.Dispose();
+            return memo;
         }
         catch
         {
@@ -133,6 +130,20 @@ public abstract class MemoFile : IDisposable
             return null;
         }
     }
+
+    /// <summary>
+    /// Wrap an already-open memo <paramref name="stream"/> in the reader for
+    /// <see cref="DbfVersion.MemoKind"/> (plan §A6), or return <see langword="null"/> when the
+    /// version carries no memo (the stream is then left untouched for the caller to dispose).
+    /// The reader seeks relative to the stream's position 0.
+    /// </summary>
+    internal static MemoFile? Open(Stream stream, DbfVersion version, bool leaveOpen) => version.MemoKind switch
+    {
+        MemoKind.Dbase3 => new Dbase3MemoFile(stream, leaveOpen),
+        MemoKind.Dbase4 => new Dbase4MemoFile(stream, leaveOpen),
+        MemoKind.Foxpro => new FoxproMemoFile(stream, leaveOpen),
+        _ => null,
+    };
 
     /// <summary>
     /// Locate the sidecar memo file beside <paramref name="dbfPath"/> (plan §A6): a
