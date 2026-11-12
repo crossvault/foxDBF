@@ -559,6 +559,14 @@ public sealed partial class DbfTable : IDisposable
                 $"Header record geometry is inconsistent: declared RecordLength={rawHeader.RecordLength}, " +
                 $"required={requiredRecordLength} from the physical field descriptors; " +
                 "use Recovery.Reconstruct to rebuild the record geometry.");
+        // Field type '7' is not a VFP9 type: VFP9 opens such a table but stops with "Internal consistency error" on
+        // the first record (probe DbfFormatEdgeVfp9OracleTests type7_31). The tables seen with it (a 0x31 with
+        // C fields whose decimal byte is set) were written with a layout we do not know, so every field after the
+        // first such C field may be read from the wrong offset. Strict refuses it; Tolerant reads the raw bytes.
+        if (options.Recovery == Recovery.Strict && columns.FirstOrDefault(c => c.Type == '7') is { } type7)
+            throw new DbfCorruptHeaderException(
+                $"Field {type7.Name} has type '7', which VFP9 cannot read (it fails on the first record); " +
+                "use Recovery.Tolerant to read the table's raw field bytes.");
         if (columnTransform is not null)
             columns = columnTransform(columns);
 
