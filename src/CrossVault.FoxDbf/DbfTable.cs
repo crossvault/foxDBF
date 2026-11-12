@@ -771,7 +771,7 @@ public sealed partial class DbfTable : IDisposable
     /// <summary>
     /// Decode one fixed-width field descriptor (plan §A4 layouts).
     /// Standard 32B: name A11 (0–10), type @11, length @16, decimal @17.
-    /// FoxBase 16B: name A11 (0–10), type @11, length @12, decimal forced 0.
+    /// dBase II 16B: name A11 (0–10), type @11, length @12, data address @13–14, decimal @15 (VFP9: N(8,3)).
     /// dBase 7 48B: name A32 (0–31), type @32, length @33, decimal @34.
     /// </summary>
     private static DbfColumn ParseDescriptor(ReadOnlySpan<byte> d, DbfVersion version, int offset, System.Text.Encoding nameEncoding)
@@ -779,7 +779,7 @@ public sealed partial class DbfTable : IDisposable
         int nameLen;
         int typeIndex;
         int lengthIndex;
-        int decimalIndex; // -1 => forced to 0
+        int decimalIndex;
 
         switch (version.DescriptorWidth)
         {
@@ -787,7 +787,7 @@ public sealed partial class DbfTable : IDisposable
                 nameLen = 11;
                 typeIndex = 11;
                 lengthIndex = 12;
-                decimalIndex = -1;
+                decimalIndex = 15;
                 break;
             case 48: // dBase 7
                 nameLen = 32;
@@ -806,7 +806,7 @@ public sealed partial class DbfTable : IDisposable
         var name = CleanName(d[..nameLen], nameEncoding);
         char type = (char)d[typeIndex];
         int length = d[lengthIndex];
-        int dec = decimalIndex >= 0 ? d[decimalIndex] : 0;
+        int dec = d[decimalIndex];
 
         // Field-flags byte lives at descriptor offset 18, only in the 32-byte layout
         // (the 16/48-byte layouts have no such byte → flags 0; §A5b).

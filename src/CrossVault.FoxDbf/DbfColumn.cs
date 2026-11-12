@@ -26,7 +26,7 @@ public sealed record DbfColumn
     /// <summary>The on-disk field length in bytes.</summary>
     public int Length { get; }
 
-    /// <summary>The decimal-places count (forced to 0 for the v0x02 16-byte descriptor).</summary>
+    /// <summary>The decimal-places count (byte 15 of the v0x02 16-byte descriptor, byte 17 of the 32-byte one).</summary>
     public int Decimal { get; }
 
     /// <summary>Prefix-sum of prior column lengths; field data lives at record byte <c>Offset + 1</c>.</summary>
