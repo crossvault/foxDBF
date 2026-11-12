@@ -98,17 +98,13 @@ public static class FieldDecoder
     }
 
     /// <summary>
-    /// A character ('C') field at its full declared width, as VFP's expressions see it: leading and trailing blanks
-    /// kept, a trailing NUL padding (written by non-VFP tools) read as blanks. Same code-page / UTF-8 detection as
-    /// <see cref="Decode"/>.
+    /// A character ('C') field at its full declared width, as VFP's expressions see it: every byte kept, blanks and
+    /// NULs (leading, embedded or trailing), TAB, CR/LF, VT/FF. VFP9 does not read a NUL padding as blanks: a NUL-padded
+    /// <c>'abc'</c> is not <c>'abc'</c> under <c>==</c> or <c>SET ANSI ON</c> and sorts below <c>'abc '</c> (VFP9 probe,
+    /// FieldDecoderCharacterEdgeTests). Same code-page / UTF-8 detection as <see cref="Decode"/>.
     /// </summary>
     internal static string DecodeCharacterPadded(DbfColumn column, ReadOnlySpan<byte> raw, Encoding encoding, bool suppressUtf8Detection)
-    {
-        string s = DecodeCharacter(column, raw, encoding, suppressUtf8Detection);
-        int end = s.Length;
-        while (end > 0 && s[end - 1] == '\0') end--;
-        return end == s.Length ? s : string.Concat(s.AsSpan(0, end), new string(' ', s.Length - end));
-    }
+        => DecodeCharacter(column, raw, encoding, suppressUtf8Detection);
 
     /// <summary>
     /// Decode a character field in its selected code page, as VFP9 does. UTF-8 detection
