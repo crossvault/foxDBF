@@ -146,6 +146,16 @@ internal sealed partial class FunctionNode
 {
     internal override VfpTypeInfo InferSql(ISchema schema)
     {
+        var info = InferSqlStorage(schema);
+        // VFP9 AFIELDS (SqlFloatResultTypeVfp9OracleTests): a projected F field and a root SUM/AVG/MAX/MIN
+        // of it stay F, but ABS, IIF, ICASE, NVL and EVL over an F field give an N column.
+        return info.SqlStorageType == 'F' && VfpFunctionAbbreviations.Canonical(_upper) is "ABS" or "IIF" or "ICASE" or "NVL" or "EVL"
+            ? new(info.Type, info.Length, info.Decimals)
+            : info;
+    }
+
+    private VfpTypeInfo InferSqlStorage(ISchema schema)
+    {
         string name = VfpFunctionAbbreviations.Canonical(_upper);
         var arg = _args.Length == 0 ? default : _args[0].InferSql(schema);
         var number = BinaryNode.NumericStorage(arg);

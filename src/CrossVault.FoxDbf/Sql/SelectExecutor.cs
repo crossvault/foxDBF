@@ -1024,14 +1024,28 @@ internal sealed class SelectExecutor
 
         var cats = cols.Select(x => CatOf(x.VfpType)).Distinct().ToList();
 
-        // Mixed numeric family → widened numeric (decimal unless every branch is double-backed).
+        // Mixed numeric family (VFP9 AFIELDS, SqlFloatResultTypeVfp9OracleTests): the column takes the
+        // type of the first branch that is not I (an I branch adopts the other type); width and decimals
+        // are the maxima. Y mixes only with I: Y with N, F or B is error 1851. B keeps its width 8.
         if (cats.Count == 1 && cats[0] == UnionCat.Numeric)
         {
             int len = cols.Max(x => x.Length);
             int dec = cols.Max(x => x.Decimals);
-            return cols.All(x => x.ClrType == typeof(double))
-                ? new SqlColumn(name, 'B', len, dec, typeof(double))
-                : new SqlColumn(name, 'N', len, dec, typeof(decimal));
+            char lead = char.ToUpperInvariant(cols.First(x => char.ToUpperInvariant(x.VfpType) != 'I').VfpType);
+            SqlColumn? currency = cols.FirstOrDefault(x => char.ToUpperInvariant(x.VfpType) == 'Y');
+            SqlColumn? other = cols.FirstOrDefault(x => char.ToUpperInvariant(x.VfpType) is not ('Y' or 'I'));
+            if (currency is not null && other is not null)
+                throw new FoxDbfSqlException(
+                    $"SELECTs are not UNION compatible. Fields {cols[0].Name} and {(ReferenceEquals(cols[0], currency) ? other : currency).Name} are incompatible.")
+                { VfpErrorNumber = 1851 };
+            return lead switch
+            {
+                'Y' => new SqlColumn(name, 'Y', 8, 4, typeof(decimal)),
+                'B' => new SqlColumn(name, 'B', 8, dec, typeof(double)),
+                'F' => new SqlColumn(name, 'F', len, dec,
+                    cols.All(x => x.ClrType == typeof(double)) ? typeof(double) : typeof(decimal)),
+                _ => new SqlColumn(name, 'N', len, dec, typeof(decimal)),
+            };
         }
 
         // Date + DateTime → DateTime (a date widens to datetime).
