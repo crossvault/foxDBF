@@ -399,7 +399,7 @@ internal sealed class SelectExecutor
                 if (sample is not null)
                 {
                     var info = expression.InferSqlType(schema, sample, ctx);
-                    var (type, clr) = MapSqlInfer(info);
+                    var (type, clr) = MapSqlExpression(info, expression.Text);
                     sized ??= columns.ToArray();
                     col = sized[i] = new SqlColumn(col.Name, type, info.Length, info.Decimals, clr);
                 }
@@ -1018,20 +1018,34 @@ internal sealed class SelectExecutor
     {
         char first = char.ToUpperInvariant(cols[0].VfpType);
 
-        // All branches share the type char → keep the type/ClrType, widen length & decimals to the max.
+        // All branches share the type char → keep the type, widen length & decimals to the max.
         if (cols.All(x => char.ToUpperInvariant(x.VfpType) == first))
-            return new SqlColumn(name, first, cols.Max(x => x.Length), cols.Max(x => x.Decimals), cols[0].ClrType);
+            return new SqlColumn(name, first, cols.Max(x => x.Length), cols.Max(x => x.Decimals), UnionClrType(cols));
 
         var cats = cols.Select(x => CatOf(x.VfpType)).Distinct().ToList();
 
-        // Mixed numeric family → widened numeric (decimal unless every branch is double-backed).
+        // Mixed numeric family (VFP9 AFIELDS, SqlFloatResultTypeVfp9OracleTests): the column takes the
+        // type of the first branch that is not I (an I branch adopts the other type); width and decimals
+        // are the maxima. Y mixes only with I: Y with N, F or B is error 1851. B keeps its width 8.
         if (cats.Count == 1 && cats[0] == UnionCat.Numeric)
         {
             int len = cols.Max(x => x.Length);
             int dec = cols.Max(x => x.Decimals);
-            return cols.All(x => x.ClrType == typeof(double))
-                ? new SqlColumn(name, 'B', len, dec, typeof(double))
-                : new SqlColumn(name, 'N', len, dec, typeof(decimal));
+            char lead = char.ToUpperInvariant(cols.First(x => char.ToUpperInvariant(x.VfpType) != 'I').VfpType);
+            SqlColumn? currency = cols.FirstOrDefault(x => char.ToUpperInvariant(x.VfpType) == 'Y');
+            SqlColumn? other = cols.FirstOrDefault(x => char.ToUpperInvariant(x.VfpType) is not ('Y' or 'I'));
+            if (currency is not null && other is not null)
+                throw new FoxDbfSqlException(
+                    $"SELECTs are not UNION compatible. Fields {cols[0].Name} and {(ReferenceEquals(cols[0], currency) ? other : currency).Name} are incompatible.")
+                { VfpErrorNumber = 1851 };
+            Type clr = UnionClrType(cols);
+            return lead switch
+            {
+                'Y' => new SqlColumn(name, 'Y', 8, 4, clr),
+                'B' => new SqlColumn(name, 'B', 8, dec, clr),
+                'F' => new SqlColumn(name, 'F', len, dec, clr),
+                _ => new SqlColumn(name, 'N', len, dec, clr),
+            };
         }
 
         // Date + DateTime → DateTime (a date widens to datetime).
@@ -1045,6 +1059,18 @@ internal sealed class SelectExecutor
         throw new FoxDbfSqlException(
             $"SELECTs are not UNION compatible. Fields {cols[0].Name} and {incompatible.Name} are incompatible.")
         { VfpErrorNumber = 1851 };
+    }
+
+    // The UNION CLR type keeps the rule it had before the VFP types followed VFP9: branches with one type
+    // char keep the first branch's CLR type, mixed ones are double only when every branch is double.
+    // An N column with a double CLR type is an expression over F, which was typed F then.
+    private static Type UnionClrType(List<SqlColumn> cols)
+    {
+        static char Former(SqlColumn c) =>
+            char.ToUpperInvariant(c.VfpType) == 'N' && c.ClrType == typeof(double) ? 'F' : char.ToUpperInvariant(c.VfpType);
+        char first = Former(cols[0]);
+        if (cols.All(x => Former(x) == first)) return cols[0].ClrType;
+        return cols.All(x => x.ClrType == typeof(double)) ? typeof(double) : typeof(decimal);
     }
 
     private SqlResult Execute(SelectStatement sel)
@@ -2340,7 +2366,7 @@ internal sealed class SelectExecutor
                 if (func == "AVG" && info.Type == VfpType.Numeric)
                     info = new VfpTypeInfo(info.Type, info.Length,
                         Math.Max(info.Decimals, schema is SqlInferenceSchema sample ? sample.Context.NumericDecimals : 2), info.SqlStorageType);
-                var (vc, clr) = MapSqlInfer(info);
+                var (vc, clr) = MapSqlExpression(info, arg ?? "");
                 cols.Add(new SqlColumn(aggName, vc, info.Length, info.Decimals, clr));
                 continue;
             }
@@ -2359,7 +2385,7 @@ internal sealed class SelectExecutor
             }
 
             var ti = it.Expression!.InferSqlType(schema);
-            var (typeChar, clrType) = MapSqlInfer(ti);
+            var (typeChar, clrType) = MapSqlExpression(ti, text);
             cols.Add(new SqlColumn(it.Alias ?? ExpName(position), typeChar, ti.Length, ti.Decimals, clrType));
         }
         return ApplyVfpColumnNames(cols);
@@ -2407,7 +2433,7 @@ internal sealed class SelectExecutor
                 if (func == "AVG" && info.Type == VfpType.Numeric)
                     info = new VfpTypeInfo(info.Type, info.Length,
                         Math.Max(info.Decimals, schema is SqlInferenceSchema sample ? sample.Context.NumericDecimals : 2), info.SqlStorageType);
-                var (vc, clr) = MapSqlInfer(info);
+                var (vc, clr) = MapSqlExpression(info, arg ?? "");
                 cols.Add(new SqlColumn(aggName, vc, info.Length, info.Decimals, clr));
                 continue;
             }
@@ -2426,7 +2452,7 @@ internal sealed class SelectExecutor
             }
 
             var ti = it.Expression!.InferSqlType(schema);
-            var (typeChar, clrType) = MapSqlInfer(ti);
+            var (typeChar, clrType) = MapSqlExpression(ti, text);
             cols.Add(new SqlColumn(it.Alias ?? ExpName(position), typeChar, ti.Length, ti.Decimals, clrType));
         }
         return ApplyVfpColumnNames(cols);
@@ -2613,6 +2639,16 @@ internal sealed class SelectExecutor
             else if (c == ',' && depth == 0) return true;
         }
         return false;
+    }
+
+    // VFP9 AFIELDS (SqlFloatResultTypeVfp9OracleTests): only a bare F field, aliased or not, keeps the F
+    // column type, also as the argument of SUM/AVG/MAX/MIN; any other expression with F storage (ABS,
+    // IIF, ICASE, NVL, EVL over an F field, SUM(ABS(f))) is an N column. The CLR type is the one the F
+    // storage maps to, unchanged.
+    private static (char, Type) MapSqlExpression(VfpTypeInfo info, string text)
+    {
+        var (type, clr) = MapSqlInfer(info);
+        return type == 'F' && !SimpleFieldRx.IsMatch(text.Trim()) ? ('N', clr) : (type, clr);
     }
 
     private static (char, Type) MapSqlInfer(VfpTypeInfo info) => info.SqlStorageType switch
