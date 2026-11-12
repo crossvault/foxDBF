@@ -57,8 +57,8 @@ provider built on this package). Need to run VFP9 stored-procedure `.prg` busine
 - A **Rushmore-style** query optimizer: index-driven record bitmaps with a residual scan, honoring
   `SET EXACT` / `SET DELETED` / `SET OPTIMIZE`; index-optimizes Character/Date/DateTime as well as
   numeric keys; **late materialization** (reads only the surviving records); an adaptive sparse/dense
-  bitmap; and a **SYS(3054)-style ShowPlan** (`DbfTable.ExplainQuery`). The result is always identical
-  to a full scan.
+  bitmap; and a **SYS(3054)-style ShowPlan** (`DbfTable.ExplainQuery`). With an up-to-date `.cdx` the
+  result is always identical to a full scan; with an out-of-date one it can follow the index, as VFP9 does.
   To query without any index (VFP9 `SET OPTIMIZE OFF` / `NOOPTIMIZE` for Xbase commands), pass
   `new EvaluationContext { Optimize = false }` to `DbfTable.Query` / `Count` / `ExplainQuery`; it reads
   every record and gives VFP9's scan answer even when a `.cdx` is out of date. VFP9's `SELECT` ignores
