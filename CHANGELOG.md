@@ -6,6 +6,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [0.15.0] - 2026-11-12
 
+### Added
+
+- `DbfTable.Open(Stream dbf, Stream? memo, DbfOptions? options = null, bool leaveOpen = false)` opens a table
+  and its `.fpt`/`.dbt` memo from streams with the same values as a path open. Each stream's current position
+  is its file start and the file runs to the end of the stream, so a table at an offset in a larger buffer
+  opens from a stream bounded to the table. Non-seekable streams throw `NotSupportedException` at open;
+  `leaveOpen` covers both streams. Pass `memo: null` by name; the existing `Open(Stream, ...)` overloads are
+  unchanged and still read from position 0.
+
 ### Changed
 
 - **BREAKING:** SQL result column descriptors (type, width, decimals) and stored values now match VFP9 for
@@ -33,6 +42,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - `TRANSFORM` of large finite B, N and F values shows the number or asterisks exactly as VFP9 does.
 - `SELECT TRANSFORM(n)` over large N fields sizes the result column so that no row is cut, and `TRANSFORM`
   of the same field value is the same directly, in `SCAN`, after assignment, in SQL projections and in `WHERE`.
+- microVFP `SCATTER` (`MEMVAR`, `TO` array, `NAME`) reads N, F, B and Y fields like a field read, so the
+  memory variable equals the field, keeps its display decimals and currency type, and `GATHER` writes the
+  value back unchanged; `SELECT * INTO TABLE`/`CURSOR` copies large F values with their stored digits.
 - `STR` with more decimals than the field (for example `STR(n, 30, 6)` of an N(20,4) field) shows VFP9's digits.
 - A dynamically typed SQL projection whose value overflows (for example `EVALUATE('1/0')`) stays a numeric column.
 
