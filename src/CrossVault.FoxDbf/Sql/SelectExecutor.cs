@@ -399,7 +399,7 @@ internal sealed class SelectExecutor
                 if (sample is not null)
                 {
                     var info = expression.InferSqlType(schema, sample, ctx);
-                    var (type, clr) = MapSqlInfer(info);
+                    var (type, clr) = MapSqlExpression(info, expression.Text);
                     sized ??= columns.ToArray();
                     col = sized[i] = new SqlColumn(col.Name, type, info.Length, info.Decimals, clr);
                 }
@@ -1038,13 +1038,14 @@ internal sealed class SelectExecutor
                 throw new FoxDbfSqlException(
                     $"SELECTs are not UNION compatible. Fields {cols[0].Name} and {(ReferenceEquals(cols[0], currency) ? other : currency).Name} are incompatible.")
                 { VfpErrorNumber = 1851 };
+            // The CLR type keeps the earlier rule: double only when every branch is double-backed.
+            Type clr = cols.All(x => x.ClrType == typeof(double)) ? typeof(double) : typeof(decimal);
             return lead switch
             {
-                'Y' => new SqlColumn(name, 'Y', 8, 4, typeof(decimal)),
-                'B' => new SqlColumn(name, 'B', 8, dec, typeof(double)),
-                'F' => new SqlColumn(name, 'F', len, dec,
-                    cols.All(x => x.ClrType == typeof(double)) ? typeof(double) : typeof(decimal)),
-                _ => new SqlColumn(name, 'N', len, dec, typeof(decimal)),
+                'Y' => new SqlColumn(name, 'Y', 8, 4, clr),
+                'B' => new SqlColumn(name, 'B', 8, dec, clr),
+                'F' => new SqlColumn(name, 'F', len, dec, clr),
+                _ => new SqlColumn(name, 'N', len, dec, clr),
             };
         }
 
@@ -2354,7 +2355,7 @@ internal sealed class SelectExecutor
                 if (func == "AVG" && info.Type == VfpType.Numeric)
                     info = new VfpTypeInfo(info.Type, info.Length,
                         Math.Max(info.Decimals, schema is SqlInferenceSchema sample ? sample.Context.NumericDecimals : 2), info.SqlStorageType);
-                var (vc, clr) = MapSqlInfer(info);
+                var (vc, clr) = MapSqlExpression(info, arg ?? "");
                 cols.Add(new SqlColumn(aggName, vc, info.Length, info.Decimals, clr));
                 continue;
             }
@@ -2373,7 +2374,7 @@ internal sealed class SelectExecutor
             }
 
             var ti = it.Expression!.InferSqlType(schema);
-            var (typeChar, clrType) = MapSqlInfer(ti);
+            var (typeChar, clrType) = MapSqlExpression(ti, text);
             cols.Add(new SqlColumn(it.Alias ?? ExpName(position), typeChar, ti.Length, ti.Decimals, clrType));
         }
         return ApplyVfpColumnNames(cols);
@@ -2421,7 +2422,7 @@ internal sealed class SelectExecutor
                 if (func == "AVG" && info.Type == VfpType.Numeric)
                     info = new VfpTypeInfo(info.Type, info.Length,
                         Math.Max(info.Decimals, schema is SqlInferenceSchema sample ? sample.Context.NumericDecimals : 2), info.SqlStorageType);
-                var (vc, clr) = MapSqlInfer(info);
+                var (vc, clr) = MapSqlExpression(info, arg ?? "");
                 cols.Add(new SqlColumn(aggName, vc, info.Length, info.Decimals, clr));
                 continue;
             }
@@ -2440,7 +2441,7 @@ internal sealed class SelectExecutor
             }
 
             var ti = it.Expression!.InferSqlType(schema);
-            var (typeChar, clrType) = MapSqlInfer(ti);
+            var (typeChar, clrType) = MapSqlExpression(ti, text);
             cols.Add(new SqlColumn(it.Alias ?? ExpName(position), typeChar, ti.Length, ti.Decimals, clrType));
         }
         return ApplyVfpColumnNames(cols);
@@ -2627,6 +2628,16 @@ internal sealed class SelectExecutor
             else if (c == ',' && depth == 0) return true;
         }
         return false;
+    }
+
+    // VFP9 AFIELDS (SqlFloatResultTypeVfp9OracleTests): only a bare F field, aliased or not, keeps the F
+    // column type, also as the argument of SUM/AVG/MAX/MIN; any other expression with F storage (ABS,
+    // IIF, ICASE, NVL, EVL over an F field, SUM(ABS(f))) is an N column. The CLR type is the one the F
+    // storage maps to, unchanged.
+    private static (char, Type) MapSqlExpression(VfpTypeInfo info, string text)
+    {
+        var (type, clr) = MapSqlInfer(info);
+        return type == 'F' && !SimpleFieldRx.IsMatch(text.Trim()) ? ('N', clr) : (type, clr);
     }
 
     private static (char, Type) MapSqlInfer(VfpTypeInfo info) => info.SqlStorageType switch
